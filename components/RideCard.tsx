@@ -1,0 +1,207 @@
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Car, Star, Clock, MapPin, Users } from 'lucide-react-native';
+import { Colors } from '@/constants/Colors';
+import { Ride } from '@/types';
+
+interface RideCardProps {
+  ride: Ride;
+  onPress: () => void;
+}
+
+export function RideCard({ ride, onPress }: RideCardProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.card, ride.isWomenOnly && styles.womenOnlyCard]}
+      onPress={onPress}
+      activeOpacity={0.7}>
+      <View style={styles.header}>
+        <View style={styles.driverInfo}>
+          <View style={[styles.avatar, ride.driver.gender === 'female' && styles.femaleAvatar]}>
+            <Text style={styles.avatarText}>{ride.driver.name[0]}</Text>
+          </View>
+          <View style={styles.driverDetails}>
+            <View style={styles.nameRow}>
+              <Text style={styles.driverName}>{ride.driver.name}</Text>
+              {ride.isWomenOnly && (
+                <View style={styles.womenBadge}>
+                  <Text style={styles.womenBadgeText}>Women Only</Text>
+                </View>
+              )}
+            </View>
+            <View style={styles.ratingRow}>
+              <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
+              <Text style={styles.rating}>{ride.driver.rating}</Text>
+              <Text style={styles.rides}>• {ride.driver.ridesCompleted} rides</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.fareContainer}>
+          <Text style={styles.fare}>₹{ride.farePerSeat}</Text>
+          <Text style={styles.perSeat}>per seat</Text>
+        </View>
+      </View>
+
+      <View style={styles.divider} />
+
+      <View style={styles.routeContainer}>
+        <View style={styles.routeRow}>
+          <MapPin size={14} color={Colors.dark.gold} />
+          <Text style={styles.location}>{ride.from}</Text>
+        </View>
+        <View style={styles.routeLine} />
+        <View style={styles.routeRow}>
+          <MapPin size={14} color={Colors.dark.pink} />
+          <Text style={styles.location}>{ride.to}</Text>
+        </View>
+      </View>
+
+      <View style={styles.footer}>
+        <View style={styles.infoItem}>
+          <Clock size={14} color={Colors.dark.textSecondary} />
+          <Text style={styles.infoText}>{ride.departureTime}</Text>
+        </View>
+        <View style={styles.infoItem}>
+          <Car size={14} color={Colors.dark.textSecondary} />
+          <Text style={styles.infoText}>{ride.vehicle.model}</Text>
+        </View>
+        <View style={styles.infoItem}>
+          <Users size={14} color={Colors.dark.textSecondary} />
+          <Text style={styles.infoText}>{ride.availableSeats.length} seats</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  womenOnlyCard: {
+    borderColor: Colors.dark.pink + '40',
+    backgroundColor: Colors.dark.card + 'ee',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  driverInfo: {
+    flexDirection: 'row',
+    flex: 1,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: Colors.dark.gold + '30',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  femaleAvatar: {
+    backgroundColor: Colors.dark.pink + '30',
+  },
+  avatarText: {
+    color: Colors.dark.text,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  driverDetails: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  driverName: {
+    color: Colors.dark.text,
+    fontSize: 16,
+    fontWeight: '600',
+    marginRight: 8,
+  },
+  womenBadge: {
+    backgroundColor: Colors.dark.pink + '30',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  womenBadgeText: {
+    color: Colors.dark.pink,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  ratingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rating: {
+    color: Colors.dark.text,
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  rides: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    marginLeft: 4,
+  },
+  fareContainer: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  fare: {
+    color: Colors.dark.gold,
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  perSeat: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: Colors.dark.border,
+    marginVertical: 12,
+  },
+  routeContainer: {
+    marginBottom: 12,
+  },
+  routeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  location: {
+    color: Colors.dark.text,
+    fontSize: 14,
+    marginLeft: 8,
+    fontWeight: '500',
+  },
+  routeLine: {
+    width: 2,
+    height: 16,
+    backgroundColor: Colors.dark.border,
+    marginLeft: 6,
+    marginVertical: 4,
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  infoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  infoText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    marginLeft: 4,
+  },
+});
