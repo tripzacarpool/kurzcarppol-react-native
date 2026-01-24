@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,12 +7,23 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
-import { X, Check, MapPin, MessageSquare, Armchair, KeyRound, Navigation, CheckCircle2 } from 'lucide-react-native';
+import { X, Check, MapPin, MessageSquare, Armchair, Navigation, CheckCircle2, ArrowLeft, Wallet as WalletIcon, CreditCard, ShieldCheck, UserCheck, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { Ride } from '@/types';
-import Animated from 'react-native-reanimated';
-import { FadeIn, SlideInDown } from 'react-native-reanimated';
+import { useAuth } from '@/contexts/AuthContext';
+import { RazorpayWebView } from './RazorpayWebView';
+import { DRIVER_MODE_META } from '@/constants/driverModes';
+import {
+  processWalletPayment,
+  getWalletBalance,
+  createRazorpayOrder,
+  verifyPayment,
+  getRazorpayKeyId,
+  RazorpayOrderResponse,
+} from '@/lib/razorpay';
 
 interface BookingModalProps {
   visible: boolean;
@@ -20,16 +31,173 @@ interface BookingModalProps {
   onClose: () => void;
 }
 
-type BookingStep = 'confirm' | 'request' | 'seats' | 'otp' | 'tracking' | 'completed';
+type BookingStep = 'confirm' | 'request' | 'seats' | 'payment' | 'boarding' | 'tracking' | 'completed';
 
 export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
+  const { user } = useAuth();
   const [step, setStep] = useState<BookingStep>('confirm');
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
   const [customRequest, setCustomRequest] = useState('');
   const [customFare, setCustomFare] = useState('');
-  const [otp, setOtp] = useState('');
+  const [pickupConfirmed, setPickupConfirmed] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'wallet' | 'upi' | null>(null);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [processingPayment, setProcessingPayment] = useState(false);
+  const [showRazorpay, setShowRazorpay] = useState(false);
+  const [razorpayOrder, setRazorpayOrder] = useState<RazorpayOrderResponse | null>(null);
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!visible) {
+      setStep('confirm');
+      setSelectedSeats([]);
+      setCustomRequest('');
+      setCustomFare('');
+      setPickupConfirmed(false);
+      setPaymentMethod(null);
+      setProcessingPayment(false);
+    }
+  }, [visible]);
+
+  // Load wallet balance when payment step is reached
+  useEffect(() => {
+    if (step === 'payment' && user?.id) {
+      loadWalletBalance();
+    }
+  }, [step, user]);
+
+  const loadWalletBalance = async () => {
+    if (!user?.id) return;
+    try {
+      const balance = await getWalletBalance(user.id);
+      setWalletBalance(balance);
+    } catch (error) {
+      console.error('Error loading wallet balance:', error);
+    }
+  };
 
   if (!ride) return null;
+
+  const totalAmount = selectedSeats.length * ride.farePerSeat;
+  const driverModeInfo = DRIVER_MODE_META[ride.driverMode];
+
+  const handleBack = () => {
+    switch (step) {
+      case 'request':
+        setStep('confirm');
+        break;
+      case 'seats':
+        setStep('request');
+        break;
+      case 'payment':
+        setStep('seats');
+        break;
+      case 'boarding':
+        setStep('payment');
+        break;
+      case 'tracking':
+        setStep('boarding');
+        break;
+      default:
+        onClose();
+    }
+  };
+
+  const handleClose = () => {
+    setStep('confirm');
+    setSelectedSeats([]);
+    setCustomRequest('');
+    setCustomFare('');
+    setPickupConfirmed(false);
+    setPaymentMethod(null);
+    setProcessingPayment(false);
+    onClose();
+  };
+
+  const handlePayment = async () => {
+    if (!paymentMethod || !user?.id) return;
+
+    setProcessingPayment(true);
+
+    try {
+      if (paymentMethod === 'wallet') {
+        // Process wallet payment
+        const result = await processWalletPayment(user.id, totalAmount, {
+          rideId: ride.id,
+          from: ride.from,
+          to: ride.to,
+          seats: selectedSeats,
+        });
+
+        if (result.success) {
+          Alert.alert('Success', 'Payment secured in escrow. Driver will receive it after drop-off.');
+          setPickupConfirmed(false);
+          setStep('boarding');
+        } else {
+          Alert.alert('Payment Failed', result.error || 'Insufficient balance');
+        }
+        setProcessingPayment(false);
+      } else if (paymentMethod === 'upi') {
+        // Create Razorpay order
+        const order = await createRazorpayOrder(totalAmount, user.id, {
+          rideId: ride.id,
+          from: ride.from,
+          to: ride.to,
+          seats: selectedSeats,
+        });
+
+        setRazorpayOrder(order);
+        setProcessingPayment(false);
+        setShowRazorpay(true);
+      }
+    } catch (error: any) {
+      console.error('Payment error:', error);
+      Alert.alert('Error', error.message || 'Payment failed');
+      setProcessingPayment(false);
+    }
+  };
+
+  const handleRazorpaySuccess = async (paymentId: string, orderId: string, signature: string) => {
+    try {
+      setShowRazorpay(false);
+      setProcessingPayment(true);
+
+      const verified = await verifyPayment(orderId, paymentId, signature);
+      
+      if (verified) {
+        Alert.alert('Success!', 'Payment secured in escrow. Confirm pickup to start tracking.', [
+          {
+            text: 'OK',
+            onPress: () => {
+              setPickupConfirmed(false);
+              setStep('boarding');
+            },
+          },
+        ]);
+      } else {
+        Alert.alert('Error', 'Payment verification failed. Please contact support.');
+      }
+    } catch (error: any) {
+      console.error('Verification error:', error);
+      Alert.alert('Error', 'Payment verification failed');
+    } finally {
+      setProcessingPayment(false);
+    }
+  };
+
+  const handleRazorpayFailure = (error: string) => {
+    setShowRazorpay(false);
+    Alert.alert('Payment Failed', error);
+  };
+
+  const handlePickupConfirmation = () => {
+    setPickupConfirmed(true);
+    setStep('tracking');
+  };
+
+  const handleDropConfirmation = () => {
+    setStep('completed');
+  };
 
   const handleSeatSelect = (seatNumber: number) => {
     if (selectedSeats.includes(seatNumber)) {
@@ -94,7 +262,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     switch (step) {
       case 'confirm':
         return (
-          <Animated.View entering={FadeIn} style={styles.stepContent}>
+          <View style={styles.stepContent}>
             <View style={styles.stepIcon}>
               <Check size={32} color={Colors.dark.gold} />
             </View>
@@ -110,35 +278,40 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                 <Text style={styles.routeText}>{ride.to}</Text>
               </View>
             </View>
-            <View style={styles.infoGrid}>
-              <View style={styles.infoItem}>
+            <View style={styles.infoGridClean}>
+              <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Driver</Text>
                 <Text style={styles.infoValue}>{ride.driver.name}</Text>
               </View>
-              <View style={styles.infoItem}>
+              <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Departure</Text>
                 <Text style={styles.infoValue}>{ride.departureTime}</Text>
               </View>
-              <View style={styles.infoItem}>
+              <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Vehicle</Text>
                 <Text style={styles.infoValue}>{ride.vehicle.model}</Text>
               </View>
-              <View style={styles.infoItem}>
+              <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Fare/Seat</Text>
                 <Text style={styles.infoValue}>₹{ride.farePerSeat}</Text>
               </View>
+            </View>
+            <View style={styles.modeCard}>
+              <Text style={styles.modeLabel}>{driverModeInfo.label}</Text>
+              <Text style={styles.modeTagline}>{driverModeInfo.tagline}</Text>
+              <Text style={styles.modeDescription}>{driverModeInfo.description}</Text>
             </View>
             <TouchableOpacity
               style={styles.primaryButton}
               onPress={() => setStep('request')}>
               <Text style={styles.primaryButtonText}>Continue</Text>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         );
 
       case 'request':
         return (
-          <Animated.View entering={FadeIn} style={styles.stepContent}>
+          <View style={styles.stepContent}>
             <View style={styles.stepIcon}>
               <MessageSquare size={32} color={Colors.dark.gold} />
             </View>
@@ -169,12 +342,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               onPress={() => setStep('seats')}>
               <Text style={styles.secondaryButtonText}>Skip</Text>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         );
 
       case 'seats':
         return (
-          <Animated.View entering={FadeIn} style={styles.stepContent}>
+          <View style={styles.stepContent}>
             <View style={styles.stepIcon}>
               <Armchair size={32} color={Colors.dark.gold} />
             </View>
@@ -205,47 +378,114 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             <TouchableOpacity
               style={[styles.primaryButton, selectedSeats.length === 0 && styles.disabledButton]}
               disabled={selectedSeats.length === 0}
-              onPress={() => setStep('otp')}>
-              <Text style={styles.primaryButtonText}>Confirm Booking</Text>
+              onPress={() => setStep('payment')}>
+              <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         );
 
-      case 'otp':
+      case 'payment':
+        const canPayWithWallet = walletBalance >= totalAmount;
+
         return (
-          <Animated.View entering={FadeIn} style={styles.stepContent}>
+          <View style={styles.stepContent}>
             <View style={styles.stepIcon}>
-              <KeyRound size={32} color={Colors.dark.gold} />
+              <WalletIcon size={32} color={Colors.dark.gold} />
             </View>
-            <Text style={styles.stepTitle}>Enter OTP</Text>
-            <Text style={styles.stepDescription}>
-              Driver will provide a 4-digit OTP to start the ride
-            </Text>
-            <TextInput
-              style={[styles.textInput, styles.otpInput]}
-              placeholder="Enter OTP"
-              placeholderTextColor={Colors.dark.textSecondary}
-              value={otp}
-              onChangeText={setOtp}
-              keyboardType="number-pad"
-              maxLength={4}
-            />
+            <Text style={styles.stepTitle}>Choose Payment Method</Text>
+            <View style={styles.fareBreakdown}>
+              <Text style={styles.fareLabel}>
+                {selectedSeats.length} Seat(s) × ₹{ride.farePerSeat}
+              </Text>
+              <Text style={styles.fareTotal}>₹{totalAmount}</Text>
+            </View>
+
+            {/* Wallet Balance */}
+            <View style={styles.walletBalanceCard}>
+              <View style={styles.balanceRow}>
+                <Text style={styles.balanceLabel}>Wallet Balance</Text>
+                <Text style={styles.balanceAmount}>₹{walletBalance.toFixed(2)}</Text>
+              </View>
+            </View>
+
+            {/* Payment Options */}
+            <View style={styles.paymentOptions}>
+              <TouchableOpacity
+                style={[
+                  styles.paymentOption,
+                  paymentMethod === 'wallet' && styles.paymentOptionSelected,
+                  !canPayWithWallet && styles.paymentOptionDisabled,
+                ]}
+                onPress={() => canPayWithWallet && setPaymentMethod('wallet')}
+                disabled={!canPayWithWallet}>
+                <View style={styles.paymentOptionLeft}>
+                  <WalletIcon size={24} color={canPayWithWallet ? Colors.dark.gold : Colors.dark.textSecondary} />
+                  <View style={styles.paymentOptionText}>
+                    <Text style={[styles.paymentOptionTitle, !canPayWithWallet && styles.disabledText]}>
+                      Pay from Wallet
+                    </Text>
+                    <Text style={styles.paymentOptionSubtitle}>
+                      {canPayWithWallet ? 'Instant payment' : 'Insufficient balance'}
+                    </Text>
+                  </View>
+                </View>
+                {paymentMethod === 'wallet' && (
+                  <CheckCircle2 size={24} color={Colors.dark.gold} />
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.paymentOption,
+                  paymentMethod === 'upi' && styles.paymentOptionSelected,
+                ]}
+                onPress={() => setPaymentMethod('upi')}>
+                <View style={styles.paymentOptionLeft}>
+                  <CreditCard size={24} color={Colors.dark.gold} />
+                  <View style={styles.paymentOptionText}>
+                    <Text style={styles.paymentOptionTitle}>Pay via UPI/Card</Text>
+                    <Text style={styles.paymentOptionSubtitle}>UPI, Card, Net Banking</Text>
+                  </View>
+                </View>
+                {paymentMethod === 'upi' && (
+                  <CheckCircle2 size={24} color={Colors.dark.gold} />
+                )}
+              </TouchableOpacity>
+            </View>
+
             <TouchableOpacity
-              style={[styles.primaryButton, otp.length !== 4 && styles.disabledButton]}
-              disabled={otp.length !== 4}
-              onPress={() => setStep('tracking')}>
-              <Text style={styles.primaryButtonText}>Start Ride</Text>
+              style={[styles.primaryButton, (!paymentMethod || processingPayment) && styles.disabledButton]}
+              disabled={!paymentMethod || processingPayment}
+              onPress={handlePayment}>
+              {processingPayment ? (
+                <ActivityIndicator color={Colors.dark.background} />
+              ) : (
+                <Text style={styles.primaryButtonText}>
+                  Pay ₹{totalAmount}
+                </Text>
+              )}
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         );
 
       case 'tracking':
         return (
-          <Animated.View entering={FadeIn} style={styles.stepContent}>
+          <View style={styles.stepContent}>
             <View style={styles.stepIcon}>
               <Navigation size={32} color={Colors.dark.gold} />
             </View>
             <Text style={styles.stepTitle}>Ride in Progress</Text>
+            <Text style={styles.stepDescription}>
+              GPS tracking is active. Confirm drop-off when you exit so we can release the driver payout.
+            </Text>
+            <View style={styles.statusCard}>
+              <Text style={styles.statusCardLabel}>Passenger Status</Text>
+              <View style={styles.statusCardRow}>
+                <CheckCircle2 size={22} color={Colors.dark.success} />
+                <Text style={styles.statusCardText}>Onboard & verified</Text>
+              </View>
+              <Text style={styles.statusCardSubtext}>Drop confirmation pending</Text>
+            </View>
             <View style={styles.trackingInfo}>
               <Text style={styles.trackingLabel}>ETA to destination</Text>
               <Text style={styles.trackingValue}>{ride.duration}</Text>
@@ -256,21 +496,67 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             </View>
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => setStep('completed')}>
-              <Text style={styles.primaryButtonText}>Complete Ride</Text>
+              onPress={handleDropConfirmation}>
+              <Text style={styles.primaryButtonText}>Mark myself dropped off</Text>
             </TouchableOpacity>
-          </Animated.View>
+            <Text style={styles.escrowNote}>Driver payout releases after every passenger on the route is marked finished.</Text>
+          </View>
+        );
+
+      case 'boarding':
+        return (
+          <View style={styles.stepContent}>
+            <View style={styles.stepIcon}>
+              <ShieldCheck size={32} color={Colors.dark.gold} />
+            </View>
+            <Text style={styles.stepTitle}>Pickup Verification</Text>
+            <Text style={styles.stepDescription}>
+              Funds stay in escrow until either you or the driver confirm pickup. The same confirmation happens again at drop-off.
+            </Text>
+            <View style={styles.verificationGrid}>
+              <View style={styles.verificationCard}>
+                <Text style={styles.verificationLabel}>Driver Sees</Text>
+                <Text style={styles.verificationValue}>“Passenger picked up?”</Text>
+              </View>
+              <View style={styles.verificationCard}>
+                <Text style={styles.verificationLabel}>Passenger Sees</Text>
+                <Text style={styles.verificationValue}>“Did you board the car?”</Text>
+              </View>
+            </View>
+            <View style={styles.statusPillRow}>
+              <View style={[styles.statusPill, pickupConfirmed && styles.statusPillActive]}>
+                <UserCheck
+                  size={20}
+                  color={pickupConfirmed ? Colors.dark.background : Colors.dark.textSecondary}
+                />
+                <Text
+                  style={[styles.statusPillText, pickupConfirmed && styles.statusPillTextActive]}>
+                  {pickupConfirmed ? 'Onboard confirmed' : 'Waiting for confirmation'}
+                </Text>
+              </View>
+              <View style={styles.statusPillSecondary}>
+                <Clock size={18} color={Colors.dark.textSecondary} />
+                <Text style={styles.statusPillText}>Auto tracking after pickup</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={handlePickupConfirmation}>
+              <Text style={styles.primaryButtonText}>I boarded the car</Text>
+            </TouchableOpacity>
+            <Text style={styles.escrowNote}>Escrow releases only after the passenger is marked dropped.</Text>
+          </View>
         );
 
       case 'completed':
         return (
-          <Animated.View entering={FadeIn} style={styles.stepContent}>
+          <View style={styles.stepContent}>
             <View style={[styles.stepIcon, styles.successIcon]}>
               <CheckCircle2 size={48} color={Colors.dark.success} />
             </View>
             <Text style={styles.stepTitle}>Ride Completed!</Text>
             <Text style={styles.stepDescription}>
-              Thank you for choosing KruZ. Have a great day!
+              Driver payout is being released now that every passenger is marked dropped. Thank you for riding respectfully!
             </Text>
             <View style={styles.completedFare}>
               <Text style={styles.completedFareLabel}>Total Fare</Text>
@@ -280,53 +566,74 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             </View>
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => {
-                setStep('confirm');
-                setSelectedSeats([]);
-                setCustomRequest('');
-                setCustomFare('');
-                setOtp('');
-                onClose();
-              }}>
+              onPress={handleClose}>
               <Text style={styles.primaryButtonText}>Done</Text>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         );
     }
   };
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <Animated.View entering={SlideInDown.springify()} style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <View style={styles.modalHandle} />
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => {
-                setStep('confirm');
-                setSelectedSeats([]);
-                setCustomRequest('');
-                setCustomFare('');
-                setOtp('');
-                onClose();
-              }}>
-              <X size={24} color={Colors.dark.text} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView
-            style={styles.modalScroll}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.modalScrollContent}>
-            {renderStep()}
-          </ScrollView>
-        </Animated.View>
-      </View>
-    </Modal>
+    <>
+      <Modal
+        visible={visible}
+        animationType="slide"
+        transparent
+        onRequestClose={onClose}>
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1}
+          onPress={onClose}>
+          <TouchableOpacity 
+            style={styles.modalContent}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity
+                style={[styles.backButton, step === 'confirm' && styles.hiddenButton]}
+                onPress={handleBack}
+                disabled={step === 'confirm'}>
+                <ArrowLeft size={24} color={Colors.dark.text} />
+              </TouchableOpacity>
+              <View style={styles.modalHandle} />
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={handleClose}>
+                <X size={24} color={Colors.dark.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.modalScroll}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalScrollContent}>
+              {renderStep()}
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Razorpay WebView Modal */}
+      {showRazorpay && razorpayOrder && user && (
+        <RazorpayWebView
+          visible={showRazorpay}
+          orderId={razorpayOrder.orderId}
+          amount={razorpayOrder.amount}
+          currency={razorpayOrder.currency}
+          keyId={getRazorpayKeyId()}
+          name="KruZ"
+          description={`Ride from ${ride.from} to ${ride.to}`}
+          prefill={{
+            name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+            email: user.email,
+            contact: '',
+          }}
+          onSuccess={handleRazorpaySuccess}
+          onFailure={handleRazorpayFailure}
+          onClose={() => setShowRazorpay(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -340,19 +647,40 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.backgroundSecondary,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: '90%',
+    height: '75%',
+    marginBottom: 65,
   },
   modalHeader: {
     alignItems: 'center',
     paddingTop: 12,
-    paddingBottom: 8,
+    paddingBottom: 12,
     position: 'relative',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
   modalHandle: {
     width: 40,
     height: 4,
     backgroundColor: Colors.dark.border,
     borderRadius: 2,
+  },
+  backButton: {
+    position: 'absolute',
+    left: 16,
+    top: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.dark.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  hiddenButton: {
+    opacity: 0,
+    pointerEvents: 'none',
   },
   closeButton: {
     position: 'absolute',
@@ -370,7 +698,8 @@ const styles = StyleSheet.create({
   },
   modalScrollContent: {
     padding: 20,
-    paddingTop: 8,
+    paddingTop: 16,
+    paddingBottom: 40,
   },
   stepContent: {
     alignItems: 'center',
@@ -431,6 +760,46 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 24,
   },
+  infoGridClean: {
+    width: '100%',
+    marginBottom: 24,
+    gap: 16,
+  },
+  modeCard: {
+    width: '100%',
+    borderRadius: 16,
+    backgroundColor: Colors.dark.card,
+    padding: 16,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  modeLabel: {
+    color: Colors.dark.gold,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  modeTagline: {
+    color: Colors.dark.text,
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  modeDescription: {
+    color: Colors.dark.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+  },
   infoItem: {
     flex: 1,
     minWidth: '45%',
@@ -439,9 +808,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   infoLabel: {
-    fontSize: 12,
+    fontSize: 13,
     color: Colors.dark.textSecondary,
-    marginBottom: 4,
+    fontWeight: '500',
   },
   infoValue: {
     fontSize: 15,
@@ -460,11 +829,79 @@ const styles = StyleSheet.create({
     borderColor: Colors.dark.border,
     minHeight: 56,
   },
-  otpInput: {
+  verificationGrid: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 16,
+  },
+  verificationCard: {
+    flex: 1,
+    minWidth: '48%',
+    backgroundColor: Colors.dark.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    padding: 14,
+  },
+  verificationLabel: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  verificationValue: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  statusPillRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  statusPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  statusPillActive: {
+    backgroundColor: Colors.dark.gold,
+    borderColor: Colors.dark.gold,
+  },
+  statusPillSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.dark.border + '33',
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  statusPillText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusPillTextActive: {
+    color: Colors.dark.background,
+  },
+  escrowNote: {
+    marginTop: 16,
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
     textAlign: 'center',
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: 8,
   },
   seatContainer: {
     width: '100%',
@@ -564,6 +1001,37 @@ const styles = StyleSheet.create({
     color: Colors.dark.gold,
     fontWeight: '700',
   },
+  statusCard: {
+    width: '100%',
+    backgroundColor: Colors.dark.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    padding: 16,
+    marginBottom: 16,
+  },
+  statusCardLabel: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  statusCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  statusCardText: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  statusCardSubtext: {
+    color: Colors.dark.textSecondary,
+    fontSize: 13,
+  },
   completedFare: {
     width: '100%',
     backgroundColor: Colors.dark.card,
@@ -590,6 +1058,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
+    marginTop: 8,
   },
   disabledButton: {
     opacity: 0.5,
@@ -602,14 +1071,81 @@ const styles = StyleSheet.create({
   secondaryButton: {
     width: '100%',
     backgroundColor: 'transparent',
-    paddingVertical: 16,
+    paddingVertical: 12,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 4,
   },
   secondaryButtonText: {
     color: Colors.dark.textSecondary,
     fontSize: 16,
     fontWeight: '600',
+  },
+  walletBalanceCard: {
+    width: '100%',
+    backgroundColor: Colors.dark.card,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  balanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  balanceLabel: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+  },
+  balanceAmount: {
+    fontSize: 20,
+    color: Colors.dark.gold,
+    fontWeight: '700',
+  },
+  paymentOptions: {
+    width: '100%',
+    gap: 12,
+    marginBottom: 20,
+  },
+  paymentOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.card,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: Colors.dark.border,
+  },
+  paymentOptionSelected: {
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '10',
+  },
+  paymentOptionDisabled: {
+    opacity: 0.5,
+  },
+  paymentOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  paymentOptionText: {
+    flex: 1,
+  },
+  paymentOptionTitle: {
+    fontSize: 15,
+    color: Colors.dark.text,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  paymentOptionSubtitle: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+  },
+  disabledText: {
+    color: Colors.dark.textSecondary,
   },
 });

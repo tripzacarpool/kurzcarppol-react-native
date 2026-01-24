@@ -1,37 +1,70 @@
-import { supabase } from './supabase';
-
-export async function fetchAndStoreUserIP(userId: string): Promise<string | null> {
+export async function fetchAndStoreUserIP(
+  userId: string,
+): Promise<string | null> {
   try {
+    console.log('📡 Fetching IP from https://api.ipify.org...');
     const response = await fetch('https://api.ipify.org?format=json');
     const data = await response.json();
     const ipAddress = data.ip;
+    console.log('✅ Got IP:', ipAddress);
 
     if (ipAddress) {
-      await supabase
-        .from('profiles')
-        .update({
-          ip_address: ipAddress,
-          last_ip_update: new Date().toISOString(),
-        })
-        .eq('id', userId);
+      const API_URL =
+        process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.108:5000';
+      const ipUrl = `${API_URL}/api/users/ip`;
+      console.log('💾 Storing IP to:', ipUrl);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const storeResponse = await fetch(ipUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId,
+          ipAddress,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!storeResponse.ok) {
+        console.error('❌ Failed to store IP:', storeResponse.status);
+      } else {
+        console.log('✅ IP stored successfully');
+      }
     }
 
     return ipAddress;
   } catch (error) {
-    console.error('Failed to fetch IP address:', error);
+    console.warn(
+      '⚠️ IP service failed (non-critical):',
+      error instanceof Error ? error.message : 'Unknown error',
+    );
     return null;
   }
 }
 
 export async function getUserProfile(userId: string) {
   try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
+    const API_URL =
+      process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.108:5000';
+    console.log('👤 Fetching profile from:', `${API_URL}/api/users/${userId}`);
+    const response = await fetch(`${API_URL}/api/users/${userId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
 
-    if (error) throw error;
+    if (!response.ok) {
+      throw new Error('Failed to fetch user profile');
+    }
+
+    const data = await response.json();
     return data;
   } catch (error) {
     console.error('Failed to fetch user profile:', error);

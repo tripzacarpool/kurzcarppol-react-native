@@ -2,8 +2,6 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView } fr
 import { MapPin, Star, Calendar, User as UserIcon } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { mockTrips } from '@/data/mockData';
-import Animated from 'react-native-reanimated';
-import { FadeInDown } from 'react-native-reanimated';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
@@ -25,21 +23,19 @@ export default function TripsScreen() {
     }
   };
 
-  const userName = userProfile?.full_name?.split(' ')[0] || user?.user_metadata?.full_name?.split(' ')[0] || 'there';
+  const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
   const totalTrips = userProfile?.total_trips || mockTrips.length;
 
   return (
     <SafeAreaView style={styles.container}>
-      <Animated.View entering={FadeInDown.duration(400).springify()} style={styles.header}>
+      <View style={styles.header}>
         <Text style={styles.title}>My Trips</Text>
         <Text style={styles.subtitle}>Hey {userName}! You've completed {totalTrips} trip{totalTrips !== 1 ? 's' : ''}</Text>
-      </Animated.View>
+      </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {mockTrips.map((trip, index) => (
-          <Animated.View
-            key={trip.id}
-            entering={FadeInDown.delay(index * 50).springify()}>
+          <View key={trip.id}>
             <TouchableOpacity
               style={styles.tripCard}
               activeOpacity={0.7}>
@@ -108,7 +104,7 @@ export default function TripsScreen() {
                 )}
               </View>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         ))}
       </ScrollView>
     </SafeAreaView>

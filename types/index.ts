@@ -1,4 +1,63 @@
-export type UserRole = 'traveler' | 'driver' | 'admin';
+export type UserRole = 'passenger' | 'ride_partner' | 'admin';
+
+export type RidePartnerMode = 'daily' | 'casual' | 'professional';
+export type RidePartnerVehicleType = 'personal' | 'cab';
+export type RidePartnerApplicationStatus =
+  | 'draft'
+  | 'submitted'
+  | 'under_review'
+  | 'approved'
+  | 'rejected';
+
+export interface RidePartnerTimelineEvent {
+  status: RidePartnerApplicationStatus;
+  note?: string;
+  timestamp: string;
+}
+
+export interface RidePartnerVerificationSection {
+  status: 'pending' | 'submitted' | 'approved' | 'rejected';
+  verifiedAt?: string;
+  rejectionReason?: string;
+}
+
+export interface RidePartnerProfile {
+  status: RidePartnerApplicationStatus;
+  mode: RidePartnerMode;
+  vehicleType: RidePartnerVehicleType;
+  basicProfile: {
+    fullName: string;
+    phone: string;
+    profilePhotoUrl?: string;
+  } & RidePartnerVerificationSection;
+  vehicleDetails: {
+    carModel: string;
+    vehicleNumber: string;
+    vehiclePhotoUrl?: string;
+  } & RidePartnerVerificationSection;
+  licenseDetails: {
+    licenseNumber: string;
+    licensePhotoUrl?: string;
+  } & RidePartnerVerificationSection;
+  payoutDetails: {
+    accountHolderName: string;
+    accountNumber: string;
+    ifscCode: string;
+  } & RidePartnerVerificationSection;
+  professionalDetails?: {
+    commercialPermitUrl?: string;
+  } & RidePartnerVerificationSection;
+  declaration: {
+    communityRulesAccepted: boolean;
+    ownershipConsent: boolean;
+    acceptedAt: string;
+  };
+  timeline: RidePartnerTimelineEvent[];
+  lastSubmittedAt?: string;
+  reviewerNotes?: string;
+}
+
+export type DriverMode = 'all_access' | 'community' | 'commuter';
 
 export type Gender = 'male' | 'female' | 'other';
 
@@ -12,6 +71,7 @@ export interface User {
   rating: number;
   avatar?: string;
   walletBalance: number;
+  ridePartnerProfile?: RidePartnerProfile;
 }
 
 export interface Vehicle {
@@ -66,6 +126,7 @@ export interface Ride {
   status: 'upcoming' | 'active' | 'completed';
   distance: string;
   duration: string;
+  driverMode: DriverMode;
 }
 
 export interface Booking {
@@ -78,8 +139,13 @@ export interface Booking {
   fare: number;
   customRequest?: string;
   customFare?: number;
-  status: 'pending' | 'accepted' | 'rejected' | 'counter_offered' | 'active' | 'completed';
-  otp?: string;
+  status:
+    | 'pending'
+    | 'accepted'
+    | 'rejected'
+    | 'counter_offered'
+    | 'active'
+    | 'completed';
   createdAt: string;
 }
 

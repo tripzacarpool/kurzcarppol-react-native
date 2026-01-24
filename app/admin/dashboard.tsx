@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Switch,
+  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -20,8 +21,6 @@ import {
   Search,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import Animated from 'react-native-reanimated';
-import { FadeInDown } from 'react-native-reanimated';
 
 const mockDrivers = [
   {
@@ -132,9 +131,7 @@ export default function AdminDashboard() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Driver Management</Text>
           {drivers.map((driver, index) => (
-            <Animated.View
-              key={driver.id}
-              entering={FadeInDown.delay(index * 50).springify()}>
+            <View key={driver.id}>
               <View style={styles.driverCard}>
                 <View style={styles.driverHeader}>
                   <View style={styles.driverInfo}>
@@ -198,7 +195,7 @@ export default function AdminDashboard() {
                   </TouchableOpacity>
                 )}
               </View>
-            </Animated.View>
+            </View>
           ))}
         </View>
       </ScrollView>

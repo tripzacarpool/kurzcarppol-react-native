@@ -2,8 +2,6 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView } fr
 import { Wallet, Plus, ArrowUpRight, ArrowDownRight, CreditCard } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { mockUser } from '@/data/mockData';
-import Animated from 'react-native-reanimated';
-import { FadeInDown } from 'react-native-reanimated';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
@@ -33,19 +31,19 @@ export default function WalletScreen() {
     }
   };
 
-  const userName = userProfile?.full_name?.split(' ')[0] || user?.user_metadata?.full_name?.split(' ')[0] || 'there';
+  const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
 
   return (
     <SafeAreaView style={styles.container}>
-      <Animated.View entering={FadeInDown.duration(400).springify()} style={styles.header}>
+      <View style={styles.header}>
         <View>
           <Text style={styles.title}>KruZ Wallet</Text>
           <Text style={styles.subtitle}>Hey {userName}!</Text>
         </View>
-      </Animated.View>
+      </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <Animated.View entering={FadeInDown.duration(500).delay(50).springify()} style={styles.balanceCard}>
+        <View style={styles.balanceCard}>
           <View style={styles.balanceHeader}>
             <Wallet size={32} color={Colors.dark.gold} />
             <Text style={styles.balanceLabel}>Available Balance</Text>
@@ -61,14 +59,12 @@ export default function WalletScreen() {
               <Text style={styles.bankText}>To Bank</Text>
             </TouchableOpacity>
           </View>
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInDown.duration(500).delay(100).springify()} style={styles.transactionsSection}>
+        <View style={styles.transactionsSection}>
           <Text style={styles.sectionTitle}>Recent Transactions</Text>
           {transactions.map((transaction, index) => (
-            <Animated.View
-              key={transaction.id}
-              entering={FadeInDown.delay(index * 50).springify()}>
+            <View key={transaction.id}>
               <View style={styles.transactionCard}>
                 <View
                   style={[
@@ -99,9 +95,9 @@ export default function WalletScreen() {
                   {transaction.type === 'credit' ? '+' : '-'}₹{transaction.amount}
                 </Text>
               </View>
-            </Animated.View>
+            </View>
           ))}
-        </Animated.View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

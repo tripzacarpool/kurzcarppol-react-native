@@ -6,7 +6,7 @@ export const mockUser: User = {
   email: 'priya@example.com',
   phone: '+91 98765 43210',
   gender: 'female',
-  role: 'traveler',
+  role: 'passenger',
   rating: 4.8,
   walletBalance: 450,
 };
@@ -36,8 +36,8 @@ export const mockRides: Ride[] = [
     },
     dropPoint: {
       name: 'Cyber Hub',
-      lat: 28.4950,
-      lng: 77.0890,
+      lat: 28.495,
+      lng: 77.089,
     },
     departureTime: '5 mins',
     availableSeats: [2, 3],
@@ -47,6 +47,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '28 km',
     duration: '45 mins',
+    driverMode: 'all_access',
   },
   {
     id: '2',
@@ -83,6 +84,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '22 km',
     duration: '35 mins',
+    driverMode: 'community',
   },
   {
     id: '3',
@@ -119,6 +121,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '25 km',
     duration: '40 mins',
+    driverMode: 'commuter',
   },
   {
     id: '4',
@@ -139,7 +142,7 @@ export const mockRides: Ride[] = [
     to: 'Gurgaon DLF Phase 1',
     pickupPoint: {
       name: 'Palika Bazaar',
-      lat: 28.6310,
+      lat: 28.631,
       lng: 77.2185,
     },
     dropPoint: {
@@ -155,6 +158,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '30 km',
     duration: '50 mins',
+    driverMode: 'all_access',
   },
   {
     id: '5',
@@ -176,7 +180,7 @@ export const mockRides: Ride[] = [
     pickupPoint: {
       name: 'CP Central Park',
       lat: 28.6295,
-      lng: 77.2190,
+      lng: 77.219,
     },
     dropPoint: {
       name: 'Nehru Place Metro',
@@ -191,6 +195,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '12 km',
     duration: '25 mins',
+    driverMode: 'community',
   },
   {
     id: '6',
@@ -227,6 +232,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '32 km',
     duration: '55 mins',
+    driverMode: 'commuter',
   },
   {
     id: '7',
@@ -248,7 +254,7 @@ export const mockRides: Ride[] = [
     pickupPoint: {
       name: 'Barakhamba Road Metro',
       lat: 28.6275,
-      lng: 77.2270,
+      lng: 77.227,
     },
     dropPoint: {
       name: 'Sector 18 Metro',
@@ -263,6 +269,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '20 km',
     duration: '32 mins',
+    driverMode: 'community',
   },
   {
     id: '8',
@@ -283,8 +290,8 @@ export const mockRides: Ride[] = [
     to: 'Rohini Sector 10',
     pickupPoint: {
       name: 'CP Metro',
-      lat: 28.6320,
-      lng: 77.2180,
+      lat: 28.632,
+      lng: 77.218,
     },
     dropPoint: {
       name: 'Rohini West Metro',
@@ -299,6 +306,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '18 km',
     duration: '30 mins',
+    driverMode: 'all_access',
   },
   {
     id: '9',
@@ -319,8 +327,8 @@ export const mockRides: Ride[] = [
     to: 'Saket District Centre',
     pickupPoint: {
       name: 'CP Gate 1',
-      lat: 28.6300,
-      lng: 77.2200,
+      lat: 28.63,
+      lng: 77.22,
     },
     dropPoint: {
       name: 'Saket Metro',
@@ -335,6 +343,7 @@ export const mockRides: Ride[] = [
     status: 'upcoming',
     distance: '14 km',
     duration: '28 mins',
+    driverMode: 'commuter',
   },
 ];
 

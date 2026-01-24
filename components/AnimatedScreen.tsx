@@ -1,5 +1,4 @@
 import { View, StyleSheet } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 interface AnimatedScreenProps {
   children: React.ReactNode;
@@ -7,12 +6,9 @@ interface AnimatedScreenProps {
 
 export function AnimatedScreen({ children }: AnimatedScreenProps) {
   return (
-    <Animated.View
-      entering={FadeIn.duration(250)}
-      exiting={FadeOut.duration(150)}
-      style={styles.container}>
+    <View style={styles.container}>
       {children}
-    </Animated.View>
+    </View>
   );
 }
 

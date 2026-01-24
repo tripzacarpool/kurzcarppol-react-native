@@ -1,29 +1,29 @@
 import { Tabs } from 'expo-router';
 import { Home, MapPin, Bell, Wallet, User } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { Platform } from 'react-native';
-import Animated, { useAnimatedStyle, withSpring, useSharedValue, withTiming } from 'react-native-reanimated';
-import { useEffect } from 'react';
+import { Platform, Animated } from 'react-native';
+import { useEffect, useRef } from 'react';
 
 function AnimatedTabIcon({ Icon, color, focused }: { Icon: any; color: string; focused: boolean }) {
-  const scale = useSharedValue(focused ? 1.1 : 1);
-  const opacity = useSharedValue(focused ? 1 : 0.7);
+  const scaleAnim = useRef(new Animated.Value(focused ? 1.1 : 1)).current;
+  const opacityAnim = useRef(new Animated.Value(focused ? 1 : 0.7)).current;
 
   useEffect(() => {
-    scale.value = withSpring(focused ? 1.1 : 1, {
-      damping: 15,
-      stiffness: 200,
-    });
-    opacity.value = withTiming(focused ? 1 : 0.7, { duration: 200 });
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: focused ? 1.1 : 1,
+        useNativeDriver: false,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: focused ? 1 : 0.7,
+        duration: 200,
+        useNativeDriver: false,
+      }),
+    ]).start();
   }, [focused]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-    opacity: opacity.value,
-  }));
-
   return (
-    <Animated.View style={animatedStyle}>
+    <Animated.View style={[{ transform: [{ scale: scaleAnim }], opacity: opacityAnim }]}>
       <Icon size={24} color={color} />
     </Animated.View>
   );

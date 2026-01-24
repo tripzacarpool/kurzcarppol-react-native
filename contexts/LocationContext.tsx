@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import * as Location from 'expo-location';
 import { Platform } from 'react-native';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
 
 interface LocationData {
@@ -113,16 +112,45 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       setLocation(locationData);
 
       if (user) {
-        await supabase
-          .from('profiles')
-          .update({
-            last_latitude: latitude,
-            last_longitude: longitude,
-            last_location_update: new Date().toISOString(),
+        // Update user location in MongoDB via API
+        try {
+          const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.108:5000';
+          const locationUrl = `${API_URL}/api/users/location`;
+          
+          const locationPayload = {
+            userId: user.id,
+            latitude,
+            longitude,
             city: locationData.city,
             country: locationData.country,
-          })
-          .eq('id', user.id);
+          };
+          
+          console.log('📍 Updating location to:', locationUrl);
+          console.log('📦 Payload:', JSON.stringify(locationPayload));
+          
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000);
+          
+          const locResponse = await fetch(locationUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(locationPayload),
+            signal: controller.signal,
+          });
+          
+          clearTimeout(timeoutId);
+          
+          if (!locResponse.ok) {
+            console.error('❌ Location update failed:', locResponse.status);
+          } else {
+            console.log('✅ Location updated');
+          }
+        } catch (err) {
+          console.warn('⚠️ Location update failed (non-critical):', err instanceof Error ? err.message : 'Unknown error');
+          // Non-critical - app continues without location updates
+        }
       }
 
       setLoading(false);

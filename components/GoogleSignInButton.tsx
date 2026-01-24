@@ -2,68 +2,30 @@ import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, View, Platform }
 import { Colors } from '@/constants/Colors';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated from 'react-native-reanimated';
-import {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withSequence,
-  withTiming,
-  interpolate,
-} from 'react-native-reanimated';
+import { useSignUp } from '@clerk/clerk-react';
 
 interface GoogleSignInButtonProps {
-  onPress: () => void;
+  onPress?: () => void;
   loading?: boolean;
   text?: string;
 }
 
-const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
-
 export function GoogleSignInButton({ onPress, loading, text = "Continue with Google" }: GoogleSignInButtonProps) {
-  const scale = useSharedValue(1);
-  const shimmer = useSharedValue(0);
-
-  const animatedButtonStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  const animatedShimmerStyle = useAnimatedStyle(() => {
-    return {
-      transform: [
-        {
-          translateX: interpolate(shimmer.value, [0, 1], [-300, 300]),
-        },
-      ],
-    };
-  });
+  const { signUp } = useSignUp();
 
   const handlePressIn = () => {
-    scale.value = withSpring(0.96, {
-      damping: 15,
-      stiffness: 300,
-    });
+    // Placeholder for press animation
   };
 
   const handlePressOut = () => {
-    scale.value = withSpring(1, {
-      damping: 12,
-      stiffness: 200,
-    });
-
-    shimmer.value = withSequence(
-      withTiming(1, { duration: 600 }),
-      withTiming(0, { duration: 0 })
-    );
+    // Placeholder for release animation
   };
 
   return (
-    <AnimatedTouchable
-      style={[styles.buttonWrapper, animatedButtonStyle]}
+    <TouchableOpacity
+      style={[styles.buttonWrapper]}
       onPress={onPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
-      activeOpacity={1}
+      activeOpacity={0.7}
       disabled={loading}>
       <LinearGradient
         colors={[Colors.dark.gold + '15', Colors.dark.gold + '08']}
@@ -104,8 +66,9 @@ export function GoogleSignInButton({ onPress, loading, text = "Continue with Goo
           </View>
         </View>
       </LinearGradient>
-    </AnimatedTouchable>
+    </TouchableOpacity>
   );
+}
 }
 
 const styles = StyleSheet.create({

@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Car, Star, Clock, MapPin, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
+import { DRIVER_MODE_META } from '@/constants/driverModes';
 import { Ride } from '@/types';
 
 interface RideCardProps {
@@ -9,6 +10,8 @@ interface RideCardProps {
 }
 
 export function RideCard({ ride, onPress }: RideCardProps) {
+  const modeMeta = DRIVER_MODE_META[ride.driverMode];
+
   return (
     <TouchableOpacity
       style={[styles.card, ride.isWomenOnly && styles.womenOnlyCard]}
@@ -32,6 +35,10 @@ export function RideCard({ ride, onPress }: RideCardProps) {
               <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
               <Text style={styles.rating}>{ride.driver.rating}</Text>
               <Text style={styles.rides}>• {ride.driver.ridesCompleted} rides</Text>
+            </View>
+            <View style={styles.modeBadge}>
+              <Text style={styles.modeBadgeLabel}>{modeMeta.label}</Text>
+              <Text style={styles.modeBadgeTagline}>{modeMeta.tagline}</Text>
             </View>
           </View>
         </View>
@@ -152,6 +159,23 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
     fontSize: 12,
     marginLeft: 4,
+  },
+  modeBadge: {
+    marginTop: 6,
+    backgroundColor: Colors.dark.border + '33',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+  },
+  modeBadgeLabel: {
+    color: Colors.dark.gold,
+    fontWeight: '700',
+    fontSize: 11,
+  },
+  modeBadgeTagline: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+    marginTop: 2,
   },
   fareContainer: {
     alignItems: 'flex-end',

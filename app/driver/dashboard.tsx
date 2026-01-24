@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Switch,
+  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -21,8 +22,6 @@ import {
   X,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import Animated from 'react-native-reanimated';
-import { FadeInDown } from 'react-native-reanimated';
 
 const mockRequests = [
   {
@@ -132,9 +131,7 @@ export default function DriverDashboard() {
           <View style={styles.requestsSection}>
             <Text style={styles.sectionTitle}>Incoming Requests</Text>
             {mockRequests.map((request, index) => (
-              <Animated.View
-                key={request.id}
-                entering={FadeInDown.delay(index * 100).springify()}>
+              <View key={request.id}>
                 <View style={styles.requestCard}>
                   <View style={styles.requestHeader}>
                     <Text style={styles.passengerName}>{request.passenger}</Text>
@@ -194,7 +191,7 @@ export default function DriverDashboard() {
                     </TouchableOpacity>
                   </View>
                 </View>
-              </Animated.View>
+              </View>
             ))}
           </View>
         )}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,21 +12,45 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { LogIn, Mail, Lock, ArrowLeft } from 'lucide-react-native';
+import { LogIn, Mail, Lock, ArrowLeft, LogOut } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { useAuth } from '@/contexts/AuthContext';
-import { GoogleSignInButton } from '@/components/GoogleSignInButton';
-import Animated from 'react-native-reanimated';
-import { FadeInDown, FadeIn } from 'react-native-reanimated';
+import { useSignIn, useSession, useClerk } from '@clerk/clerk-expo';
+import { useAuthContext } from '@/contexts/AuthContext';
+import { clearAllClerkSessions } from '@/lib/clerkSessionHelper';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { signIn, signInWithGoogle } = useAuth();
+  const { signIn } = useSignIn();
+  const { session } = useSession();
+  const clerk = useClerk();
+  const { isSignedIn, signOut } = useAuthContext();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Redirect to home if already signed in
+  useEffect(() => {
+    if (isSignedIn) {
+      console.log('✅ Already signed in, redirecting to tabs...');
+      router.replace('/(tabs)');
+    }
+  }, [isSignedIn]);
+
+  const handleClearSession = async () => {
+    try {
+      console.log('🚪 Clearing existing session...');
+      console.log('1️⃣ Clearing secure storage...');
+      await clearAllClerkSessions();
+      console.log('2️⃣ Signing out from Clerk...');
+      await signOut();
+      console.log('✅ Session cleared successfully');
+      setError('Session cleared. Please sign in again.');
+    } catch (err) {
+      console.error('❌ Failed to clear session:', err);
+      setError('Failed to clear session');
+    }
+  };
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -37,29 +61,101 @@ export default function LoginScreen() {
     setLoading(true);
     setError('');
 
-    const { error: signInError } = await signIn(email, password);
+    try {
+      if (!signIn) {
+        throw new Error('Clerk SignIn not initialized. Check Clerk publishable key.');
+      }
 
-    if (signInError) {
-      setError(signInError.message);
+      console.log('🔐 Attempting Clerk sign-in with:', email);
+      const result = await signIn.create({
+        identifier: email,
+        password,
+      });
+
+      console.log('🔑 Clerk sign-in result:', result?.status);
+
+      if (result?.status === 'complete') {
+        console.log('✅ Login successful, Clerk session created');
+        console.log('📍 Session ID:', result.createdSessionId);
+        
+        // Set the active session using clerk.setActive
+        if (result.createdSessionId) {
+          await clerk.setActive({ session: result.createdSessionId });
+          console.log('✅ Session activated');
+        }
+        
+        setEmail('');
+        setPassword('');
+        
+        // Wait for Clerk session state to propagate
+        console.log('⏳ Waiting for Clerk session to propagate...');
+        let retries = 0;
+        const maxRetries = 20; // 2 seconds max
+        while (!session?.id && retries < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          retries++;
+        }
+        
+        if (session?.id) {
+          console.log('✅ Session state confirmed:', session.id);
+        } else {
+          console.log('⚠️ Session state not confirmed, but proceeding...');
+        }
+        
+        console.log('🚀 Redirecting to home...');
+        router.replace('/(tabs)');
+      } else if (result?.status === 'needs_second_factor') {
+        setError('Two-factor authentication required');
+      } else {
+        console.log('⚠️ Login status:', result?.status);
+        setError('Sign in failed. Please try again.');
+      }
+    } catch (err: any) {
+      // Ignore "session_exists" error - user is already logged in
+      if (err?.errors?.[0]?.code === 'session_exists') {
+        console.log('✅ Session already exists, waiting for Clerk to update...');
+        let retries = 0;
+        const maxRetries = 20;
+        while (!session?.id && retries < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          retries++;
+        }
+        router.replace('/(tabs)');
+        return;
+      }
+      
+      const errorMessage = err?.errors?.[0]?.message || err?.message || JSON.stringify(err);
+      setError(errorMessage);
+      console.error('❌ Login error details:', {
+        message: err?.message,
+        errors: err?.errors,
+        clerkError: err?.clerkError,
+        fullError: err,
+      });
+    } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleSignIn = async () => {
-    setGoogleLoading(true);
-    setError('');
+    try {
+      const result = await signIn?.create({
+        strategy: 'oauth_google',
+        redirectUrl: 'kruzapp://oauth-callback',
+      });
 
-    const { error: googleError } = await signInWithGoogle();
-
-    if (googleError) {
-      let errorMessage = googleError.message;
-
-      if (errorMessage.includes('provider') || errorMessage.includes('not enabled')) {
-        errorMessage = 'Google sign-in is not configured yet. Please check GOOGLE_OAUTH_SETUP.md for setup instructions.';
+      if (result?.status === 'complete') {
+        router.replace('/(tabs)');
       }
-
-      setError(errorMessage);
-      setGoogleLoading(false);
+    } catch (err: any) {
+      // Ignore "session_exists" error
+      if (err?.errors?.[0]?.code === 'session_exists') {
+        console.log('✅ Session already exists, redirecting...');
+        router.replace('/(tabs)');
+        return;
+      }
+      setError(err?.errors?.[0]?.message || 'Google sign-in failed');
+      console.error('Google sign-in error:', err);
     }
   };
 
@@ -79,18 +175,26 @@ export default function LoginScreen() {
             <ArrowLeft size={24} color={Colors.dark.text} />
           </TouchableOpacity>
 
-          <Animated.View entering={FadeInDown.duration(500).springify()} style={styles.header}>
+          <View style={styles.header}>
             <View style={styles.iconContainer}>
               <LogIn size={48} color={Colors.dark.gold} />
             </View>
             <Text style={styles.title}>Welcome Back</Text>
             <Text style={styles.subtitle}>Sign in to continue your journey</Text>
-          </Animated.View>
+          </View>
 
-          <Animated.View entering={FadeInDown.duration(600).delay(100).springify()} style={styles.form}>
+          <View style={styles.form}>
             {error ? (
               <View style={styles.errorContainer}>
                 <Text style={styles.errorText}>{error}</Text>
+                {error.includes('session') && (
+                  <TouchableOpacity
+                    style={styles.clearSessionButton}
+                    onPress={handleClearSession}>
+                    <LogOut size={16} color="#fff" />
+                    <Text style={styles.clearSessionButtonText}>Clear Session</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : null}
 
@@ -153,11 +257,17 @@ export default function LoginScreen() {
               <View style={styles.dividerLine} />
             </View>
 
-            <GoogleSignInButton
+            <TouchableOpacity
+              style={[styles.googleButton, loading && styles.buttonDisabled]}
               onPress={handleGoogleSignIn}
-              loading={googleLoading}
-              text="Sign in with Google"
-            />
+              disabled={loading}
+              activeOpacity={0.8}>
+              {loading ? (
+                <ActivityIndicator color={Colors.dark.background} />
+              ) : (
+                <Text style={styles.googleButtonText}>Sign in with Google</Text>
+              )}
+            </TouchableOpacity>
 
             <View style={styles.signupPrompt}>
               <Text style={styles.signupPromptText}>Don't have an account? </Text>
@@ -165,7 +275,7 @@ export default function LoginScreen() {
                 <Text style={styles.signupLink}>Sign Up</Text>
               </TouchableOpacity>
             </View>
-          </Animated.View>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -233,6 +343,23 @@ const styles = StyleSheet.create({
     color: Colors.dark.error,
     fontSize: 14,
     textAlign: 'center',
+    marginBottom: 8,
+  },
+  clearSessionButton: {
+    backgroundColor: Colors.dark.error,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 6,
+  },
+  clearSessionButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   inputGroup: {
     flexDirection: 'row',
@@ -281,6 +408,23 @@ const styles = StyleSheet.create({
     color: Colors.dark.background,
     fontSize: 18,
     fontWeight: '700',
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4285F4',
+    paddingVertical: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  googleButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   divider: {
     flexDirection: 'row',

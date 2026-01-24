@@ -2,8 +2,6 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView } fr
 import { Bell, CheckCheck, Calendar, CreditCard, Shield } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { mockNotifications } from '@/data/mockData';
-import Animated from 'react-native-reanimated';
-import { FadeInDown } from 'react-native-reanimated';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
@@ -40,7 +38,7 @@ export default function AlertsScreen() {
     }
   };
 
-  const userName = userProfile?.full_name?.split(' ')[0] || user?.user_metadata?.full_name?.split(' ')[0] || 'there';
+  const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
   const unreadCount = mockNotifications.filter((n) => !n.read).length;
 
   return (
@@ -63,9 +61,7 @@ export default function AlertsScreen() {
         {mockNotifications.map((notification, index) => {
           const Icon = getNotificationIcon(notification.type);
           return (
-            <Animated.View
-              key={notification.id}
-              entering={FadeInDown.delay(index * 50).springify()}>
+            <View key={notification.id}>
               <TouchableOpacity
                 style={[styles.notificationCard, !notification.read && styles.unreadCard]}
                 activeOpacity={0.7}>
@@ -88,7 +84,7 @@ export default function AlertsScreen() {
                   <Text style={styles.notificationTime}>{notification.createdAt}</Text>
                 </View>
               </TouchableOpacity>
-            </Animated.View>
+            </View>
           );
         })}
 

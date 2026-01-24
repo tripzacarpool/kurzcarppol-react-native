@@ -6,11 +6,8 @@ import { RideCard } from '@/components/RideCard';
 import { BookingModal } from '@/components/BookingModal';
 import { mockRides, mockNotifications } from '@/data/mockData';
 import { Ride } from '@/types';
-import Animated from 'react-native-reanimated';
-import { FadeInDown } from 'react-native-reanimated';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
-import { getUserProfile } from '@/lib/ipService';
 
 export default function HomeScreen() {
   const { user } = useAuth();
@@ -19,22 +16,6 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRide, setSelectedRide] = useState<Ride | null>(null);
   const [bookingModalVisible, setBookingModalVisible] = useState(false);
-  const [userProfile, setUserProfile] = useState<any>(null);
-  const [loadingProfile, setLoadingProfile] = useState(true);
-
-  useEffect(() => {
-    if (user) {
-      loadUserProfile();
-    }
-  }, [user]);
-
-  const loadUserProfile = async () => {
-    if (user) {
-      const profile = await getUserProfile(user.id);
-      setUserProfile(profile);
-      setLoadingProfile(false);
-    }
-  };
 
   const handleRequestLocation = async () => {
     const granted = await requestPermission();
@@ -53,14 +34,12 @@ export default function HomeScreen() {
     return 'Good Evening';
   };
 
-  const userName = userProfile?.full_name?.split(' ')[0] || user?.user_metadata?.full_name?.split(' ')[0] || 'Rider';
+  const userName = user?.firstName?.split(' ')[0] || 'Rider';
 
   const currentLocation = location
     ? location.city && location.country
       ? `${location.city}, ${location.country}`
       : `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`
-    : userProfile?.city && userProfile?.country
-    ? `${userProfile.city}, ${userProfile.country}`
     : 'Location not available';
 
   const filteredRides = mockRides.filter((ride) => {
@@ -77,14 +56,11 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <Animated.View entering={FadeInDown.duration(400).springify()} style={styles.header}>
+        <View style={styles.header}>
           <View style={styles.headerTop}>
             <View>
               <Text style={styles.greeting}>{getGreeting()}, {userName}!</Text>
               <Text style={styles.subtitle}>Where are you going today?</Text>
-              {userProfile?.ip_address && (
-                <Text style={styles.ipText}>IP: {userProfile.ip_address}</Text>
-              )}
             </View>
             <TouchableOpacity style={styles.notificationButton}>
               <Bell size={24} color={Colors.dark.text} />
@@ -148,9 +124,9 @@ export default function HomeScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInDown.duration(500).delay(100).springify()} style={styles.ridesSection}>
+        <View style={styles.ridesSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Available Rides</Text>
             <Text style={styles.rideCount}>{filteredRides.length} rides</Text>
@@ -165,9 +141,7 @@ export default function HomeScreen() {
             </View>
           ) : (
             filteredRides.map((ride, index) => (
-              <Animated.View
-                key={ride.id}
-                entering={FadeInDown.delay(index * 50).springify()}>
+              <View key={ride.id}>
                 <RideCard
                   ride={ride}
                   onPress={() => {
@@ -175,10 +149,10 @@ export default function HomeScreen() {
                     setBookingModalVisible(true);
                   }}
                 />
-              </Animated.View>
+              </View>
             ))
           )}
-        </Animated.View>
+        </View>
       </ScrollView>
 
       <BookingModal

@@ -15,7 +15,7 @@ export default function ProfileScreen() {
   const { location, hasPermission, requestPermission, updateLocation } = useLocation();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [locationEnabled, setLocationEnabled] = useState(hasPermission);
-  const [currentRole, setCurrentRole] = useState<UserRole>('traveler');
+  const [currentRole, setCurrentRole] = useState<UserRole>('passenger');
   const [userProfile, setUserProfile] = useState<any>(null);
 
   useEffect(() => {
@@ -23,6 +23,12 @@ export default function ProfileScreen() {
       loadUserProfile();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (user?.role) {
+      setCurrentRole(user.role);
+    }
+  }, [user?.role]);
 
   useEffect(() => {
     setLocationEnabled(hasPermission);
@@ -49,10 +55,14 @@ export default function ProfileScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              console.log('🚪 User confirmed logout');
               await signOut();
+              console.log('⏳ Waiting for state to update...');
+              await new Promise(resolve => setTimeout(resolve, 500));
+              console.log('🔄 Redirecting to login...');
               router.replace('/(auth)/login');
             } catch (error) {
-              console.error('Logout error:', error);
+              console.error('❌ Logout error:', error);
               Alert.alert('Error', 'Failed to logout. Please try again.');
             }
           },
@@ -77,7 +87,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const userDisplayName = userProfile?.full_name || user?.user_metadata?.full_name || mockUser.name;
+  const userDisplayName = userProfile?.full_name || (user?.firstName + ' ' + (user?.lastName || '')) || mockUser.name;
   const userEmail = user?.email || mockUser.email;
   const userRating = userProfile?.rating || mockUser.rating;
   const totalTrips = userProfile?.total_trips || 0;
@@ -141,16 +151,16 @@ export default function ProfileScreen() {
           <Text style={styles.sectionTitle}>Switch Mode</Text>
           <View style={styles.roleSwitcher}>
             <TouchableOpacity
-              style={[styles.roleCard, currentRole === 'traveler' && styles.roleCardActive]}
-              onPress={() => setCurrentRole('traveler')}
+              style={[styles.roleCard, currentRole === 'passenger' && styles.roleCardActive]}
+              onPress={() => setCurrentRole('passenger')}
               activeOpacity={0.7}>
-              <View style={[styles.roleIcon, currentRole === 'traveler' && styles.roleIconActive]}>
-                <User size={24} color={currentRole === 'traveler' ? Colors.dark.background : Colors.dark.gold} />
+              <View style={[styles.roleIcon, currentRole === 'passenger' && styles.roleIconActive]}>
+                <User size={24} color={currentRole === 'passenger' ? Colors.dark.background : Colors.dark.gold} />
               </View>
-              <Text style={[styles.roleTitle, currentRole === 'traveler' && styles.roleTitleActive]}>
+              <Text style={[styles.roleTitle, currentRole === 'passenger' && styles.roleTitleActive]}>
                 Traveler
               </Text>
-              {currentRole === 'traveler' && (
+              {currentRole === 'passenger' && (
                 <View style={styles.activeIndicator}>
                   <Check size={16} color={Colors.dark.background} />
                 </View>
@@ -158,16 +168,16 @@ export default function ProfileScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.roleCard, currentRole === 'driver' && styles.roleCardActive]}
-              onPress={() => setCurrentRole('driver')}
+              style={[styles.roleCard, currentRole === 'ride_partner' && styles.roleCardActive]}
+              onPress={() => setCurrentRole('ride_partner')}
               activeOpacity={0.7}>
-              <View style={[styles.roleIcon, currentRole === 'driver' && styles.roleIconActive]}>
-                <Car size={24} color={currentRole === 'driver' ? Colors.dark.background : Colors.dark.gold} />
+              <View style={[styles.roleIcon, currentRole === 'ride_partner' && styles.roleIconActive]}>
+                <Car size={24} color={currentRole === 'ride_partner' ? Colors.dark.background : Colors.dark.gold} />
               </View>
-              <Text style={[styles.roleTitle, currentRole === 'driver' && styles.roleTitleActive]}>
-                Driver
+              <Text style={[styles.roleTitle, currentRole === 'ride_partner' && styles.roleTitleActive]}>
+                Ride Partner
               </Text>
-              {currentRole === 'driver' && (
+              {currentRole === 'ride_partner' && (
                 <View style={styles.activeIndicator}>
                   <Check size={16} color={Colors.dark.background} />
                 </View>
@@ -192,13 +202,13 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
 
-          {currentRole === 'driver' && (
+          {currentRole === 'ride_partner' && (
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => router.push('/driver/dashboard')}
               activeOpacity={0.7}>
               <Car size={20} color={Colors.dark.background} />
-              <Text style={styles.actionButtonText}>Go to Driver Dashboard</Text>
+              <Text style={styles.actionButtonText}>Go to Ride Partner Dashboard</Text>
             </TouchableOpacity>
           )}
 
@@ -229,14 +239,14 @@ export default function ProfileScreen() {
             <Text style={styles.menuText}>Saved Addresses</Text>
             <ChevronRight size={20} color={Colors.dark.textSecondary} />
           </TouchableOpacity>
-          {currentRole === 'traveler' && (
+          {currentRole === 'passenger' && (
             <TouchableOpacity
               style={styles.menuItem}
               onPress={() => router.push('/driver/onboarding')}>
               <View style={styles.menuIcon}>
                 <Car size={20} color={Colors.dark.gold} />
               </View>
-              <Text style={styles.menuText}>Become a Driver</Text>
+              <Text style={styles.menuText}>Become a Ride Partner</Text>
               <ChevronRight size={20} color={Colors.dark.textSecondary} />
             </TouchableOpacity>
           )}
