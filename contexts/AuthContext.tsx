@@ -123,6 +123,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const payload = await response.json();
       const syncedUser = payload.user || payload;
 
+      const shouldHydrateRidePartner =
+        syncedUser?.role === 'ride_partner' || !!syncedUser?.ridePartnerProfile;
+
       setUser((prev) =>
         prev
           ? {
@@ -135,7 +138,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       );
       console.log('✅ User synced successfully, role:', syncedUser?.role);
 
-      await hydrateRidePartnerProfile(authUser.id);
+      if (shouldHydrateRidePartner) {
+        await hydrateRidePartnerProfile(authUser.id);
+      } else {
+        console.log('ℹ️ Skipping ride partner fetch for non-partner user');
+      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : JSON.stringify(err);
       console.warn('⚠️ Sync failed (non-critical):', errorMsg);
@@ -158,7 +165,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             : prev,
         );
       }
-    } catch (error) {
+    } catch (error: any) {
+      const status = error?.response?.status;
+      if (status === 404) {
+        console.log('ℹ️ No ride partner profile found for this user (expected for passengers)');
+        return;
+      }
       console.warn('⚠️ Unable to load ride partner profile:', error instanceof Error ? error.message : error);
     }
   };

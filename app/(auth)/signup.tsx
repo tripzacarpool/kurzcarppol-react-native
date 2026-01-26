@@ -13,7 +13,7 @@ import {
   Switch,
   Alert,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import {
   UserPlus,
   Mail,
@@ -56,7 +56,6 @@ const cabOnlyBlueprint = [{ title: 'Commercial Permit', method: 'Manual transpor
 
 export default function SignupScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ variant?: string }>();
   const { signUp } = useSignUp();
   const { isSignedIn, isLoaded } = useAuth();
   const [firstName, setFirstName] = useState('');
@@ -69,7 +68,6 @@ export default function SignupScreen() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [showVerification, setShowVerification] = useState(false);
-  const [signupVariant, setSignupVariant] = useState<'passenger' | 'ride_partner'>('passenger');
   const [ridePartnerMode, setRidePartnerMode] = useState<RidePartnerMode>('daily');
   const [vehicleType, setVehicleType] = useState<'personal' | 'cab'>('personal');
   const [ridePartnerForm, setRidePartnerForm] = useState({
@@ -93,6 +91,7 @@ export default function SignupScreen() {
   const [successVariant, setSuccessVariant] = useState<'passenger' | 'ride_partner'>('passenger');
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [createdClerkId, setCreatedClerkId] = useState<string | null>(null);
+  const isRidePartner = false;
   const needsPermit = useMemo(
     () => vehicleType === 'cab' || ridePartnerMode === 'professional',
     [vehicleType, ridePartnerMode],
@@ -103,35 +102,10 @@ export default function SignupScreen() {
   }, [applicationPreview]);
 
   useEffect(() => {
-    if (params?.variant === 'ride_partner') {
-      setSignupVariant('ride_partner');
-    }
-  }, [params?.variant]);
-
-  useEffect(() => {
     if (ridePartnerMode === 'professional') {
       setVehicleType('cab');
     }
   }, [ridePartnerMode]);
-
-  useEffect(() => {
-    if (signupVariant === 'ride_partner' && !ridePartnerForm.fullName.trim()) {
-      setRidePartnerForm((prev) => ({
-        ...prev,
-        fullName: `${firstName} ${lastName}`.trim(),
-      }));
-    }
-  }, [firstName, lastName, signupVariant]);
-
-  useEffect(() => {
-    if (signupVariant !== 'ride_partner') {
-      setRidePartnerDraft(null);
-      setApplicationPreview(null);
-      setSuccessVariant('passenger');
-    }
-  }, [signupVariant]);
-
-  const isRidePartner = signupVariant === 'ride_partner';
 
   const updateRidePartnerField = (field: keyof typeof ridePartnerForm, value: string | boolean) => {
     setRidePartnerForm((prev) => ({
@@ -899,52 +873,33 @@ export default function SignupScreen() {
           </TouchableOpacity>
 
           <View style={styles.header}>
-            <View style={[styles.iconContainer, isRidePartner && styles.ridePartnerIcon]}>
-              {isRidePartner ? (
-                <ShieldCheck size={48} color={Colors.dark.gold} />
-              ) : (
-                <UserPlus size={48} color={Colors.dark.gold} />
-              )}
+            <View style={styles.iconContainer}>
+              <UserPlus size={48} color={Colors.dark.gold} />
             </View>
-            <Text style={styles.title}>
-              {isRidePartner ? 'Join as a Ride Partner' : 'Create Account'}
-            </Text>
-            <Text style={styles.subtitle}>
-              {isRidePartner
-                ? 'Passengers pay in advance. We hold the payout in escrow until you complete the drop.'
-                : 'Join the ride-sharing community'}
-            </Text>
+            <Text style={styles.title}>Create Account</Text>
+            <Text style={styles.subtitle}>Join the ride-sharing community as a traveler</Text>
           </View>
 
-          <View style={styles.variantToggle}>
+          <View style={styles.driverCtaCard}>
+            <View style={styles.driverCtaHeader}>
+              <View style={styles.driverCtaIcon}>
+                <Car size={24} color={Colors.dark.gold} />
+              </View>
+              <View style={styles.driverCtaCopyWrap}>
+                <Text style={styles.driverCtaTitle}>Want to drive with Kurz?</Text>
+                <Text style={styles.driverCtaCopy}>
+                  Go through a guided, step-by-step driver onboarding for ride partners.
+                </Text>
+              </View>
+            </View>
             <TouchableOpacity
-              style={[styles.variantButton, signupVariant === 'passenger' && styles.variantButtonActive]}
-              onPress={() => setSignupVariant('passenger')}
-              activeOpacity={0.8}>
-              <Text
-                style={[styles.variantButtonText, signupVariant === 'passenger' && styles.variantButtonTextActive]}>
-                Ride as Traveler
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.variantButton, signupVariant === 'ride_partner' && styles.variantButtonActive]}
-              onPress={() => setSignupVariant('ride_partner')}
-              activeOpacity={0.8}>
-              <Text
-                style={[styles.variantButtonText, signupVariant === 'ride_partner' && styles.variantButtonTextActive]}>
-                Join as Ride Partner
-              </Text>
+              style={styles.driverCtaButton}
+              onPress={() => router.push('/driver/onboarding')}
+              activeOpacity={0.85}>
+              <ShieldCheck size={18} color={Colors.dark.background} />
+              <Text style={styles.driverCtaButtonText}>Start Driver Onboarding</Text>
             </TouchableOpacity>
           </View>
-          {isRidePartner ? (
-            <Text style={styles.variantHelper}>
-              Three-step verification · escrow-backed payouts · passengers confirm pickup & drop at every stop.
-            </Text>
-          ) : (
-            <Text style={styles.variantHelper}>
-              Want to drive instead? Use the toggle above or tap "Join as Ride Partner" below.
-            </Text>
-          )}
 
           <View style={styles.form}>
             {error ? (
@@ -1035,8 +990,6 @@ export default function SignupScreen() {
                 editable={!loading}
               />
             </View>
-
-            {isRidePartner && renderRidePartnerForm()}
 
             <TouchableOpacity
               style={[styles.signupButton, loading && styles.signupButtonDisabled]}
@@ -1140,6 +1093,58 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.dark.textSecondary,
     textAlign: 'center',
+  },
+  driverCtaCard: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    marginBottom: 20,
+  },
+  driverCtaHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  driverCtaIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: Colors.dark.gold + '1A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '40',
+  },
+  driverCtaCopyWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  driverCtaTitle: {
+    color: Colors.dark.text,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  driverCtaCopy: {
+    color: Colors.dark.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  driverCtaButton: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.dark.gold,
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  driverCtaButtonText: {
+    color: Colors.dark.background,
+    fontWeight: '700',
+    fontSize: 14,
   },
   variantToggle: {
     flexDirection: 'row',
