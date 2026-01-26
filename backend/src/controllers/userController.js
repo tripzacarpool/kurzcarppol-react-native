@@ -10,6 +10,7 @@ import {
 /**
  * Sync user from Clerk to MongoDB
  * POST /api/users/sync
+ * Requires Clerk authentication
  */
 export const syncUser = async (req, res, next) => {
   try {
@@ -23,23 +24,25 @@ export const syncUser = async (req, res, next) => {
       });
     }
 
-    // 2. Validate Request Body
-    const { clerkId, email, firstName, lastName, profileImage } = req.body;
+    // 2. Get authenticated user ID from Clerk middleware
+    const clerkId = req.auth?.userId;
 
-    if (!clerkId || !email) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        details: 'clerkId and email are required',
-        code: 'MISSING_FIELDS',
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'Valid Clerk authentication required',
+        code: 'NO_AUTH_USER',
       });
     }
 
-    // 3. Validate Clerk ID Format
-    if (!validateClerkId(clerkId)) {
+    // 3. Get user data from request body
+    const { email, firstName, lastName, profileImage } = req.body;
+
+    if (!email) {
       return res.status(400).json({
-        error: 'Invalid Clerk ID format',
-        details: 'Clerk ID must be a non-empty string',
-        code: 'INVALID_CLERK_ID',
+        error: 'Missing required fields',
+        details: 'email is required',
+        code: 'MISSING_FIELDS',
       });
     }
 
@@ -70,7 +73,7 @@ export const syncUser = async (req, res, next) => {
     if (existingEmailUser) {
       return res.status(400).json({
         error: 'Email already in use',
-        details: `This email is associated with another user (${existingEmailUser.clerkId})`,
+        details: `This email is associated with another user`,
         code: 'EMAIL_ALREADY_EXISTS',
       });
     }

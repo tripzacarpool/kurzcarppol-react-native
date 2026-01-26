@@ -1,12 +1,6 @@
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
 
-// Ensure dotenv is loaded
-dotenv.config({ path: '../../.env' });
-
-const MONGODB_URI =
-  process.env.MONGODB_URI ||
-  'mongodb+srv://upadhayayyogesh832:123freelanceproject123@cluster0.ga6zbb8.mongodb.net/kruzTestVersion?retryWrites=true&w=majority&appName=Cluster0';
+const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB = process.env.MONGODB_DB || 'kruzapp';
 
 let cached = {
@@ -16,15 +10,17 @@ let cached = {
 
 export async function connectToDatabase() {
   if (!MONGODB_URI) {
-    const err = new Error('MONGODB_URI not found in environment or fallback');
+    const err = new Error('MONGODB_URI not found in environment variables');
     console.error('❌', err.message);
+    console.error('💡 Please check your backend/.env file');
     throw err;
   }
 
   console.log('📡 Connecting to MongoDB...');
-  console.log('   URI:', MONGODB_URI.substring(0, 50) + '...');
+  console.log('   Database:', MONGODB_DB);
 
   if (cached.conn) {
+    console.log('✅ Using cached MongoDB connection');
     return cached.conn;
   }
 
@@ -41,6 +37,7 @@ export async function connectToDatabase() {
       })
       .then((mongoose) => {
         console.log('✅ MongoDB connected successfully');
+        console.log('   Database:', mongoose.connection.name);
         return mongoose;
       })
       .catch((err) => {

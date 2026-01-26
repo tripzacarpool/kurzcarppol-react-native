@@ -2,7 +2,7 @@ import { Alert } from 'react-native';
 
 const RAZORPAY_KEY_ID =
   process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_7kAotmP1o8JR8V';
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.108:5000';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
 
 export interface PaymentOptions {
   amount: number; // in rupees

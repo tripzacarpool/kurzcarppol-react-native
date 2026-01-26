@@ -31,9 +31,9 @@ export async function testBackendConnectivity(
 
 export async function getAvailableBackendUrl(): Promise<string> {
   const urls = [
-    'http://192.168.0.108:5000', // Android emulator
+    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000',
+    'http://10.0.2.2:5000', // Android emulator default
     'http://localhost:5000', // iOS simulator
-    'http://192.168.0.108:5000', // Physical device on LAN
   ];
 
   for (const url of urls) {
@@ -45,5 +45,5 @@ export async function getAvailableBackendUrl(): Promise<string> {
   }
 
   console.warn('⚠️ No backend URL worked, using default');
-  return process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.108:5000';
+  return process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
 }

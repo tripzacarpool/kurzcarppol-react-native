@@ -8,7 +8,8 @@ import {
 
 // Create axios instance with proper base URL
 // For development, this should point to your backend server
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -60,7 +61,7 @@ export async function syncUserToDatabase_Safe(userData: {
 // Backend logout - invalidate session on server
 export async function logoutUserFromBackend(clerkId: string) {
   const API_URL =
-    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.108:5000';
+    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
   try {
     console.log('🔗 Calling backend logout for:', clerkId);
     console.log('📍 Backend URL:', `${API_URL}/api/users/logout`);

@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
 import { getUserProfile } from '@/lib/ipService';
+import ForceLogoutButton from '@/components/ForceLogoutButton';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -302,6 +303,10 @@ export default function ProfileScreen() {
           <LogOut size={20} color={Colors.dark.error} />
           <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
+
+        <View style={{ paddingHorizontal: 20, marginTop: 12 }}>
+          <ForceLogoutButton label="Force Logout (No Prompt)" />
+        </View>
 
         <Text style={styles.version}>Version 1.0.0</Text>
       </ScrollView>

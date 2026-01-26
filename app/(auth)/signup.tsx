@@ -648,10 +648,38 @@ export default function SignupScreen() {
       console.log('Unverified fields:', result?.unverifiedFields);
 
       if (result?.status === 'complete') {
+        console.log('✅ Sign up complete, Clerk session created');
+        setCreatedClerkId(result?.createdUserId || null);
+        
+        // Wait a moment for Clerk to update session internally
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Sync user to database with new session
+        if (result?.createdUserId) {
+          try {
+            await syncUserToDatabase_Safe({
+              clerkId: result.createdUserId,
+              email: email,
+              firstName: firstName,
+              lastName: lastName,
+              profileImage: result?.profileImageUrl,
+            });
+            console.log('✅ User synced to database after signup');
+          } catch (syncErr) {
+            console.warn('⚠️ User sync failed (non-critical):', syncErr);
+          }
+        }
+        
         await finalizeRidePartnerSubmission(result?.createdUserId);
         setSuccessVariant(isRidePartner ? 'ride_partner' : 'passenger');
         setSuccess(true);
         setLoading(false);
+        
+        // Redirect after showing success
+        setTimeout(() => {
+          console.log('🔄 Redirecting to tabs...');
+          router.replace('/(tabs)');
+        }, 1500);
       } else if (result?.status === 'missing_requirements') {
         // Email verification needed
         if (result?.unverifiedFields?.includes('email_address')) {
@@ -693,19 +721,26 @@ export default function SignupScreen() {
       console.log('Created session ID:', result?.createdSessionId);
 
       if (result?.status === 'complete') {
-        // Email verified! Sync user to MongoDB
-        try {
-          await syncUserToDatabase_Safe({
-            clerkId: result?.createdUserId || '',
-            email: result?.emailAddress || '',
-            firstName: result?.firstName,
-            lastName: result?.lastName,
-            profileImage: result?.profileImageUrl,
-          });
-          console.log('User synced to database');
-        } catch (syncErr) {
-          console.error('Error syncing user:', syncErr);
-          // Don't fail if sync fails, user can still continue
+        console.log('✅ Email verified, session created');
+        setCreatedClerkId(result?.createdUserId || null);
+        
+        // Wait for Clerk to update session internally
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Sync user to database
+        if (result?.createdUserId) {
+          try {
+            await syncUserToDatabase_Safe({
+              clerkId: result.createdUserId,
+              email: result?.emailAddress || email,
+              firstName: result?.firstName || firstName,
+              lastName: result?.lastName || lastName,
+              profileImage: result?.profileImageUrl,
+            });
+            console.log('✅ User synced to database after verification');
+          } catch (syncErr) {
+            console.warn('⚠️ User sync failed (non-critical):', syncErr);
+          }
         }
 
         await finalizeRidePartnerSubmission(result?.createdUserId);
@@ -716,6 +751,7 @@ export default function SignupScreen() {
         
         // Give it a moment then redirect
         setTimeout(() => {
+          console.log('🔄 Redirecting to tabs...');
           router.replace('/(tabs)');
         }, 1500);
       } else {

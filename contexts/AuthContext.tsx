@@ -21,6 +21,7 @@ export interface AuthContextType {
   isSignedIn: boolean;
   signOut: () => Promise<void>;
   error: string | null;
+  getAuthToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -28,7 +29,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const { isSignedIn, signOut, isLoaded } = useClerkAuth();
+  const { isSignedIn, signOut, isLoaded, getToken } = useClerkAuth();
   const { user: clerkUser } = useUser();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -82,9 +83,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const syncUserWithDatabase = async (authUser: AuthUser) => {
     try {
-      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.108:5000';
+      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
       const syncUrl = `${API_URL}/api/users/sync`;
       console.log('🔗 Syncing to:', syncUrl);
+      
+      // Get Clerk session token
+      const token = await getToken();
+      if (!token) {
+        console.warn('⚠️ No auth token available, skipping sync');
+        return;
+      }
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -93,9 +101,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          clerkId: authUser.id,
           email: authUser.email,
           firstName: authUser.firstName,
           lastName: authUser.lastName,
@@ -107,7 +115,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        console.error('❌ Sync failed with status:', response.status, response.statusText);
+        const errorData = await response.json().catch(() => ({}));
+        console.error('❌ Sync failed with status:', response.status, errorData);
         throw new Error(`Failed to sync: ${response.status}`);
       }
 
@@ -192,6 +201,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const getAuthToken = async () => {
+    try {
+      return await getToken();
+    } catch (err) {
+      console.error('❌ Failed to get auth token:', err);
+      return null;
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -200,6 +218,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         isSignedIn: !!clerkUser && isSignedIn,
         signOut: handleSignOut,
         error,
+        getAuthToken,
       }}
     >
       {children}

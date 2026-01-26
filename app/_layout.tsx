@@ -66,11 +66,12 @@ function RootLayoutNav() {
     }
   }, [isSignedIn, isLoading, segments]);
 
-  useEffect(() => {
-    if (user) {
-      fetchAndStoreUserIP(user.id);
-    }
-  }, [user]);
+//  useEffect(() => {
+//   if (isSignedIn && user?.id) {
+//     fetchAndStoreUserIP(user.id);
+//   }
+// }, [isSignedIn, user]);
+
 
   if (isLoading) {
     return (
@@ -100,7 +101,7 @@ export default function RootLayout() {
   // Test backend connectivity on startup (non-blocking)
   useEffect(() => {
     const checkConnectivity = async () => {
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.108:5000';
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
       console.log('🔗 Backend URL configured as:', apiUrl);
       const isReachable = await testBackendConnectivity(apiUrl);
       if (isReachable) {
