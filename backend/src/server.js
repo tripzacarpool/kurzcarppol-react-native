@@ -1,6 +1,8 @@
 import './loadEnv.js';
 import express from 'express';
 import cors from 'cors';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 import connectToDatabase from './config/database.js';
 import {
   errorHandler,
@@ -9,14 +11,27 @@ import {
   corsMiddleware,
 } from './middleware/errorHandler.js';
 import { clerkAuth } from './middleware/clerkAuth.js';
+import { setupLocationEvents } from './controllers/locationController.js';
+import { setSocketIO } from './controllers/rideController.js';
 import healthRoutes from './routes/healthRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import ridePartnerRoutes from './routes/ridePartnerRoutes.js';
+import rideRoutes from './routes/rideRoutes.js';
 
 const app = express();
+const httpServer = createServer(app);
 const PORT = process.env.PORT || 5000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// Socket.io setup for real-time location tracking
+const io = new Server(httpServer, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+  transports: ['websocket', 'polling'],
+});
 
 // Allowed origins for mobile/expo and local testing
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -24,7 +39,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : [
       'http://localhost:5000',
       'http://127.0.0.1:5000',
-      'http://192.168.0.100:5000',
+      'http://192.168.0.102:5000',
       'http://10.0.2.2:5000',
     ];
 
@@ -51,6 +66,39 @@ app.use(corsMiddleware);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Debug middleware to log Authorization header and decode JWT
+app.use((req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    console.log('\n' + '='.repeat(60));
+    console.log(`📨 ${req.method} ${req.path}`);
+    console.log(
+      '🔑 Authorization header received:',
+      authHeader.substring(0, 40) + '...',
+    );
+
+    // Decode the JWT to see what's in it
+    try {
+      const token = authHeader.replace('Bearer ', '');
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+        // console.log('🔐 JWT Payload (decoded):');
+        // console.log(JSON.stringify(payload, null, 2));
+      }
+    } catch (err) {
+      console.error('❌ Failed to decode token:', err.message);
+    }
+  } else {
+    console.warn(
+      '⚠️ No Authorization header in request to',
+      req.method,
+      req.path,
+    );
+  }
+  next();
+});
+
 // Clerk authentication middleware (must be after body parsers)
 app.use(clerkAuth);
 
@@ -73,6 +121,7 @@ app.use('/health', healthRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/ride-partners', ridePartnerRoutes);
+app.use('/api/rides', rideRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -96,20 +145,47 @@ app.get('/', (req, res) => {
 app.use(notFound);
 app.use(errorHandler);
 
+// Socket.io connection handling for real-time location tracking
+io.on('connection', (socket) => {
+  console.log(`✅ Client connected: ${socket.id}`);
+
+  // Setup location tracking events
+  setupLocationEvents(io, socket);
+
+  socket.on('disconnect', () => {
+    console.log(`❌ Client disconnected: ${socket.id}`);
+  });
+});
+
+// Inject socket.io instance into ride controller
+setSocketIO(io);
+
+// Export io instance for use in controllers
+export { io };
+
 // Start Server
-app.listen(PORT, '0.0.0.0', () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`\n${'='.repeat(60)}`);
   console.log(`🚀 KruZ Backend Server`);
   console.log(`${'='.repeat(60)}`);
   console.log(`📍 Environment: ${NODE_ENV}`);
   console.log(`🌐 Server: http://0.0.0.0:${PORT}`);
   console.log(`🌐 Local: http://localhost:${PORT}`);
-  console.log(`🌐 Network: http://192.168.0.100:${PORT}`);
+  console.log(`🌐 Network: http://192.168.0.102:${PORT}`);
   console.log(`💾 Database: ${dbReady ? '✅ Connected' : '⚠️  Disconnected'}`);
+  console.log(`🔌 WebSocket: ✅ Ready (real-time location tracking)`);
   console.log(`${'='.repeat(60)}`);
   console.log(`\n📝 Available Endpoints:`);
   console.log(`   - GET  /              (API Info)`);
   console.log(`   - GET  /health        (Health Check)`);
+  console.log(`\n🔌 WebSocket Events:`);
+  console.log(`   - driver:online       (Driver comes online)`);
+  console.log(`   - driver:location     (Driver sends location every 2-3s)`);
+  console.log(`   - driver:offline      (Driver goes offline)`);
+  console.log(`   - rider:subscribe     (Rider subscribes to location)`);
+  console.log(`   - rider:unsubscribe   (Rider unsubscribes)`);
+  console.log(`   - ride:location-update (Rider receives location)`);
+  console.log(`${'='.repeat(60)}\n`);
   console.log(`   - POST /api/users/sync`);
   console.log(`   - GET  /api/users/:clerkId`);
   console.log(`   - PATCH /api/users/:clerkId/role`);

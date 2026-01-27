@@ -10,7 +10,7 @@ export async function fetchAndStoreUserIP(
 
     if (ipAddress) {
       const API_URL =
-        process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
+        process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
       const ipUrl = `${API_URL}/api/users/ip`;
       console.log('💾 Storing IP to:', ipUrl);
 
@@ -51,7 +51,7 @@ export async function fetchAndStoreUserIP(
 export async function getUserProfile(userId: string) {
   try {
     const API_URL =
-      process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
+      process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
     console.log('👤 Fetching profile from:', `${API_URL}/api/users/${userId}`);
     const response = await fetch(`${API_URL}/api/users/${userId}`, {
       method: 'GET',

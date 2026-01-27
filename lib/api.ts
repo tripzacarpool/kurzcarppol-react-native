@@ -9,7 +9,7 @@ import {
 // Create axios instance with proper base URL
 // For development, this should point to your backend server
 const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
+  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -18,6 +18,15 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+// Set authorization token for authenticated requests
+export function setAuthToken(token: string | null) {
+  if (token) {
+    apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  } else {
+    delete apiClient.defaults.headers.common['Authorization'];
+  }
+}
 
 // User sync API
 export async function syncUserToDatabase(userData: {
@@ -61,7 +70,7 @@ export async function syncUserToDatabase_Safe(userData: {
 // Backend logout - invalidate session on server
 export async function logoutUserFromBackend(clerkId: string) {
   const API_URL =
-    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
+    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
   try {
     console.log('🔗 Calling backend logout for:', clerkId);
     console.log('📍 Backend URL:', `${API_URL}/api/users/logout`);
@@ -159,4 +168,101 @@ export async function updateRidePartnerStatus(
     },
   );
   return response.data as { success: boolean; profile: RidePartnerProfile };
+}
+// Create ride request API
+export async function createRideRequest(rideData: {
+  clerkId: string;
+  from: string;
+  to: string;
+  passengers: number;
+  notes?: string;
+  womenOnly?: boolean;
+  pickupLatitude?: number;
+  pickupLongitude?: number;
+  pickupCity?: string;
+  pickupCountry?: string;
+}) {
+  try {
+    const response = await apiClient.post('/api/rides/create', rideData);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      'Error creating ride:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// Get user's ride requests
+export async function getUserRides(clerkId?: string) {
+  try {
+    const params = clerkId ? { clerkId } : {};
+    const response = await apiClient.get('/api/rides/requests', { params });
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      'Error fetching user rides:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// Get available rides for drivers
+export async function getAvailableRides(
+  clerkId?: string,
+  type?: 'offers' | 'requests',
+) {
+  try {
+    const params: any = {};
+    if (clerkId) params.clerkId = clerkId;
+    if (type) params.type = type;
+    const response = await apiClient.get('/api/rides/available', { params });
+    return response.data;
+  } catch (error: any) {
+    return {
+      success: true,
+      rides: [],
+      message: '0 rides found',
+    };
+  }
+}
+// Accept a ride
+export async function acceptRide(rideId: string) {
+  try {
+    const response = await apiClient.post(`/api/rides/${rideId}/accept`);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      'Error accepting ride:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// Create driver ride offer
+export async function createDriverRideOffer(rideData: {
+  from: string;
+  to: string;
+  passengers: number;
+  fare?: number;
+  notes?: string;
+  womenOnly?: boolean;
+  pickupLatitude?: number;
+  pickupLongitude?: number;
+  pickupCity?: string;
+  pickupCountry?: string;
+}) {
+  try {
+    const response = await apiClient.post('/api/rides/driver-offer', rideData);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      'Error creating driver ride offer:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
 }

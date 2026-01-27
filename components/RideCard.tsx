@@ -34,7 +34,7 @@ export function RideCard({ ride, onPress }: RideCardProps) {
             <View style={styles.ratingRow}>
               <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
               <Text style={styles.rating}>{ride.driver.rating}</Text>
-              <Text style={styles.rides}>• {ride.driver.ridesCompleted} rides</Text>
+              <Text style={styles.rides}>• {ride.driver.ridesCompleted} {ride.driver.ridesCompleted === 1 ? 'ride' : 'rides'}</Text>
             </View>
             <View style={styles.modeBadge}>
               <Text style={styles.modeBadgeLabel}>{modeMeta.label}</Text>

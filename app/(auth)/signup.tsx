@@ -13,6 +13,7 @@ import {
   Switch,
   Alert,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import {
   UserPlus,
@@ -611,6 +612,11 @@ export default function SignupScreen() {
     setError('');
 
     try {
+      // Store role preference before signup
+      const roleToSet = isRidePartner ? 'ride_partner' : 'passenger';
+      await AsyncStorage.setItem('user_role_preference', roleToSet);
+      console.log(`📋 Set role preference to: ${roleToSet}`);
+      
       const result = await signUp?.create({
         emailAddress: email,
         password,
@@ -636,7 +642,6 @@ export default function SignupScreen() {
               email: email,
               firstName: firstName,
               lastName: lastName,
-              profileImage: result?.profileImageUrl,
             });
             console.log('✅ User synced to database after signup');
           } catch (syncErr) {
@@ -670,8 +675,36 @@ export default function SignupScreen() {
         setLoading(false);
       }
     } catch (err: any) {
-      setError(err?.errors?.[0]?.message || 'Sign up failed. Please try again.');
-      console.error('Signup error:', err);
+      const errorCode = err?.errors?.[0]?.code;
+      const errorMsg = err?.errors?.[0]?.message || err?.message;
+
+      console.error('❌ Signup error details:', {
+        message: err?.message,
+        code: err?.code,
+        errors: err?.errors,
+        errorCode,
+        status: err?.status,
+        response: err?.response?.data,
+      });
+
+      // Handle session_exists error - user is already signed in
+      if (errorCode === 'session_exists') {
+        console.log('ℹ️ User already has a session, redirecting to dashboard...');
+        setSuccess(true);
+        setLoading(false);
+        setTimeout(() => {
+          router.replace('/(tabs)');
+        }, 500);
+        return;
+      }
+
+      const displayError = 
+        errorMsg || 
+        err?.response?.data?.error || 
+        'Sign up failed. Please try again.';
+      
+      setError(displayError);
+      console.error('🔴 Full signup error:', err);
       setLoading(false);
     }
   };
@@ -709,7 +742,6 @@ export default function SignupScreen() {
               email: result?.emailAddress || email,
               firstName: result?.firstName || firstName,
               lastName: result?.lastName || lastName,
-              profileImage: result?.profileImageUrl,
             });
             console.log('✅ User synced to database after verification');
           } catch (syncErr) {
@@ -733,25 +765,62 @@ export default function SignupScreen() {
         setLoading(false);
       }
     } catch (err: any) {
-      setError(err?.errors?.[0]?.message || 'Verification failed');
-      console.error('Verification error:', err);
+      const errorCode = err?.errors?.[0]?.code;
+      const errorMsg = err?.errors?.[0]?.message || err?.message;
+
+      console.error('❌ Verification error details:', {
+        message: err?.message,
+        code: err?.code,
+        errors: err?.errors,
+        errorCode,
+        status: err?.status,
+      });
+
+      // If verification succeeded even with error code, redirect
+      if (errorCode === 'session_exists') {
+        console.log('ℹ️ Session exists, user verified and signed in');
+        setSuccess(true);
+        setLoading(false);
+        setTimeout(() => {
+          router.replace('/(tabs)');
+        }, 500);
+        return;
+      }
+      
+      const displayError = 
+        errorMsg || 
+        'Verification failed. Please check the code.';
+      
+      setError(displayError);
+      console.error('🔴 Full verification error:', err);
       setLoading(false);
     }
   };
 
   const handleGoogleSignIn = async () => {
     try {
+      console.log('🔐 Initiating Google sign-in...');
       const result = await signUp?.create({
         strategy: 'oauth_google',
         redirectUrl: 'kruzapp://oauth-callback',
       });
 
       if (result?.status === 'complete') {
+        console.log('✅ Google sign-in complete');
         router.replace('/(tabs)');
       }
     } catch (err: any) {
-      setError(err?.errors?.[0]?.message || 'Google sign-up failed');
-      console.error('Google sign-up error:', err);
+      console.error('❌ Google sign-up error:', {
+        message: err?.message,
+        errors: err?.errors,
+      });
+      
+      const errorMsg = 
+        err?.errors?.[0]?.message || 
+        err?.message || 
+        'Google sign-up failed';
+      
+      setError(errorMsg);
     }
   };
 
@@ -888,16 +957,16 @@ export default function SignupScreen() {
               <View style={styles.driverCtaCopyWrap}>
                 <Text style={styles.driverCtaTitle}>Want to drive with Kurz?</Text>
                 <Text style={styles.driverCtaCopy}>
-                  Go through a guided, step-by-step driver onboarding for ride partners.
+                  Go through a guided, step-by-step driver signup to become a ride partner.
                 </Text>
               </View>
             </View>
             <TouchableOpacity
               style={styles.driverCtaButton}
-              onPress={() => router.push('/driver/onboarding')}
+              onPress={() => router.push('/(auth)/driver-signup')}
               activeOpacity={0.85}>
               <ShieldCheck size={18} color={Colors.dark.background} />
-              <Text style={styles.driverCtaButtonText}>Start Driver Onboarding</Text>
+              <Text style={styles.driverCtaButtonText}>Sign Up as Driver</Text>
             </TouchableOpacity>
           </View>
 

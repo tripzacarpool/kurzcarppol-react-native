@@ -114,7 +114,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       if (user) {
         // Update user location in MongoDB via API
         try {
-          const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
+          const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
           const locationUrl = `${API_URL}/api/users/location`;
           
           const locationPayload = {

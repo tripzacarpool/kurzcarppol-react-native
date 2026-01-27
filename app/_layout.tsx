@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider, useAuthContext } from '@/contexts/AuthContext';
 import { LocationProvider } from '@/contexts/LocationContext';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/Colors';
 import { ClerkProvider } from '@clerk/clerk-expo';
 import * as SecureStore from 'expo-secure-store';
@@ -39,55 +39,70 @@ function RootLayoutNav() {
   const segments = useSegments();
   const router = useRouter();
 
+  // Determine if we're ready to show the app
+  const isRoleLoaded = isSignedIn ? user?.role !== undefined : true;
+  const isReady = !isLoading && isRoleLoaded;
+
   useEffect(() => {
-    if (isLoading) {
-      console.log('⏳ Auth still loading, waiting...');
+    if (!isReady) {
       return;
     }
 
-    const inAuthGroup = segments[0] === '(auth)';
-    const inTabsGroup = segments[0] === '(tabs)';
+    const currentRoot = segments?.[0];
+    const onDriverDashboard = currentRoot === 'driver';
+    const onPassengerTabs = currentRoot === '(tabs)';
+    const isDriver = user?.role === 'ride_partner';
+
+    // Only enforce route protection - don't handle initial redirects
+    // Index screen handles initial routing
+    if (!isSignedIn || !currentRoot) {
+      return;
+    }
+
+    console.log('🔐 Route Protection Check:', {
+      currentRoot,
+      isDriver,
+      onDriverDashboard,
+      onPassengerTabs,
+    });
+
+    // Prevent drivers from accessing passenger tabs
+    if (isDriver && onPassengerTabs) {
+      console.log('🚗 Driver tried to access passenger tabs, blocking');
+      router.replace('/driver/dashboard');
+      return;
+    }
     
-    console.log('🔐 Auth Check:', { isSignedIn, inAuthGroup, inTabsGroup, isLoading, segments });
-
-    // Redirect to tabs if signed in and in auth group
-    if (isSignedIn && inAuthGroup) {
-      console.log('✅ User signed in, redirecting to tabs...');
+    // Prevent passengers from accessing driver dashboard
+    if (!isDriver && onDriverDashboard) {
+      console.log('👤 Passenger tried to access driver dashboard, blocking');
       router.replace('/(tabs)');
-    } 
-    // Redirect to login if NOT signed in and trying to access protected routes
-    else if (!isSignedIn && !inAuthGroup) {
-      console.log('❌ User not signed in, redirecting to login...');
-      router.replace('/(auth)/login');
+      return;
     }
-    // If signed in and in tabs, stay there
-    else if (isSignedIn && inTabsGroup) {
-      console.log('✅ User signed in and in tabs - correct state');
-    }
-  }, [isSignedIn, isLoading, segments]);
+  }, [isReady, isSignedIn, segments, user?.role, router]);
 
-//  useEffect(() => {
-//   if (isSignedIn && user?.id) {
-//     fetchAndStoreUserIP(user.id);
-//   }
-// }, [isSignedIn, user]);
-
-
-  if (isLoading) {
+  // Show loading screen until role is loaded
+  if (!isReady) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={Colors.dark.gold} />
+        <Text style={styles.loadingText}>
+          {isLoading ? 'Loading...' : 'Setting up your account...'}
+        </Text>
       </View>
     );
   }
 
+  const isDriver = user?.role === 'ride_partner';
+
   return (
     <>
       <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
         <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="admin" />
         <Stack.Screen name="driver" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="admin" options={{ href: null }} />
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="light" />
@@ -101,7 +116,7 @@ export default function RootLayout() {
   // Test backend connectivity on startup (non-blocking)
   useEffect(() => {
     const checkConnectivity = async () => {
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
       console.log('🔗 Backend URL configured as:', apiUrl);
       const isReachable = await testBackendConnectivity(apiUrl);
       if (isReachable) {
@@ -142,5 +157,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.dark.background,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: Colors.dark.textSecondary,
   },
 });

@@ -1,18 +1,44 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView } from 'react-native';
-import { MapPin, Star, Calendar, User as UserIcon } from 'lucide-react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator, Alert } from 'react-native';
+import { MapPin, Star, Calendar, User as UserIcon, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { mockTrips } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
+import { getUserRides } from '@/lib/api';
+import RideRequestModal from '@/components/RideRequestModal';
+import { subscribeToRideAcceptance, unsubscribeFromRideEvents, initializeLocationSocket } from '@/lib/locationSocket';
 
 export default function TripsScreen() {
   const { user } = useAuth();
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [userRides, setUserRides] = useState<any[]>([]);
+  const [loadingRides, setLoadingRides] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [rideRequestModalVisible, setRideRequestModalVisible] = useState(false);
 
   useEffect(() => {
     if (user) {
       loadUserProfile();
+      fetchUserRides();
+      
+      // Initialize socket connection
+      initializeLocationSocket();
+      
+      // Subscribe to ride acceptance updates
+      subscribeToRideAcceptance((acceptedRide) => {
+        console.log('✅ Ride accepted via socket:', acceptedRide);
+        // Refresh user rides to show updated status
+        fetchUserRides();
+      });
+      
+      // Poll for updates every 30 seconds as fallback
+      const interval = setInterval(fetchUserRides, 30000);
+      
+      return () => {
+        clearInterval(interval);
+        unsubscribeFromRideEvents();
+      };
     }
   }, [user]);
 
@@ -23,90 +49,134 @@ export default function TripsScreen() {
     }
   };
 
+  const fetchUserRides = async () => {
+    if (!user?.id) return;
+    try {
+      setLoadingRides(true);
+      const response = await getUserRides(user.id);
+      if (response.rides && Array.isArray(response.rides)) {
+        setUserRides(response.rides);
+        console.log('✅ User rides fetched:', response.rides.length);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching user rides:', error);
+      // Fall back to mock data
+      setUserRides([]);
+    } finally {
+      setLoadingRides(false);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchUserRides();
+    setRefreshing(false);
+  };
+
   const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
-  const totalTrips = userProfile?.total_trips || mockTrips.length;
+  const displayRides = userRides.length > 0 ? userRides : mockTrips;
+  const totalRides = displayRides.length;
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>My Trips</Text>
-        <Text style={styles.subtitle}>Hey {userName}! You've completed {totalTrips} trip{totalTrips !== 1 ? 's' : ''}</Text>
+        <View>
+          <Text style={styles.title}>My Rides</Text>
+          <Text style={styles.subtitle}>Hey {userName}! You have {totalRides} ride{totalRides !== 1 ? 's' : ''}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.createButton}
+          onPress={() => setRideRequestModalVisible(true)}
+          activeOpacity={0.7}>
+          <Plus size={22} color={Colors.dark.background} />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {mockTrips.map((trip, index) => (
-          <View key={trip.id}>
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
+        {loadingRides ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={Colors.dark.gold} />
+            <Text style={styles.loadingText}>Loading your rides...</Text>
+          </View>
+        ) : displayRides.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>No rides yet</Text>
+            <Text style={styles.emptySubtext}>Create a ride request to get started</Text>
             <TouchableOpacity
-              style={styles.tripCard}
+              style={styles.createRideBtn}
+              onPress={() => setRideRequestModalVisible(true)}
               activeOpacity={0.7}>
-              <View style={styles.tripHeader}>
-                <View style={styles.routeInfo}>
-                  <View style={styles.routeRow}>
-                    <MapPin size={14} color={Colors.dark.gold} />
-                    <Text style={styles.location}>{trip.from}</Text>
+              <Plus size={20} color={Colors.dark.background} />
+              <Text style={styles.createRideBtnText}>Create Ride</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          displayRides.map((ride, index) => (
+            <View key={ride.id || index}>
+              <TouchableOpacity
+                style={styles.tripCard}
+                activeOpacity={0.7}>
+                <View style={styles.tripHeader}>
+                  <View style={styles.routeInfo}>
+                    <View style={styles.routeRow}>
+                      <MapPin size={14} color={Colors.dark.gold} />
+                      <Text style={styles.location}>{ride.from}</Text>
+                    </View>
+                    <View style={styles.routeLine} />
+                    <View style={styles.routeRow}>
+                      <MapPin size={14} color={Colors.dark.pink} />
+                      <Text style={styles.location}>{ride.to}</Text>
+                    </View>
                   </View>
-                  <View style={styles.routeLine} />
-                  <View style={styles.routeRow}>
-                    <MapPin size={14} color={Colors.dark.pink} />
-                    <Text style={styles.location}>{trip.to}</Text>
-                  </View>
-                </View>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    trip.status === 'cancelled' && styles.cancelledBadge,
-                  ]}>
-                  <Text
+                  <View
                     style={[
-                      styles.statusText,
-                      trip.status === 'cancelled' && styles.cancelledText,
+                      styles.statusBadge,
+                      ride.status === 'cancelled' && styles.cancelledBadge,
+                      ride.status === 'accepted' && styles.acceptedBadge,
+                      ride.status === 'waiting' && styles.waitingBadge,
                     ]}>
-                    {trip.status === 'completed' ? 'Completed' : 'Cancelled'}
-                  </Text>
-                </View>
+                    <Text
+                      style={[
+                        styles.statusText,
+                        ride.status === 'cancelled' && styles.cancelledText,
+                        ride.status === 'accepted' && styles.acceptedText,
+                        ride.status === 'waiting' && styles.waitingText,
+                      ]}>
+                      {ride.status === 'completed' ? 'Completed' : ride.status === 'accepted' ? 'Accepted' : ride.status === 'waiting' ? 'Waiting' : 'Cancelled'}
+                    </Text>
+                  </View>
               </View>
 
               <View style={styles.divider} />
 
               <View style={styles.tripDetails}>
-                <View style={styles.detailRow}>
-                  <Calendar size={14} color={Colors.dark.textSecondary} />
-                  <Text style={styles.detailText}>{trip.date}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.fareLabel}>Fare:</Text>
-                  <Text style={styles.fare}>₹{trip.fare}</Text>
-                </View>
-              </View>
-
-              <View style={styles.driverInfo}>
-                <View style={styles.driverDetails}>
-                  <Text style={styles.driverName}>{trip.driver.name}</Text>
-                  <View style={styles.ratingRow}>
-                    <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
-                    <Text style={styles.rating}>{trip.driver.rating}</Text>
-                  </View>
-                </View>
-                {trip.status === 'completed' && trip.rating && (
-                  <View style={styles.tripRating}>
-                    <Text style={styles.tripRatingLabel}>Your Rating:</Text>
-                    <View style={styles.ratingStars}>
-                      {[...Array(5)].map((_, i) => (
-                        <Star
-                          key={i}
-                          size={14}
-                          color={i < trip.rating! ? Colors.dark.gold : Colors.dark.border}
-                          fill={i < trip.rating! ? Colors.dark.gold : 'transparent'}
-                        />
-                      ))}
-                    </View>
+                {ride.createdAt && (
+                  <View style={styles.detailRow}>
+                    <Calendar size={14} color={Colors.dark.textSecondary} />
+                    <Text style={styles.detailText}>{new Date(ride.createdAt).toLocaleDateString()}</Text>
                   </View>
                 )}
               </View>
             </TouchableOpacity>
-          </View>
-        ))}
+            </View>
+          ))
+        )}
       </ScrollView>
+
+      <RideRequestModal
+        visible={rideRequestModalVisible}
+        onClose={() => setRideRequestModalVisible(false)}
+        onRideCreated={() => {
+          console.log('✅ Ride created successfully');
+          fetchUserRides();
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -117,6 +187,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.background,
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     padding: 20,
     paddingBottom: 16,
   },
@@ -130,9 +203,58 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.dark.textSecondary,
   },
+  createButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.dark.gold,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   scrollView: {
     flex: 1,
     paddingHorizontal: 20,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  loadingText: {
+    marginTop: 12,
+    color: Colors.dark.textSecondary,
+    fontSize: 14,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.dark.text,
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    marginBottom: 24,
+  },
+  createRideBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.gold,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    gap: 8,
+  },
+  createRideBtnText: {
+    color: Colors.dark.background,
+    fontSize: 15,
+    fontWeight: '600',
   },
   tripCard: {
     backgroundColor: Colors.dark.card,
@@ -177,6 +299,12 @@ const styles = StyleSheet.create({
   cancelledBadge: {
     backgroundColor: Colors.dark.error + '20',
   },
+  acceptedBadge: {
+    backgroundColor: Colors.dark.gold + '20',
+  },
+  waitingBadge: {
+    backgroundColor: Colors.dark.textSecondary + '20',
+  },
   statusText: {
     color: Colors.dark.success,
     fontSize: 12,
@@ -184,6 +312,12 @@ const styles = StyleSheet.create({
   },
   cancelledText: {
     color: Colors.dark.error,
+  },
+  acceptedText: {
+    color: Colors.dark.gold,
+  },
+  waitingText: {
+    color: Colors.dark.textSecondary,
   },
   divider: {
     height: 1,

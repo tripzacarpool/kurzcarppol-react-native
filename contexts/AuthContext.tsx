@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useAuth as useClerkAuth, useUser } from '@clerk/clerk-expo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearAllClerkSessions } from '@/lib/clerkSessionHelper';
-import { logoutUserFromBackend, fetchRidePartnerProfile } from '@/lib/api';
+import { logoutUserFromBackend, fetchRidePartnerProfile, submitRidePartnerApplication, RidePartnerApplicationPayload, setAuthToken } from '@/lib/api';
 import { RidePartnerProfile, RidePartnerApplicationStatus, UserRole } from '@/types';
 
 export interface AuthUser {
@@ -34,6 +35,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Set auth token whenever user is signed in
+  useEffect(() => {
+    const setupToken = async () => {
+      console.log('🔑 Token setup effect running:', { isSignedIn, isLoaded });
+      
+      if (isSignedIn && isLoaded) {
+        try {
+          const token = await getToken();
+          console.log('📝 Token from getToken():', token ? '✅ Received' : '❌ null/undefined');
+          
+          if (token) {
+            setAuthToken(token);
+            console.log('✅ Auth token set in API client');
+          } else {
+            console.error('❌ getToken() returned:', token);
+            setAuthToken(null);
+          }
+        } catch (err) {
+          console.warn('⚠️ Failed to get auth token:', err);
+          setAuthToken(null);
+        }
+      } else {
+        console.log('🔓 Not signed in or Clerk not loaded, clearing token');
+        // Clear token when not signed in
+        setAuthToken(null);
+      }
+    };
+    setupToken();
+  }, [isSignedIn, isLoaded, getToken]);
 
   useEffect(() => {
     console.log('🔄 Raw Clerk state:', {
@@ -83,7 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const syncUserWithDatabase = async (authUser: AuthUser) => {
     try {
-      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.100:5000';
+      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
       const syncUrl = `${API_URL}/api/users/sync`;
       console.log('🔗 Syncing to:', syncUrl);
       
@@ -92,6 +123,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!token) {
         console.warn('⚠️ No auth token available, skipping sync');
         return;
+      }
+      
+      // Check for stored role preference (from driver signup)
+      const rolePreference = await AsyncStorage.getItem('user_role_preference');
+      if (rolePreference) {
+        console.log('📋 Found role preference:', rolePreference);
       }
       
       const controller = new AbortController();
@@ -108,6 +145,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           firstName: authUser.firstName,
           lastName: authUser.lastName,
           profileImage: authUser.profileImage,
+          role: rolePreference || undefined,
         }),
         signal: controller.signal,
       });
@@ -137,6 +175,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           : prev,
       );
       console.log('✅ User synced successfully, role:', syncedUser?.role);
+      
+      // Clear role preference after successful sync
+      if (rolePreference) {
+        await AsyncStorage.removeItem('user_role_preference');
+        console.log('✅ Role preference cleared');
+      }
+
+      // Check for pending driver application from signup flow
+      await submitPendingDriverApplication();
 
       if (shouldHydrateRidePartner) {
         await hydrateRidePartnerProfile(authUser.id);
@@ -172,6 +219,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
       console.warn('⚠️ Unable to load ride partner profile:', error instanceof Error ? error.message : error);
+    }
+  };
+
+  const submitPendingDriverApplication = async () => {
+    try {
+      const pendingData = await AsyncStorage.getItem('pending_driver_application');
+      if (!pendingData) {
+        return; // No pending application
+      }
+
+      const payload: RidePartnerApplicationPayload = JSON.parse(pendingData);
+      console.log('📤 Found pending driver application, submitting...');
+
+      await submitRidePartnerApplication(payload);
+      console.log('✅ Pending driver application submitted');
+
+      // Clear the pending data after successful submission
+      await AsyncStorage.removeItem('pending_driver_application');
+
+      // Update user with ride partner status
+      const { profile } = await fetchRidePartnerProfile(payload.clerkId);
+      if (profile) {
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                ridePartnerProfile: profile,
+                ridePartnerStatus: profile.status,
+              }
+            : prev,
+        );
+        console.log('✅ Ride partner profile updated');
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : JSON.stringify(err);
+      console.warn('⚠️ Failed to submit pending driver application:', errorMsg);
+      // Don't block login - user can submit later from profile
     }
   };
 
@@ -227,7 +311,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       value={{
         user,
         isLoading,
-        isSignedIn: !!clerkUser && isSignedIn,
+        isSignedIn: !!(clerkUser && isSignedIn),
         signOut: handleSignOut,
         error,
         getAuthToken,

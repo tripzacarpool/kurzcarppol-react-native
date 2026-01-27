@@ -1,39 +1,27 @@
-import { clerkMiddleware, requireAuth } from '@clerk/express';
+import { clerkMiddleware, requireAuth, getAuth } from '@clerk/express';
+import jwt from 'jsonwebtoken';
 
-// Initialize Clerk middleware with secret key from environment
-export const clerkAuth = clerkMiddleware({
-  secretKey: process.env.CLERK_SECRET_KEY,
-  publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
-});
+// Initialize Clerk middleware
+export const clerkAuth = clerkMiddleware();
 
-// Middleware to require authentication
-export const requireClerkAuth = requireAuth({
-  signInUrl: '/api/auth/signin',
-  unauthorizedUrl: '/api/auth/unauthorized',
-});
-
-// Optional: Custom middleware to extract and validate userId
-export const validateClerkUser = (req, res, next) => {
+// Helper to extract userId from Bearer token JWT's 'sub' claim
+export const getClerkUserId = (req) => {
   try {
-    const userId = req.auth?.userId;
+    const auth = getAuth(req);
+    if (auth?.userId) return auth.userId;
 
-    if (!userId) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Valid authentication required',
-        code: 'NO_AUTH_USER',
-      });
+    // Fallback: Extract from Bearer token JWT
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      const decoded = jwt.decode(token);
+      return decoded?.sub || null;
     }
-
-    // Attach userId to request for easy access
-    req.clerkUserId = userId;
-    next();
-  } catch (error) {
-    console.error('❌ Clerk auth validation error:', error);
-    return res.status(401).json({
-      error: 'Authentication failed',
-      message: 'Unable to validate user credentials',
-      code: 'AUTH_VALIDATION_ERROR',
-    });
+    return null;
+  } catch (err) {
+    return null;
   }
 };
+
+// Middleware to require authentication
+export const requireClerkAuth = requireAuth();

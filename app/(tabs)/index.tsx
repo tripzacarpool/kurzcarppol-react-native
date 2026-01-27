@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, SafeAreaView, ActivityIndicator, Alert } from 'react-native';
-import { Search, MapPin, Bell, SlidersHorizontal, Navigation } from 'lucide-react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, SafeAreaView, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import { Search, MapPin, Bell, SlidersHorizontal, Navigation, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { RideCard } from '@/components/RideCard';
 import { BookingModal } from '@/components/BookingModal';
+import RideRequestModal from '@/components/RideRequestModal';
 import { mockRides, mockNotifications } from '@/data/mockData';
 import { Ride } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
+import { getAvailableRides } from '@/lib/api';
+import { subscribeToNewRides, unsubscribeFromRideEvents, initializeLocationSocket } from '@/lib/locationSocket';
 
 export default function HomeScreen() {
   const { user } = useAuth();
@@ -16,6 +19,53 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRide, setSelectedRide] = useState<Ride | null>(null);
   const [bookingModalVisible, setBookingModalVisible] = useState(false);
+  const [rideRequestModalVisible, setRideRequestModalVisible] = useState(false);
+  const [availableRides, setAvailableRides] = useState<any[]>([]);
+  const [loadingRides, setLoadingRides] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    fetchAvailableRides();
+    
+    // Initialize socket connection
+    initializeLocationSocket();
+    
+    // Subscribe to new rides in real-time
+    subscribeToNewRides((newRide) => {
+      console.log('📨 Received new ride via socket:', newRide);
+      // Refresh rides to include the new one
+      fetchAvailableRides();
+    });
+    
+    // Poll for new rides every 30 seconds as fallback
+    const interval = setInterval(fetchAvailableRides, 30000);
+    
+    return () => {
+      clearInterval(interval);
+      unsubscribeFromRideEvents();
+    };
+  }, []);
+
+  const fetchAvailableRides = async () => {
+    if (!user?.id) return;
+    try {
+      setLoadingRides(true);
+      // Pass type=offers so passengers see only driver offers (not their own requests)
+      const response = await getAvailableRides(user.id, 'offers');
+      if (response.rides && Array.isArray(response.rides)) {
+        // Defensive: filter out any accidental self-authored rides
+        const filtered = response.rides.filter((ride: any) => ride.clerkId !== user.id);
+        setAvailableRides(filtered);
+        console.log('✅ Available ride offers fetched:', filtered.length);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching available rides:', error);
+      // Fall back to mock data if API fails
+      setAvailableRides([]);
+    } finally {
+      setLoadingRides(false);
+    }
+  };
 
   const handleRequestLocation = async () => {
     const granted = await requestPermission();
@@ -42,8 +92,11 @@ export default function HomeScreen() {
       : `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`
     : 'Location not available';
 
-  const filteredRides = mockRides.filter((ride) => {
-    const matchesWomenFilter = !womenOnlyFilter || ride.isWomenOnly;
+  // Combine backend rides with mock rides for demo
+  const displayRides = availableRides.length > 0 ? availableRides : mockRides;
+
+  const filteredRides = displayRides.filter((ride) => {
+    const matchesWomenFilter = !womenOnlyFilter || ride.womenOnly;
     const matchesSearch =
       !searchQuery ||
       ride.to.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -53,9 +106,21 @@ export default function HomeScreen() {
 
   const unreadCount = mockNotifications.filter((n) => !n.read).length;
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchAvailableRides();
+    setRefreshing(false);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         <View style={styles.header}>
           <View style={styles.headerTop}>
             <View>
@@ -123,13 +188,22 @@ export default function HomeScreen() {
                 Women Only Rides
               </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.createRideButton}
+              onPress={() => setRideRequestModalVisible(true)}
+              activeOpacity={0.7}>
+              <Plus size={20} color={Colors.dark.background} />
+              <Text style={styles.createRideButtonText}>Request Ride</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
         <View style={styles.ridesSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Available Rides</Text>
-            <Text style={styles.rideCount}>{filteredRides.length} rides</Text>
+            <Text style={styles.rideCount}>
+              {filteredRides.length} {filteredRides.length === 1 ? 'ride' : 'rides'}
+            </Text>
           </View>
 
           {filteredRides.length === 0 ? (
@@ -159,6 +233,15 @@ export default function HomeScreen() {
         visible={bookingModalVisible}
         ride={selectedRide}
         onClose={() => setBookingModalVisible(false)}
+      />
+
+      <RideRequestModal
+        visible={rideRequestModalVisible}
+        onClose={() => setRideRequestModalVisible(false)}
+        onRideCreated={() => {
+          // Refresh rides list or show success message
+          console.log('✅ Ride created successfully');
+        }}
       />
     </SafeAreaView>
   );
@@ -272,8 +355,10 @@ const styles = StyleSheet.create({
   filterRow: {
     flexDirection: 'row',
     marginBottom: 8,
+    gap: 12,
   },
   womenToggle: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.dark.card,
@@ -304,6 +389,20 @@ const styles = StyleSheet.create({
   },
   toggleTextActive: {
     color: Colors.dark.pink,
+  },
+  createRideButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.gold,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 24,
+    gap: 6,
+  },
+  createRideButtonText: {
+    color: Colors.dark.background,
+    fontSize: 14,
+    fontWeight: '700',
   },
   ridesSection: {
     padding: 20,

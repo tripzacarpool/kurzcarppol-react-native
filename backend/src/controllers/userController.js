@@ -36,7 +36,7 @@ export const syncUser = async (req, res, next) => {
     }
 
     // 3. Get user data from request body
-    const { email, firstName, lastName, profileImage } = req.body;
+    const { email, firstName, lastName, profileImage, role } = req.body;
 
     if (!email) {
       return res.status(400).json({
@@ -85,17 +85,24 @@ export const syncUser = async (req, res, next) => {
     if (!user) {
       // Create new user
       try {
+        // Use provided role or default to 'passenger'
+        const userRole =
+          role &&
+          ['passenger', 'ride_partner', 'driver', 'admin'].includes(role)
+            ? role
+            : 'passenger';
+
         user = await UserProfile.create({
           clerkId: sanitized.clerkId,
           email: sanitized.email,
           firstName: sanitized.firstName,
           lastName: sanitized.lastName,
           profileImage: sanitized.profileImage || null,
-          role: 'passenger',
+          role: userRole,
           isActive: true,
         });
         console.log(
-          `✅ New user created: ${sanitized.email} (${sanitized.clerkId})`,
+          `✅ New user created: ${sanitized.email} (${sanitized.clerkId}) with role: ${userRole}`,
         );
       } catch (createError) {
         if (createError.code === 11000) {
@@ -445,6 +452,53 @@ export const updateUserIP = async (req, res, next) => {
       details: error.message,
       code: 'IP_UPDATE_ERROR',
     });
+  }
+};
+
+/**
+ * Get current user profile
+ * GET /api/users/profile
+ * Requires Clerk authentication
+ */
+export const getProfile = async (req, res, next) => {
+  try {
+    const clerkId = req.auth?.userId;
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'Valid Clerk authentication required',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    // Check Database Connection
+    const dbConnected = await checkDatabaseConnection();
+    if (!dbConnected) {
+      return res.status(503).json({
+        error: 'Database connection failed',
+        details: 'MongoDB is not connected',
+        code: 'DB_CONNECTION_ERROR',
+      });
+    }
+
+    // Find user
+    const user = await UserProfile.findOne({ clerkId });
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        details: 'User profile does not exist',
+        code: 'USER_NOT_FOUND',
+      });
+    }
+
+    console.log(
+      `📋 Retrieved profile for user: ${clerkId}, role: ${user.role}`,
+    );
+    res.status(200).json(formatUserResponse(user));
+  } catch (error) {
+    console.error('❌ Get profile error:', error.message);
+    next(error);
   }
 };
 

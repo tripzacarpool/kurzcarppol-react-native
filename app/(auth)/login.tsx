@@ -102,7 +102,8 @@ export default function LoginScreen() {
           console.log('⚠️ Session state not confirmed, but proceeding...');
         }
         
-        console.log('🚀 Redirecting to home...');
+        // Redirect to tabs - AuthContext will detect role and redirect to driver dashboard if needed
+        console.log('🚀 Redirecting to tabs (AuthContext will handle role-based routing)...');
         router.replace('/(tabs)');
       } else if (result?.status === 'needs_second_factor') {
         setError('Two-factor authentication required');
@@ -113,13 +114,7 @@ export default function LoginScreen() {
     } catch (err: any) {
       // Ignore "session_exists" error - user is already logged in
       if (err?.errors?.[0]?.code === 'session_exists') {
-        console.log('✅ Session already exists, waiting for Clerk to update...');
-        let retries = 0;
-        const maxRetries = 20;
-        while (!session?.id && retries < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          retries++;
-        }
+        console.log('✅ Session already exists, redirecting to tabs (AuthContext will handle role-based routing)...');
         router.replace('/(tabs)');
         return;
       }

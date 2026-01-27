@@ -6,12 +6,16 @@ import {
   updateUserLocation,
   updateUserIP,
   logoutUser,
+  getProfile,
 } from '../controllers/userController.js';
 
 const router = express.Router();
 
 // POST /api/users/sync - Sync user from Clerk
 router.post('/sync', syncUser);
+
+// GET /api/users/profile - Get current user profile (requires auth)
+router.get('/profile', getProfile);
 
 // POST /api/users/logout - Logout user
 router.post('/logout', logoutUser);

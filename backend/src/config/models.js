@@ -130,3 +130,50 @@ userProfileSchema.index({ role: 1, createdAt: -1 });
 userProfileSchema.index({ email: 1, clerkId: 1 });
 
 export const UserProfile = mongoose.model('UserProfile', userProfileSchema);
+
+// Ride Request Schema
+const rideRequestSchema = new Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'UserProfile',
+      required: true,
+      index: true,
+    },
+    clerkId: { type: String, required: true, index: true },
+    from: { type: String, required: true },
+    to: { type: String, required: true },
+    passengers: { type: Number, required: true, min: 1, max: 4 },
+    notes: String,
+    womenOnly: { type: Boolean, default: false },
+    pickupLatitude: Number,
+    pickupLongitude: Number,
+    pickupCity: String,
+    pickupCountry: String,
+    offeredByDriver: { type: Boolean, default: false },
+    fare: { type: Number, default: 0 },
+    status: {
+      type: String,
+      enum: ['waiting', 'accepted', 'ongoing', 'completed', 'cancelled'],
+      default: 'waiting',
+      index: true,
+    },
+    acceptedBy: {
+      userId: mongoose.Schema.Types.ObjectId,
+      clerkId: String,
+      driverName: String,
+      driverRating: Number,
+    },
+    createdAt: { type: Date, default: Date.now, index: true },
+    updatedAt: { type: Date, default: Date.now },
+    completedAt: Date,
+  },
+  { timestamps: true },
+);
+
+// Indexes for ride queries
+rideRequestSchema.index({ status: 1, createdAt: -1 });
+rideRequestSchema.index({ userId: 1, createdAt: -1 });
+rideRequestSchema.index({ clerkId: 1, createdAt: -1 });
+
+export const RideRequest = mongoose.model('RideRequest', rideRequestSchema);

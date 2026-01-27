@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,12 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Switch,
-  Animated,
+  RefreshControl,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
-  ArrowLeft,
   Power,
   DollarSign,
   Clock,
@@ -20,50 +21,586 @@ import {
   MapPin,
   Check,
   X,
+  LogOut,
+  RefreshCw,
+  Plus,
+  LayoutDashboard,
+  List,
+  BarChart3,
 } from 'lucide-react-native';
+import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
+import { useAuthContext } from '@/contexts/AuthContext';
+import { getAvailableRides, acceptRide } from '@/lib/api';
+import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents } from '@/lib/locationSocket';
+import DriverRideOfferModal from '@/components/DriverRideOfferModal';
 
-const mockRequests = [
-  {
-    id: '1',
-    passenger: 'Priya Sharma',
-    from: 'Connaught Place',
-    to: 'Cyber City',
-    seats: 1,
-    fare: 120,
-    customRequest: 'Can we stop at a ATM on the way?',
-  },
-  {
-    id: '2',
-    passenger: 'Rahul Verma',
-    from: 'CP Metro',
-    to: 'Gurgaon',
-    seats: 2,
-    fare: 150,
-    customFare: 130,
-  },
-];
+interface Ride {
+  id: string;
+  passenger: string;
+  from: string;
+  to: string;
+  passengers: number;
+  fare?: number;
+  customRequest?: string;
+  rating?: number;
+  profileImage?: string;
+  createdAt?: string;
+  isLive?: boolean;
+}
+
+interface DriverStats {
+  earnings: number;
+  ridesCount: number;
+  rating: number;
+  onlineTime: number;
+}
+
+interface DriverOffer {
+  id: string;
+  from: string;
+  to: string;
+  seats: number;
+  fare?: number;
+  womenOnly?: boolean;
+  createdAt?: string;
+  status?: 'live' | 'completed' | 'draft';
+}
+
+type DashboardTab = 'live' | 'offers' | 'insights';
 
 export default function DriverDashboard() {
   const router = useRouter();
+  const { user, signOut } = useAuthContext();
   const [isLive, setIsLive] = useState(false);
+  const [liveStateReady, setLiveStateReady] = useState(false);
   const [womenOnlyMode, setWomenOnlyMode] = useState(false);
+  const [liveRides, setLiveRides] = useState<Ride[]>([]);
+  const [randomRides, setRandomRides] = useState<Ride[]>([]);
+  const [myOffers, setMyOffers] = useState<DriverOffer[]>([]);
+  const [activeRideId, setActiveRideId] = useState<string | null>(null);
+  const [stats, setStats] = useState<DriverStats>({
+    earnings: 2450,
+    ridesCount: 12,
+    rating: 4.8,
+    onlineTime: 240,
+  });
+  const [selectedTab, setSelectedTab] = useState<DashboardTab>('live');
+  const [offersLoading, setOffersLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [rideOfferModalVisible, setRideOfferModalVisible] = useState(false);
+  const locationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const liveStateKey = user?.id ? `driver_live_state_${user.id}` : null;
+  const offersKey = user?.id ? `driver_offers_${user.id}` : null;
+
+  const loadSavedOffers = async () => {
+    if (!offersKey) return;
+    try {
+      setOffersLoading(true);
+      const stored = await AsyncStorage.getItem(offersKey);
+      if (stored) {
+        const parsed: DriverOffer[] = JSON.parse(stored);
+        setMyOffers(parsed);
+      }
+    } catch (error) {
+      console.warn('⚠️ Unable to load saved offers:', error);
+    } finally {
+      setOffersLoading(false);
+    }
+  };
+
+  const persistOffers = async (offers: DriverOffer[]) => {
+    if (!offersKey) return;
+    try {
+      await AsyncStorage.setItem(offersKey, JSON.stringify(offers));
+    } catch (error) {
+      console.warn('⚠️ Unable to persist offers:', error);
+    }
+  };
+
+  const persistLiveState = async (value: boolean) => {
+    if (!liveStateKey) return;
+    try {
+      await AsyncStorage.setItem(liveStateKey, value ? 'true' : 'false');
+    } catch (error) {
+      console.warn('⚠️ Unable to persist live toggle:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!user?.id) {
+      setLiveStateReady(false);
+      setIsLive(false);
+      setMyOffers([]);
+      setLiveStateReady(true);
+      return;
+    }
+
+    const restoreState = async () => {
+      try {
+        setLiveStateReady(false);
+        const savedLive = liveStateKey
+          ? await AsyncStorage.getItem(liveStateKey)
+          : null;
+        if (savedLive !== null) {
+          setIsLive(savedLive === 'true');
+        }
+
+        await loadSavedOffers();
+      } catch (error) {
+        console.warn('⚠️ Failed to restore driver state:', error);
+      } finally {
+        setLiveStateReady(true);
+      }
+    };
+
+    restoreState();
+  }, [user?.id, liveStateKey]);
+
+  // Generate random demo rides for UI
+  const generateRandomRides = (): Ride[] => {
+    const passengers = [
+      'Priya Sharma',
+      'Rahul Verma',
+      'Ananya Singh',
+      'Arjun Patel',
+      'Neha Gupta',
+    ];
+    const locations = [
+      { from: 'CP Metro', to: 'Gurgaon' },
+      { from: 'IGI Airport', to: 'Connaught Place' },
+      { from: 'Delhi University', to: 'Cyber City' },
+      { from: 'AIIMS', to: 'Noida' },
+    ];
+
+    return Array.from({ length: 3 }, (_, i) => ({
+      id: `demo-${i}`,
+      passenger: passengers[Math.floor(Math.random() * passengers.length)],
+      from: locations[i].from,
+      to: locations[i].to,
+      passengers: Math.floor(Math.random() * 3) + 1,
+      fare: Math.floor(Math.random() * 150) + 100,
+      rating: Math.floor(Math.random() * 2) + 4.2,
+      isLive: false,
+    }));
+  };
+
+  useEffect(() => {
+    if (!liveStateReady) return;
+    console.log('👤 Driver user:', user?.id);
+    
+    // Initialize location socket when component mounts
+    if (user?.id) {
+      initializeLocationSocket();
+      driverGoesOnline(user.id);
+      console.log('🟢 Location socket initialized');
+      
+      // Subscribe to new rides in real-time
+      subscribeToNewRides((newRide) => {
+        console.log('📨 Driver received new ride via socket:', newRide);
+        fetchLiveRides();
+      });
+    }
+    
+    if (isLive) {
+      fetchLiveRides();
+      setRandomRides(generateRandomRides());
+      // Poll for new requests every 30 seconds as fallback
+      const interval = setInterval(fetchLiveRides, 30000);
+      return () => {
+        clearInterval(interval);
+        unsubscribeFromRideEvents();
+      };
+    } else {
+      setLiveRides([]);
+      setRandomRides([]);
+    }
+  }, [isLive, user?.id, liveStateReady]);
+
+  const fetchLiveRides = async () => {
+    if (!user?.id) return;
+    try {
+      console.log('📨 Fetching available live rides...');
+      const response = await getAvailableRides(user.id, 'requests');
+      
+      if (response.rides && Array.isArray(response.rides)) {
+        const formattedRides = response.rides.map((ride: any) => ({
+          id: ride.id,
+          passenger: ride.passenger?.name || 'Unknown',
+          from: ride.from,
+          to: ride.to,
+          passengers: ride.totalSeats,
+          rating: ride.passenger?.rating || 5,
+          profileImage: ride.passenger?.profileImage,
+          createdAt: ride.createdAt,
+          isLive: true,
+        }));
+        setLiveRides(formattedRides);
+        console.log('✅ Live rides fetched:', formattedRides.length);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching live rides:', error);
+    }
+  };
+
+  const startSendingLocation = async (rideId: string) => {
+    try {
+      // Request location permissions
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        console.log('❌ Location permission denied');
+        Alert.alert('Permission', 'Location access is required to track your ride');
+        return;
+      }
+
+      // Start sending location every 2-3 seconds
+      console.log('📍 Starting to send driver location for ride:', rideId);
+      if (locationIntervalRef.current) {
+        clearInterval(locationIntervalRef.current);
+      }
+
+      locationIntervalRef.current = setInterval(async () => {
+        try {
+          const location = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+          });
+          const { latitude, longitude } = location.coords;
+          
+          // Send location to backend via socket
+          emitDriverLocation(rideId, latitude, longitude);
+          console.log(`📍 Location sent: ${latitude}, ${longitude}`);
+        } catch (error) {
+          console.error('❌ Error getting location:', error);
+        }
+      }, 3000); // Send every 3 seconds
+
+      setActiveRideId(rideId);
+    } catch (error) {
+      console.error('❌ Error starting location tracking:', error);
+      Alert.alert('Error', 'Failed to start location tracking');
+    }
+  };
+
+  const stopSendingLocation = () => {
+    if (locationIntervalRef.current) {
+      clearInterval(locationIntervalRef.current);
+      locationIntervalRef.current = null;
+      console.log('🛑 Stopped sending location');
+    }
+    setActiveRideId(null);
+  };
+
+  const handleAcceptRide = async (rideId: string, isLive: boolean) => {
+    try {
+      console.log('✅ Accepting ride:', rideId);
+      
+      if (isLive) {
+        // Accept from DB
+        const response = await acceptRide(rideId);
+        console.log('Ride accepted:', response);
+        
+        // Start tracking location for this ride
+        await startSendingLocation(rideId);
+      }
+      
+      // Remove from list
+      if (isLive) {
+        setLiveRides(liveRides.filter(r => r.id !== rideId));
+      } else {
+        setRandomRides(randomRides.filter(r => r.id !== rideId));
+      }
+      
+      Alert.alert('Success', 'Ride request accepted! Location tracking started.');
+    } catch (error) {
+      console.error('❌ Error accepting ride:', error);
+      Alert.alert('Error', 'Failed to accept ride');
+    }
+  };
+
+  const handleRejectRide = (rideId: string, isLive: boolean) => {
+    try {
+      console.log('❌ Rejecting ride:', rideId);
+      
+      // Stop location tracking if this is the active ride
+      if (rideId === activeRideId) {
+        stopSendingLocation();
+      }
+      
+      if (isLive) {
+        setLiveRides(liveRides.filter(r => r.id !== rideId));
+      } else {
+        setRandomRides(randomRides.filter(r => r.id !== rideId));
+      }
+    } catch (error) {
+      console.error('❌ Error rejecting ride:', error);
+    }
+  };
+
+  const handleToggleLive = (value: boolean) => {
+    if (!liveStateReady) return;
+    setIsLive(value);
+    persistLiveState(value);
+    if (value) {
+      console.log('🟢 Going live...');
+      fetchLiveRides();
+    } else {
+      console.log('🔴 Going offline...');
+    }
+  };
+
+  const handleLogout = async () => {
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', onPress: () => {} },
+      {
+        text: 'Logout',
+        onPress: async () => {
+          try {
+            // Stop location tracking
+            stopSendingLocation();
+            await signOut();
+            router.replace('/(auth)/login');
+          } catch (error) {
+            console.error('Logout error:', error);
+            Alert.alert('Error', 'Failed to logout');
+          }
+        },
+      },
+    ]);
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    if (isLive) {
+      await fetchLiveRides();
+      setRandomRides(generateRandomRides());
+    }
+    setRefreshing(false);
+  };
+
+  const handleOfferCreatedFromModal = async (offer: DriverOffer) => {
+    const hydrated: DriverOffer = {
+      ...offer,
+      createdAt: offer.createdAt || new Date().toISOString(),
+      status: offer.status || 'live',
+    };
+    const updated = [hydrated, ...myOffers].slice(0, 25);
+    setMyOffers(updated);
+    await persistOffers(updated);
+    setSelectedTab('offers');
+  };
+
+  const renderMyOffers = () => {
+    if (offersLoading) {
+      return (
+        <View style={styles.emptyState}>
+          <ActivityIndicator size="small" color={Colors.dark.gold} />
+          <Text style={styles.emptySubtext}>Loading your rides...</Text>
+        </View>
+      );
+    }
+
+    if (myOffers.length === 0) {
+      return (
+        <View style={styles.emptyState}>
+          <Users size={48} color={Colors.dark.textSecondary} />
+          <Text style={styles.emptyText}>No rides created yet</Text>
+          <Text style={styles.emptySubtext}>Offer a ride to see it listed here</Text>
+          <TouchableOpacity
+            style={[styles.acceptButton, { marginTop: 16 }]}
+            onPress={() => setRideOfferModalVisible(true)}
+            activeOpacity={0.8}>
+            <Plus size={18} color={Colors.dark.background} />
+            <Text style={styles.acceptButtonText}>Create Ride Offer</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.requestsSection}>
+        <View style={styles.requestsHeader}>
+          <Text style={styles.sectionTitle}>Your ride offers</Text>
+          <TouchableOpacity
+            style={styles.refreshButton}
+            onPress={loadSavedOffers}
+            activeOpacity={0.7}>
+            <RefreshCw size={18} color={Colors.dark.gold} />
+          </TouchableOpacity>
+        </View>
+        {myOffers.map((offer) => (
+          <View key={offer.id} style={[styles.requestCard, styles.offerCard]}>
+            <View style={styles.requestHeader}>
+              <Text style={styles.passengerName}>{offer.from} → {offer.to}</Text>
+              {offer.fare ? (
+                <Text style={styles.requestFare}>₹{offer.fare}</Text>
+              ) : (
+                <Text style={styles.detailText}>Fare on arrival</Text>
+              )}
+            </View>
+
+            <View style={styles.requestRoute}>
+              <View style={styles.routeRow}>
+                <MapPin size={14} color={Colors.dark.gold} />
+                <Text style={styles.routeText}>{offer.from}</Text>
+              </View>
+              <View style={styles.routeLine} />
+              <View style={styles.routeRow}>
+                <MapPin size={14} color={Colors.dark.pink} />
+                <Text style={styles.routeText}>{offer.to}</Text>
+              </View>
+            </View>
+
+            <View style={styles.requestDetails}>
+              <View style={styles.detailRow}>
+                <Users size={14} color={Colors.dark.textSecondary} />
+                <Text style={styles.detailText}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
+              </View>
+              {offer.womenOnly && (
+                <View style={styles.detailRow}>
+                  <Star size={14} color={Colors.dark.pink} />
+                  <Text style={styles.detailText}>Women only</Text>
+                </View>
+              )}
+              {offer.createdAt && (
+                <View style={styles.detailRow}>
+                  <Clock size={14} color={Colors.dark.textSecondary} />
+                  <Text style={styles.detailText}>Created {new Date(offer.createdAt).toLocaleString()}</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.offerStatusRow}>
+              <Text style={styles.badgeText}>{offer.status === 'completed' ? 'Completed' : 'Live'}</Text>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => setRideOfferModalVisible(true)}
+                activeOpacity={0.7}>
+                <Text style={styles.secondaryButtonText}>Create another</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  const renderInsights = () => (
+    <View style={styles.insightsContainer}>
+      <Text style={styles.sectionTitle}>Performance Overview</Text>
+      <Text style={styles.sectionSubtitle}>Track your driving metrics and earnings</Text>
+      
+      <View style={styles.statsGrid}>
+        <View style={styles.statCard}>
+          <View style={styles.statIcon}>
+            <DollarSign size={20} color={Colors.dark.gold} />
+          </View>
+          <Text style={styles.statValue}>₹{stats.earnings}</Text>
+          <Text style={styles.statLabel}>Today's Earnings</Text>
+        </View>
+        <View style={styles.statCard}>
+          <View style={styles.statIcon}>
+            <Users size={20} color={Colors.dark.gold} />
+          </View>
+          <Text style={styles.statValue}>{stats.ridesCount}</Text>
+          <Text style={styles.statLabel}>Rides</Text>
+        </View>
+        <View style={styles.statCard}>
+          <View style={styles.statIcon}>
+            <Star size={20} color={Colors.dark.gold} />
+          </View>
+          <Text style={styles.statValue}>{stats.rating}</Text>
+          <Text style={styles.statLabel}>Rating</Text>
+        </View>
+        <View style={styles.statCard}>
+          <View style={styles.statIcon}>
+            <Clock size={20} color={Colors.dark.gold} />
+          </View>
+          <Text style={styles.statValue}>{Math.floor(stats.onlineTime / 60)}h {stats.onlineTime % 60}m</Text>
+          <Text style={styles.statLabel}>Online time</Text>
+        </View>
+      </View>
+      
+      <View style={styles.insightCard}>
+        <View style={styles.insightHeader}>
+          <Text style={styles.insightTitle}>💡 Pro Tips</Text>
+        </View>
+        <View style={styles.insightTip}>
+          <Text style={styles.insightBullet}>•</Text>
+          <Text style={styles.insightText}>Stay online during peak hours (8-10 AM, 6-9 PM) for more requests</Text>
+        </View>
+        <View style={styles.insightTip}>
+          <Text style={styles.insightBullet}>•</Text>
+          <Text style={styles.insightText}>Enable women-only mode to increase trust and attract more riders</Text>
+        </View>
+        <View style={styles.insightTip}>
+          <Text style={styles.insightBullet}>•</Text>
+          <Text style={styles.insightText}>Respond quickly to ride requests within 30 seconds</Text>
+        </View>
+      </View>
+      
+      <View style={styles.insightCard}>
+        <Text style={styles.insightTitle}>📊 This Week</Text>
+        <View style={styles.weeklyStatsRow}>
+          <View style={styles.weeklyStatItem}>
+            <Text style={styles.weeklyStatValue}>₹8,450</Text>
+            <Text style={styles.weeklyStatLabel}>Earnings</Text>
+          </View>
+          <View style={styles.weeklyStatItem}>
+            <Text style={styles.weeklyStatValue}>42</Text>
+            <Text style={styles.weeklyStatLabel}>Rides</Text>
+          </View>
+          <View style={styles.weeklyStatItem}>
+            <Text style={styles.weeklyStatValue}>18.5h</Text>
+            <Text style={styles.weeklyStatLabel}>Online</Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.topSpacer} />
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <ArrowLeft size={24} color={Colors.dark.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Driver Dashboard</Text>
-        <View style={styles.placeholder} />
+        <View style={styles.headerLeft}>
+          <View style={styles.userInfo}>
+            <Text style={styles.headerTitle}>
+              Welcome, {user?.firstName || 'Driver'}
+            </Text>
+            <Text style={styles.headerSubtitle}>Ready to earn?</Text>
+          </View>
+        </View>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => setRideOfferModalVisible(true)}
+            style={styles.createRideButton}
+            activeOpacity={0.7}>
+            <Plus size={20} color={Colors.dark.background} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleLogout}
+            style={styles.logoutButton}
+            activeOpacity={0.7}>
+            <LogOut size={20} color={Colors.dark.error} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={{ paddingBottom: 160 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }>
         <View style={styles.statusCard}>
           <View style={styles.statusHeader}>
             <View style={styles.statusIcon}>
-              <Power size={24} color={isLive ? Colors.dark.success : Colors.dark.textSecondary} />
+              <Power
+                size={24}
+                color={isLive ? Colors.dark.success : Colors.dark.textSecondary}
+              />
             </View>
             <View style={styles.statusInfo}>
               <Text style={styles.statusTitle}>
@@ -72,14 +609,17 @@ export default function DriverDashboard() {
               <Text style={styles.statusSubtitle}>
                 {isLive
                   ? 'Accepting ride requests'
-                  : 'Toggle to start accepting rides'}
+                  : liveStateReady
+                    ? 'Toggle to start accepting rides'
+                    : 'Restoring your last status...'}
               </Text>
             </View>
             <Switch
               value={isLive}
-              onValueChange={setIsLive}
+              onValueChange={handleToggleLive}
               trackColor={{ false: Colors.dark.border, true: Colors.dark.success }}
               thumbColor={Colors.dark.text}
+              disabled={!liveStateReady}
             />
           </View>
 
@@ -96,116 +636,224 @@ export default function DriverDashboard() {
           )}
         </View>
 
-        <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <View style={styles.statIcon}>
-              <DollarSign size={20} color={Colors.dark.gold} />
-            </View>
-            <Text style={styles.statValue}>₹2,450</Text>
-            <Text style={styles.statLabel}>Today's Earnings</Text>
-          </View>
-          <View style={styles.statCard}>
-            <View style={styles.statIcon}>
-              <Users size={20} color={Colors.dark.gold} />
-            </View>
-            <Text style={styles.statValue}>12</Text>
-            <Text style={styles.statLabel}>Rides Today</Text>
-          </View>
-          <View style={styles.statCard}>
-            <View style={styles.statIcon}>
-              <Star size={20} color={Colors.dark.gold} />
-            </View>
-            <Text style={styles.statValue}>4.8</Text>
-            <Text style={styles.statLabel}>Rating</Text>
-          </View>
-          <View style={styles.statCard}>
-            <View style={styles.statIcon}>
-              <Clock size={20} color={Colors.dark.gold} />
-            </View>
-            <Text style={styles.statValue}>6.5h</Text>
-            <Text style={styles.statLabel}>Online Time</Text>
-          </View>
-        </View>
-
-        {isLive && mockRequests.length > 0 && (
-          <View style={styles.requestsSection}>
-            <Text style={styles.sectionTitle}>Incoming Requests</Text>
-            {mockRequests.map((request, index) => (
-              <View key={request.id}>
-                <View style={styles.requestCard}>
-                  <View style={styles.requestHeader}>
-                    <Text style={styles.passengerName}>{request.passenger}</Text>
-                    <Text style={styles.requestFare}>₹{request.fare}</Text>
-                  </View>
-
-                  <View style={styles.requestRoute}>
-                    <View style={styles.routeRow}>
-                      <MapPin size={14} color={Colors.dark.gold} />
-                      <Text style={styles.routeText}>{request.from}</Text>
+        {selectedTab === 'live' && (
+          <>
+            {isLive && (liveRides.length > 0 || randomRides.length > 0) && (
+              <View style={styles.requestsSection}>
+                {/* LIVE RIDES SECTION */}
+                {liveRides.length > 0 && (
+                  <>
+                    <View style={styles.requestsHeader}>
+                      <View style={styles.liveIndicator}>
+                        <View style={styles.liveDot} />
+                        <Text style={styles.sectionTitle}>Live Requests</Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={onRefresh}
+                        style={styles.refreshButton}
+                        activeOpacity={0.7}>
+                        <RefreshCw size={18} color={Colors.dark.gold} />
+                      </TouchableOpacity>
                     </View>
-                    <View style={styles.routeLine} />
-                    <View style={styles.routeRow}>
-                      <MapPin size={14} color={Colors.dark.pink} />
-                      <Text style={styles.routeText}>{request.to}</Text>
-                    </View>
-                  </View>
+                    {liveRides.map((ride) => (
+                      <View key={ride.id}>
+                        <View style={[styles.requestCard, styles.liveRideCard]}>
+                          <View style={styles.requestHeader}>
+                            <Text style={styles.passengerName}>{ride.passenger}</Text>
+                            <View style={styles.ratingBadge}>
+                              <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
+                              <Text style={styles.ratingText}>{ride.rating?.toFixed(1) || '5.0'}</Text>
+                            </View>
+                          </View>
 
-                  <View style={styles.requestDetails}>
-                    <View style={styles.detailRow}>
-                      <Users size={14} color={Colors.dark.textSecondary} />
-                      <Text style={styles.detailText}>
-                        {request.seats} {request.seats === 1 ? 'seat' : 'seats'}
-                      </Text>
-                    </View>
-                  </View>
+                          <View style={styles.requestRoute}>
+                            <View style={styles.routeRow}>
+                              <MapPin size={14} color={Colors.dark.gold} />
+                              <Text style={styles.routeText}>{ride.from}</Text>
+                            </View>
+                            <View style={styles.routeLine} />
+                            <View style={styles.routeRow}>
+                              <MapPin size={14} color={Colors.dark.pink} />
+                              <Text style={styles.routeText}>{ride.to}</Text>
+                            </View>
+                          </View>
 
-                  {request.customRequest && (
-                    <View style={styles.customRequestBox}>
-                      <Text style={styles.customRequestLabel}>Custom Request:</Text>
-                      <Text style={styles.customRequestText}>
-                        {request.customRequest}
-                      </Text>
-                    </View>
-                  )}
+                          <View style={styles.requestDetails}>
+                            <View style={styles.detailRow}>
+                              <Users size={14} color={Colors.dark.textSecondary} />
+                              <Text style={styles.detailText}>
+                                {ride.passengers} {ride.passengers === 1 ? 'passenger' : 'passengers'}
+                              </Text>
+                            </View>
+                          </View>
 
-                  {request.customFare && (
-                    <View style={styles.customFareBox}>
-                      <Text style={styles.customFareLabel}>
-                        Suggested Fare: ₹{request.customFare}
-                      </Text>
-                    </View>
-                  )}
+                          <View style={styles.requestActions}>
+                            <TouchableOpacity
+                              style={styles.rejectButton}
+                              onPress={() => handleRejectRide(ride.id, true)}
+                              activeOpacity={0.7}>
+                              <X size={20} color={Colors.dark.error} />
+                              <Text style={styles.rejectButtonText}>Reject</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.acceptButton}
+                              onPress={() => handleAcceptRide(ride.id, true)}
+                              activeOpacity={0.7}>
+                              <Check size={20} color={Colors.dark.background} />
+                              <Text style={styles.acceptButtonText}>Accept</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    ))}
+                  </>
+                )}
 
-                  <View style={styles.requestActions}>
-                    <TouchableOpacity
-                      style={styles.rejectButton}
-                      activeOpacity={0.7}>
-                      <X size={20} color={Colors.dark.error} />
-                      <Text style={styles.rejectButtonText}>Reject</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.acceptButton}
-                      activeOpacity={0.7}>
-                      <Check size={20} color={Colors.dark.background} />
-                      <Text style={styles.acceptButtonText}>Accept</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                {/* AVAILABLE RIDES SECTION (Random Data) */}
+                {randomRides.length > 0 && (
+                  <>
+                    <View style={styles.requestsHeader}>
+                      <Text style={styles.sectionTitle}>Other Available Rides</Text>
+                    </View>
+                    {randomRides.map((ride) => (
+                      <View key={ride.id}>
+                        <View style={styles.requestCard}>
+                          <View style={styles.requestHeader}>
+                            <Text style={styles.passengerName}>{ride.passenger}</Text>
+                            <View style={styles.ratingBadge}>
+                              <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
+                              <Text style={styles.ratingText}>{ride.rating?.toFixed(1) || '5.0'}</Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.requestRoute}>
+                            <View style={styles.routeRow}>
+                              <MapPin size={14} color={Colors.dark.gold} />
+                              <Text style={styles.routeText}>{ride.from}</Text>
+                            </View>
+                            <View style={styles.routeLine} />
+                            <View style={styles.routeRow}>
+                              <MapPin size={14} color={Colors.dark.pink} />
+                              <Text style={styles.routeText}>{ride.to}</Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.requestDetails}>
+                            <View style={styles.detailRow}>
+                              <Users size={14} color={Colors.dark.textSecondary} />
+                              <Text style={styles.detailText}>
+                                {ride.passengers} {ride.passengers === 1 ? 'passenger' : 'passengers'}
+                              </Text>
+                            </View>
+                            {ride.fare && (
+                              <View style={styles.detailRow}>
+                                <DollarSign size={14} color={Colors.dark.textSecondary} />
+                                <Text style={styles.detailText}>₹{ride.fare}</Text>
+                              </View>
+                            )}
+                          </View>
+
+                          <View style={styles.requestActions}>
+                            <TouchableOpacity
+                              style={styles.rejectButton}
+                              onPress={() => handleRejectRide(ride.id, false)}
+                              activeOpacity={0.7}>
+                              <X size={20} color={Colors.dark.error} />
+                              <Text style={styles.rejectButtonText}>Reject</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.acceptButton}
+                              onPress={() => handleAcceptRide(ride.id, false)}
+                              activeOpacity={0.7}>
+                              <Check size={20} color={Colors.dark.background} />
+                              <Text style={styles.acceptButtonText}>Accept</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    ))}
+                  </>
+                )}
               </View>
-            ))}
-          </View>
+            )}
+
+            {isLive && liveRides.length === 0 && randomRides.length === 0 && (
+              <View style={styles.emptyState}>
+                <Users size={48} color={Colors.dark.textSecondary} />
+                <Text style={styles.emptyText}>Waiting for requests...</Text>
+                <Text style={styles.emptySubtext}>
+                  You'll see ride requests here
+                </Text>
+              </View>
+            )}
+
+            {!isLive && (
+              <View style={styles.offlineState}>
+                <Power size={48} color={Colors.dark.textSecondary} />
+                <Text style={styles.offlineText}>You're currently offline</Text>
+                <Text style={styles.offlineSubtext}>
+                  Toggle the switch above to start accepting rides
+                </Text>
+              </View>
+            )}
+          </>
         )}
 
-        {isLive && mockRequests.length === 0 && (
-          <View style={styles.emptyState}>
-            <Users size={48} color={Colors.dark.textSecondary} />
-            <Text style={styles.emptyText}>Waiting for requests...</Text>
-            <Text style={styles.emptySubtext}>
-              You'll see ride requests here
-            </Text>
-          </View>
-        )}
+        {selectedTab === 'offers' && renderMyOffers()}
+
+        {selectedTab === 'insights' && renderInsights()}
       </ScrollView>
+
+      <DriverRideOfferModal
+        visible={rideOfferModalVisible}
+        onClose={() => setRideOfferModalVisible(false)}
+        onSuccess={(offer) => {
+          handleOfferCreatedFromModal({
+            id: offer?.id || `local-${Date.now()}`,
+            from: offer?.from || 'Pickup',
+            to: offer?.to || 'Drop',
+            seats: offer?.passengers || offer?.seats || 1,
+            fare: offer?.fare,
+            womenOnly: offer?.womenOnly,
+            createdAt: offer?.createdAt,
+          });
+          fetchLiveRides();
+        }}
+      />
+
+      <View style={styles.bottomNav}>
+        <TouchableOpacity
+          style={[styles.bottomNavItem, selectedTab === 'live' && styles.bottomNavItemActive]}
+          onPress={() => setSelectedTab('live')}
+          activeOpacity={0.85}>
+          <LayoutDashboard size={18} color={selectedTab === 'live' ? Colors.dark.background : Colors.dark.text} />
+          <Text style={[styles.bottomNavText, selectedTab === 'live' && styles.bottomNavTextActive]}>Live</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.bottomNavCreate}
+          onPress={() => {
+            setRideOfferModalVisible(true);
+            setSelectedTab('offers');
+          }}
+          activeOpacity={0.9}>
+          <Plus size={20} color={Colors.dark.background} />
+          <Text style={styles.bottomNavCreateText}>Offer ride</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.bottomNavItem, selectedTab === 'offers' && styles.bottomNavItemActive]}
+          onPress={() => setSelectedTab('offers')}
+          activeOpacity={0.85}>
+          <List size={18} color={selectedTab === 'offers' ? Colors.dark.background : Colors.dark.text} />
+          <Text style={[styles.bottomNavText, selectedTab === 'offers' && styles.bottomNavTextActive]}>My rides</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.bottomNavItem, selectedTab === 'insights' && styles.bottomNavItemActive]}
+          onPress={() => setSelectedTab('insights')}
+          activeOpacity={0.85}>
+          <BarChart3 size={18} color={selectedTab === 'insights' ? Colors.dark.background : Colors.dark.text} />
+          <Text style={[styles.bottomNavText, selectedTab === 'insights' && styles.bottomNavTextActive]}>Insights</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
@@ -214,6 +862,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.dark.background,
+  },
+  topSpacer: {
+    height: 20,
   },
   header: {
     flexDirection: 'row',
@@ -224,18 +875,42 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
+  headerLeft: {
+    flex: 1,
+  },
+  userInfo: {
+    flex: 1,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
     color: Colors.dark.text,
   },
-  placeholder: {
-    width: 40,
+  headerSubtitle: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    marginTop: 4,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  createRideButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.dark.gold,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.dark.error + '20',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 16,
   },
   content: {
     flex: 1,
@@ -326,11 +1001,24 @@ const styles = StyleSheet.create({
   requestsSection: {
     marginBottom: 20,
   },
+  requestsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '700',
     color: Colors.dark.text,
-    marginBottom: 16,
+  },
+  refreshButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.card,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   requestCard: {
     backgroundColor: Colors.dark.card,
@@ -463,5 +1151,191 @@ const styles = StyleSheet.create({
   emptySubtext: {
     fontSize: 14,
     color: Colors.dark.textSecondary,
+  },
+  offlineState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  offlineText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.dark.textSecondary,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  offlineSubtext: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  liveIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.dark.success,
+  },
+  liveRideCard: {
+    borderWidth: 2,
+    borderColor: Colors.dark.success,
+    backgroundColor: Colors.dark.success + '10',
+  },
+  offerCard: {
+    borderColor: Colors.dark.border,
+  },
+  offerStatusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  secondaryButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
+  },
+  secondaryButtonText: {
+    color: Colors.dark.text,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  ratingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.gold + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
+  },
+  ratingText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.dark.gold,
+  },
+  badgeText: {
+    color: Colors.dark.gold,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  insightsContainer: {
+    gap: 12,
+    marginBottom: 24,
+  },
+  sectionSubtitle: {
+    color: Colors.dark.textSecondary,
+    fontSize: 14,
+    marginTop: -4,
+    marginBottom: 16,
+  },
+  insightCard: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  insightHeader: {
+    marginBottom: 12,
+  },
+  insightTitle: {
+    color: Colors.dark.text,
+    fontWeight: '700',
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  insightTip: {
+    flexDirection: 'row',
+    marginBottom: 10,
+  },
+  insightBullet: {
+    color: Colors.dark.gold,
+    fontSize: 16,
+    fontWeight: '700',
+    marginRight: 8,
+    marginTop: -2,
+  },
+  insightText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    flex: 1,
+  },
+  weeklyStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  weeklyStatItem: {
+    alignItems: 'center',
+  },
+  weeklyStatValue: {
+    color: Colors.dark.gold,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  weeklyStatLabel: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  bottomNav: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.background,
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.border,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    gap: 10,
+  },
+  bottomNavItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    gap: 6,
+  },
+  bottomNavItemActive: {
+    backgroundColor: Colors.dark.gold,
+    borderColor: Colors.dark.gold,
+  },
+  bottomNavText: {
+    color: Colors.dark.text,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  bottomNavTextActive: {
+    color: Colors.dark.background,
+  },
+  bottomNavCreate: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: Colors.dark.gold,
+  },
+  bottomNavCreateText: {
+    color: Colors.dark.background,
+    fontWeight: '800',
+    fontSize: 13,
   },
 });
