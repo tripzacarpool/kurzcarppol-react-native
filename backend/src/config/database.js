@@ -28,10 +28,10 @@ export async function connectToDatabase() {
     cached.promise = mongoose
       .connect(MONGODB_URI, {
         dbName: MONGODB_DB,
-        bufferCommands: false,
+        bufferCommands: true, // Buffer commands until connection is ready
         maxPoolSize: 10,
         minPoolSize: 5,
-        serverSelectionTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 10000, // Increased timeout
         socketTimeoutMS: 45000,
         family: 4, // Use IPv4
       })

@@ -9,13 +9,13 @@ import {
   SafeAreaView,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { X, MapPin, Clock, Users, Plus, Minus } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
 import { createRideRequest } from '@/lib/api';
+import CustomAlert, { AlertType } from './CustomAlert';
 
 interface RideRequestModalProps {
   visible: boolean;
@@ -37,6 +37,26 @@ export default function RideRequestModal({
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
   const [error, setError] = useState('');
+  
+  // Custom alert state
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    title: string;
+    message: string;
+    type: AlertType;
+  }>({ title: '', message: '', type: 'info' });
+
+  const showAlert = (title: string, message: string, type: AlertType = 'info') => {
+    setAlertConfig({ title, message, type });
+    setAlertVisible(true);
+  };
+
+  const hideAlert = () => {
+    setAlertVisible(false);
+    setTimeout(() => {
+      setAlertConfig({ title: '', message: '', type: 'info' });
+    }, 300);
+  };
 
   const handleCreateRide = async () => {
     if (!pickupLocation.trim()) {
@@ -80,9 +100,10 @@ export default function RideRequestModal({
       
       console.log('✅ Ride request created successfully!', response);
       
-      Alert.alert(
+      showAlert(
         'Ride Request Created',
-        `Your ride from ${pickupLocation} to ${dropoffLocation} is now live! Drivers will start accepting it soon.`
+        `Your ride from ${pickupLocation} to ${dropoffLocation} is now live! Drivers will start accepting it soon.`,
+        'success'
       );
 
       // Reset form
@@ -92,8 +113,10 @@ export default function RideRequestModal({
       setNotes('');
       setWomenOnly(false);
 
-      onRideCreated?.();
-      onClose();
+      setTimeout(() => {
+        onRideCreated?.();
+        onClose();
+      }, 1500);
     } catch (err: any) {
       const errorMsg = err?.response?.data?.error || err?.message || 'Failed to create ride';
       setError(errorMsg);
@@ -261,6 +284,14 @@ export default function RideRequestModal({
           </TouchableOpacity>
         </View>
       </SafeAreaView>
+
+      <CustomAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        onClose={hideAlert}
+      />
     </Modal>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { X, Check, MapPin, MessageSquare, Armchair, Navigation, CheckCircle2, ArrowLeft, Wallet as WalletIcon, CreditCard, ShieldCheck, UserCheck, Clock } from 'lucide-react-native';
@@ -16,6 +15,7 @@ import { Ride } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { RazorpayWebView } from './RazorpayWebView';
 import { DRIVER_MODE_META } from '@/constants/driverModes';
+import CustomAlert, { AlertType } from './CustomAlert';
 import {
   processWalletPayment,
   getWalletBalance,
@@ -45,6 +45,26 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   const [processingPayment, setProcessingPayment] = useState(false);
   const [showRazorpay, setShowRazorpay] = useState(false);
   const [razorpayOrder, setRazorpayOrder] = useState<RazorpayOrderResponse | null>(null);
+  
+  // Custom alert state
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    title: string;
+    message: string;
+    type: AlertType;
+  }>({ title: '', message: '', type: 'info' });
+
+  const showAlert = (title: string, message: string, type: AlertType = 'info') => {
+    setAlertConfig({ title, message, type });
+    setAlertVisible(true);
+  };
+
+  const hideAlert = () => {
+    setAlertVisible(false);
+    setTimeout(() => {
+      setAlertConfig({ title: '', message: '', type: 'info' });
+    }, 300);
+  };
 
   // Reset state when modal closes
   useEffect(() => {
@@ -81,7 +101,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   const totalAmount = selectedSeats.length * ride.farePerSeat;
   const driverModeInfo = DRIVER_MODE_META[ride.driverMode];
 
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     switch (step) {
       case 'request':
         setStep('confirm');
@@ -101,9 +121,9 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       default:
         onClose();
     }
-  };
+  }, [step, onClose]);
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     setStep('confirm');
     setSelectedSeats([]);
     setCustomRequest('');
@@ -112,9 +132,9 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     setPaymentMethod(null);
     setProcessingPayment(false);
     onClose();
-  };
+  }, [onClose]);
 
-  const handlePayment = async () => {
+  const handlePayment = useCallback(async () => {
     if (!paymentMethod || !user?.id) return;
 
     setProcessingPayment(true);
@@ -130,11 +150,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         });
 
         if (result.success) {
-          Alert.alert('Success', 'Payment secured in escrow. Driver will receive it after drop-off.');
+          showAlert('Success', 'Payment secured in escrow. Driver will receive it after drop-off.', 'success');
           setPickupConfirmed(false);
           setStep('boarding');
         } else {
-          Alert.alert('Payment Failed', result.error || 'Insufficient balance');
+          showAlert('Payment Failed', result.error || 'Insufficient balance', 'error');
         }
         setProcessingPayment(false);
       } else if (paymentMethod === 'upi') {
@@ -152,12 +172,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       }
     } catch (error: any) {
       console.error('Payment error:', error);
-      Alert.alert('Error', error.message || 'Payment failed');
+      showAlert('Error', error.message || 'Payment failed', 'error');
       setProcessingPayment(false);
     }
-  };
+  }, [paymentMethod, user?.id, totalAmount, ride, selectedSeats]);
 
-  const handleRazorpaySuccess = async (paymentId: string, orderId: string, signature: string) => {
+  const handleRazorpaySuccess = useCallback(async (paymentId: string, orderId: string, signature: string) => {
     try {
       setShowRazorpay(false);
       setProcessingPayment(true);
@@ -165,49 +185,55 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       const verified = await verifyPayment(orderId, paymentId, signature);
       
       if (verified) {
-        Alert.alert('Success!', 'Payment secured in escrow. Confirm pickup to start tracking.', [
-          {
-            text: 'OK',
-            onPress: () => {
-              setPickupConfirmed(false);
-              setStep('boarding');
-            },
-          },
-        ]);
+        showAlert('Success!', 'Payment secured in escrow. Confirm pickup to start tracking.', 'success');
+        setTimeout(() => {
+          setPickupConfirmed(false);
+          setStep('boarding');
+        }, 1500);
       } else {
-        Alert.alert('Error', 'Payment verification failed. Please contact support.');
+        showAlert('Error', 'Payment verification failed. Please contact support.', 'error');
       }
     } catch (error: any) {
       console.error('Verification error:', error);
-      Alert.alert('Error', 'Payment verification failed');
+      showAlert('Error', 'Payment verification failed', 'error');
     } finally {
       setProcessingPayment(false);
     }
-  };
+  }, []);
 
-  const handleRazorpayFailure = (error: string) => {
+  const handleRazorpayFailure = useCallback((error: string) => {
     setShowRazorpay(false);
-    Alert.alert('Payment Failed', error);
-  };
+    showAlert('Payment Failed', error, 'error');
+  }, []);
 
-  const handlePickupConfirmation = () => {
+  const handlePickupConfirmation = useCallback(() => {
     setPickupConfirmed(true);
     setStep('tracking');
-  };
+  }, []);
 
-  const handleDropConfirmation = () => {
+  const handleDropConfirmation = useCallback(() => {
     setStep('completed');
-  };
+  }, []);
 
-  const handleSeatSelect = (seatNumber: number) => {
-    if (selectedSeats.includes(seatNumber)) {
-      setSelectedSeats(selectedSeats.filter((s) => s !== seatNumber));
-    } else {
-      setSelectedSeats([...selectedSeats, seatNumber]);
-    }
-  };
+  const handleSeatSelect = useCallback((seatNumber: number) => {
+    setSelectedSeats((prev) => {
+      if (prev.includes(seatNumber)) {
+        return prev.filter((s) => s !== seatNumber);
+      } else {
+        return [...prev, seatNumber];
+      }
+    });
+  }, []);
 
-  const renderSeatLayout = () => {
+  const handleSeatsContinue = useCallback(() => {
+    setStep('payment');
+  }, []);
+
+  const handleRequestContinue = useCallback(() => {
+    setStep('seats');
+  }, []);
+
+  const renderSeatLayout = useMemo(() => {
     const rows = 2;
     const seatsPerRow = [2, 2];
     let seatCounter = 1;
@@ -256,10 +282,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         ))}
       </View>
     );
-  };
+  }, [selectedSeats, handleSeatSelect, ride?.availableSeats]);
 
-  const renderStep = () => {
-    switch (step) {
+  const renderStep = useMemo(() => {
+    return () => {
+      switch (step) {
       case 'confirm':
         return (
           <View style={styles.stepContent}>
@@ -334,12 +361,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             />
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => setStep('seats')}>
+              onPress={handleRequestContinue}>
               <Text style={styles.primaryButtonText}>Select Seats</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.secondaryButton}
-              onPress={() => setStep('seats')}>
+              onPress={handleRequestContinue}>
               <Text style={styles.secondaryButtonText}>Skip</Text>
             </TouchableOpacity>
           </View>
@@ -352,7 +379,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               <Armchair size={32} color={Colors.dark.gold} />
             </View>
             <Text style={styles.stepTitle}>Select Your Seat</Text>
-            {renderSeatLayout()}
+            {renderSeatLayout}
             <View style={styles.seatLegend}>
               <View style={styles.legendItem}>
                 <View style={[styles.legendBox, { backgroundColor: Colors.dark.gold + '30' }]} />
@@ -378,7 +405,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             <TouchableOpacity
               style={[styles.primaryButton, selectedSeats.length === 0 && styles.disabledButton]}
               disabled={selectedSeats.length === 0}
-              onPress={() => setStep('payment')}>
+              onPress={handleSeatsContinue}>
               <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
             </TouchableOpacity>
           </View>
@@ -573,6 +600,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         );
     }
   };
+  }, [step, selectedSeats, customRequest, customFare, paymentMethod, walletBalance, processingPayment, pickupConfirmed, ride?.id, ride?.from, ride?.to, ride?.driver?.name, ride?.farePerSeat, ride?.availableSeats, ride?.driverMode, user?.id, handlePayment, handleRazorpaySuccess, handleRazorpayFailure, handleBack, handleClose, handlePickupConfirmation, handleDropConfirmation, handleSeatSelect, renderSeatLayout]);
 
   return (
     <>
@@ -580,6 +608,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         visible={visible}
         animationType="slide"
         transparent
+        hardwareAccelerated={true}
         onRequestClose={onClose}>
         <TouchableOpacity 
           style={styles.modalOverlay} 
@@ -590,13 +619,13 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}>
             <View style={styles.modalHeader}>
+              <View style={styles.modalHandle} />
               <TouchableOpacity
                 style={[styles.backButton, step === 'confirm' && styles.hiddenButton]}
                 onPress={handleBack}
                 disabled={step === 'confirm'}>
                 <ArrowLeft size={24} color={Colors.dark.text} />
               </TouchableOpacity>
-              <View style={styles.modalHandle} />
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={handleClose}>
@@ -606,6 +635,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             <ScrollView
               style={styles.modalScroll}
               showsVerticalScrollIndicator={false}
+              scrollEventThrottle={8}
+              decelerationRate="fast"
+              bounces={false}
+              removeClippedSubviews={true}
+              nestedScrollEnabled={false}
               contentContainerStyle={styles.modalScrollContent}>
               {renderStep()}
             </ScrollView>
@@ -633,6 +667,14 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           onClose={() => setShowRazorpay(false)}
         />
       )}
+
+      <CustomAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        onClose={hideAlert}
+      />
     </>
   );
 }
@@ -645,35 +687,41 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: Colors.dark.backgroundSecondary,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    height: '75%',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    height: '80%',
     marginBottom: 65,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 10,
   },
   modalHeader: {
     alignItems: 'center',
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingTop: 8,
+    paddingBottom: 8,
     position: 'relative',
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.dark.border,
+    borderBottomWidth: 0.5,
+    borderBottomColor: Colors.dark.border + '40',
     flexDirection: 'row',
     justifyContent: 'center',
   },
   modalHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: Colors.dark.border,
-    borderRadius: 2,
+    width: 48,
+    height: 5,
+    backgroundColor: Colors.dark.gold + '60',
+    borderRadius: 2.5,
+    marginBottom: 12,
   },
   backButton: {
     position: 'absolute',
     left: 16,
-    top: 12,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.dark.card,
+    top: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.card + '80',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1,
@@ -685,24 +733,28 @@ const styles = StyleSheet.create({
   closeButton: {
     position: 'absolute',
     right: 16,
-    top: 12,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.dark.card,
+    top: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.card + '80',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalScroll: {
     flex: 1,
+    marginHorizontal: 0,
   },
   modalScrollContent: {
     padding: 20,
-    paddingTop: 16,
+    paddingTop: 12,
     paddingBottom: 40,
+    flexGrow: 1,
   },
   stepContent: {
     alignItems: 'center',
+    minHeight: '100%',
+    justifyContent: 'flex-start',
   },
   stepIcon: {
     width: 80,

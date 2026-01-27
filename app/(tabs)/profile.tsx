@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Switch, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Switch } from 'react-native';
 import { useRouter } from 'expo-router';
 import { User, Star, MapPin, Shield, Bell, HelpCircle, LogOut, ChevronRight, Users, Car, UserCog, Check, Globe, Navigation } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
 import { getUserProfile } from '@/lib/ipService';
 import ForceLogoutButton from '@/components/ForceLogoutButton';
+import CustomAlert, { AlertType } from '@/components/CustomAlert';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -18,6 +19,27 @@ export default function ProfileScreen() {
   const [locationEnabled, setLocationEnabled] = useState(hasPermission);
   const [currentRole, setCurrentRole] = useState<UserRole>('passenger');
   const [userProfile, setUserProfile] = useState<any>(null);
+  
+  // Custom alert state
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    title: string;
+    message: string;
+    type: AlertType;
+    buttons?: any[];
+  }>({ title: '', message: '', type: 'info' });
+
+  const showAlert = (title: string, message: string, type: AlertType = 'info', buttons?: any[]) => {
+    setAlertConfig({ title, message, type, buttons });
+    setAlertVisible(true);
+  };
+
+  const hideAlert = () => {
+    setAlertVisible(false);
+    setTimeout(() => {
+      setAlertConfig({ title: '', message: '', type: 'info' });
+    }, 300);
+  };
 
   useEffect(() => {
     if (user) {
@@ -43,9 +65,10 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = async () => {
-    Alert.alert(
+    showAlert(
       'Logout',
       'Are you sure you want to logout?',
+      'warning',
       [
         {
           text: 'Cancel',
@@ -64,12 +87,11 @@ export default function ProfileScreen() {
               router.replace('/(auth)/login');
             } catch (error) {
               console.error('❌ Logout error:', error);
-              Alert.alert('Error', 'Failed to logout. Please try again.');
+              showAlert('Error', 'Failed to logout. Please try again.', 'error');
             }
           },
         },
-      ],
-      { cancelable: true }
+      ]
     );
   };
 
@@ -79,9 +101,9 @@ export default function ProfileScreen() {
       if (granted) {
         await updateLocation();
         setLocationEnabled(true);
-        Alert.alert('Success', 'Location services enabled!');
+        showAlert('Success', 'Location services enabled!', 'success');
       } else {
-        Alert.alert('Permission Denied', 'Please enable location in your device settings.');
+        showAlert('Permission Denied', 'Please enable location in your device settings.', 'warning');
       }
     } else {
       setLocationEnabled(false);
@@ -310,6 +332,15 @@ export default function ProfileScreen() {
 
         <Text style={styles.version}>Version 1.0.0</Text>
       </ScrollView>
+
+      <CustomAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        buttons={alertConfig.buttons}
+        onClose={hideAlert}
+      />
     </SafeAreaView>
   );
 }

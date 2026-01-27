@@ -1,13 +1,14 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator, Alert } from 'react-native';
-import { MapPin, Star, Calendar, User as UserIcon, Plus } from 'lucide-react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator } from 'react-native';
+import { MapPin, Star, Calendar, User as UserIcon, Plus, X } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { mockTrips } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
-import { getUserRides } from '@/lib/api';
+import { getUserRides, cancelRide } from '@/lib/api';
 import RideRequestModal from '@/components/RideRequestModal';
 import { subscribeToRideAcceptance, unsubscribeFromRideEvents, initializeLocationSocket } from '@/lib/locationSocket';
+import CustomAlert, { AlertButton, AlertType } from '@/components/CustomAlert';
 
 export default function TripsScreen() {
   const { user } = useAuth();
@@ -16,6 +17,28 @@ export default function TripsScreen() {
   const [loadingRides, setLoadingRides] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [rideRequestModalVisible, setRideRequestModalVisible] = useState(false);
+  const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
+  
+  // Custom alert state
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    title: string;
+    message: string;
+    type: AlertType;
+    buttons?: AlertButton[];
+  }>({ title: '', message: '', type: 'info' });
+
+  const showAlert = (title: string, message: string, type: AlertType = 'info', buttons?: AlertButton[]) => {
+    setAlertConfig({ title, message, type, buttons });
+    setAlertVisible(true);
+  };
+
+  const hideAlert = () => {
+    setAlertVisible(false);
+    setTimeout(() => {
+      setAlertConfig({ title: '', message: '', type: 'info' });
+    }, 300);
+  };
 
   useEffect(() => {
     if (user) {
@@ -71,6 +94,52 @@ export default function TripsScreen() {
     setRefreshing(true);
     await fetchUserRides();
     setRefreshing(false);
+  };
+
+  const handleCancelRide = (rideId: string, rideStatus: string) => {
+    // Can only cancel rides that are waiting or accepted
+    if (!['waiting', 'accepted'].includes(rideStatus)) {
+      showAlert('Cannot Cancel', `This ride cannot be cancelled as it's already ${rideStatus}.`, 'warning');
+      return;
+    }
+
+    showAlert(
+      'Cancel Ride Request?',
+      'Are you sure you want to cancel this ride request? You won\'t be matched with a driver.',
+      'warning',
+      [
+        {
+          text: 'Keep it',
+          style: 'cancel',
+        },
+        {
+          text: 'Cancel Request',
+          style: 'destructive',
+          onPress: async () => {
+            await performCancelRide(rideId);
+          },
+        },
+      ]
+    );
+  };
+
+  const performCancelRide = async (rideId: string) => {
+    setCancellingRideId(rideId);
+    try {
+      await cancelRide(rideId);
+      
+      // Remove from local state
+      const updated = userRides.filter(ride => ride.id !== rideId);
+      setUserRides(updated);
+      
+      showAlert('Cancelled', 'Your ride request has been cancelled.', 'success');
+      console.log('✅ Ride cancelled:', rideId);
+    } catch (error) {
+      console.error('❌ Error cancelling ride:', error);
+      showAlert('Error', 'Failed to cancel the ride. Please try again.', 'error');
+    } finally {
+      setCancellingRideId(null);
+    }
   };
 
   const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
@@ -163,6 +232,25 @@ export default function TripsScreen() {
                   </View>
                 )}
               </View>
+
+              {['waiting', 'accepted'].includes(ride.status) && (
+                <View style={styles.actionRow}>
+                  <TouchableOpacity
+                    style={[styles.cancelButton, { opacity: cancellingRideId === ride.id ? 0.6 : 1 }]}
+                    onPress={() => handleCancelRide(ride.id, ride.status)}
+                    disabled={cancellingRideId === ride.id}
+                    activeOpacity={0.7}>
+                    {cancellingRideId === ride.id ? (
+                      <ActivityIndicator size="small" color={Colors.dark.background} />
+                    ) : (
+                      <>
+                        <X size={16} color={Colors.dark.background} />
+                        <Text style={styles.cancelButtonText}>Cancel Request</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
             </TouchableOpacity>
             </View>
           ))
@@ -176,6 +264,15 @@ export default function TripsScreen() {
           console.log('✅ Ride created successfully');
           fetchUserRides();
         }}
+      />
+
+      <CustomAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        buttons={alertConfig.buttons}
+        onClose={hideAlert}
       />
     </SafeAreaView>
   );
@@ -383,5 +480,26 @@ const styles = StyleSheet.create({
   ratingStars: {
     flexDirection: 'row',
     gap: 2,
+  },
+  actionRow: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.border,
+  },
+  cancelButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.error,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 8,
+  },
+  cancelButtonText: {
+    color: Colors.dark.background,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

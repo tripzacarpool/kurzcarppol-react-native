@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, memo } from 'react-native';
 import { Car, Star, Clock, MapPin, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { DRIVER_MODE_META } from '@/constants/driverModes';
@@ -9,7 +9,7 @@ interface RideCardProps {
   onPress: () => void;
 }
 
-export function RideCard({ ride, onPress }: RideCardProps) {
+function RideCardComponent({ ride, onPress }: RideCardProps) {
   const modeMeta = DRIVER_MODE_META[ride.driverMode];
 
   return (
@@ -79,6 +79,9 @@ export function RideCard({ ride, onPress }: RideCardProps) {
     </TouchableOpacity>
   );
 }
+
+export const RideCard = memo(RideCardComponent);
+
 
 const styles = StyleSheet.create({
   card: {

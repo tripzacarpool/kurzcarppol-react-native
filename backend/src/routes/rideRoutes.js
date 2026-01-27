@@ -13,7 +13,8 @@ const router = express.Router();
 // POST /api/rides/create - Create a new ride request (passenger)
 router.post('/create', createRideRequest);
 
-// POST /api/rides/driver-offer - Create a driver ride offer
+// POST /api/rides/driver-offer - Create a driver ride offer (PROTECTED)
+// Note: clerkAuth middleware is applied globally in server.js
 router.post('/driver-offer', createDriverRideOffer);
 
 // GET /api/rides/requests - Get user's ride requests

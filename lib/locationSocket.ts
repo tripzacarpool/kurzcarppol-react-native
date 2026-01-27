@@ -131,8 +131,22 @@ export function disconnectLocationSocket() {
  */
 export function subscribeToNewRides(onNewRide: (ride: any) => void) {
   const sock = getLocationSocket();
+
+  // Listen to new ride requests from passengers (for drivers)
+  sock.on('new_ride_request', (ride: any) => {
+    console.log('📨 New ride request received:', ride);
+    onNewRide(ride);
+  });
+
+  // Listen to new driver offers (for passengers)
+  sock.on('new_driver_offer', (ride: any) => {
+    console.log('📨 New driver offer received:', ride);
+    onNewRide(ride);
+  });
+
+  // Legacy support for old 'ride:new' event
   sock.on('ride:new', (ride: any) => {
-    console.log('📨 New ride received:', ride);
+    console.log('📨 New ride received (legacy):', ride);
     onNewRide(ride);
   });
 }
@@ -146,6 +160,11 @@ export function subscribeToRideAcceptance(onRideAccepted: (data: any) => void) {
     console.log('✅ Ride accepted:', data);
     onRideAccepted(data);
   });
+  // Also listen to new event name
+  sock.on('ride_accepted', (data: any) => {
+    console.log('✅ Ride accepted:', data);
+    onRideAccepted(data);
+  });
 }
 
 /**
@@ -154,5 +173,8 @@ export function subscribeToRideAcceptance(onRideAccepted: (data: any) => void) {
 export function unsubscribeFromRideEvents() {
   const sock = getLocationSocket();
   sock.off('ride:new');
+  sock.off('new_ride_request');
+  sock.off('new_driver_offer');
   sock.off('ride:accepted');
+  sock.off('ride_accepted');
 }

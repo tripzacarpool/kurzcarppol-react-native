@@ -8,13 +8,13 @@ import {
   TouchableOpacity,
   ScrollView,
   Switch,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { X, MapPin, Users, DollarSign, FileText } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { createDriverRideOffer } from '@/lib/api';
+import CustomAlert, { AlertType } from './CustomAlert';
 
 interface DriverRideOfferModalProps {
   visible: boolean;
@@ -42,22 +42,42 @@ export default function DriverRideOfferModal({
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // Custom alert state
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    title: string;
+    message: string;
+    type: AlertType;
+  }>({ title: '', message: '', type: 'info' });
+
+  const showAlert = (title: string, message: string, type: AlertType = 'info') => {
+    setAlertConfig({ title, message, type });
+    setAlertVisible(true);
+  };
+
+  const hideAlert = () => {
+    setAlertVisible(false);
+    setTimeout(() => {
+      setAlertConfig({ title: '', message: '', type: 'info' });
+    }, 300);
+  };
 
   const handleSubmit = async () => {
     if (!from.trim() || !to.trim()) {
-      Alert.alert('Error', 'Please enter pickup and dropoff locations');
+      showAlert('Error', 'Please enter pickup and dropoff locations', 'error');
       return;
     }
 
     const passengerCount = parseInt(passengers);
     if (isNaN(passengerCount) || passengerCount < 1 || passengerCount > 4) {
-      Alert.alert('Error', 'Passengers must be between 1 and 4');
+      showAlert('Error', 'Passengers must be between 1 and 4', 'error');
       return;
     }
 
     const fareAmount = fare ? parseFloat(fare) : 0;
     if (fare && (isNaN(fareAmount) || fareAmount < 0)) {
-      Alert.alert('Error', 'Please enter a valid fare amount');
+      showAlert('Error', 'Please enter a valid fare amount', 'error');
       return;
     }
 
@@ -82,22 +102,14 @@ export default function DriverRideOfferModal({
       };
 
       console.log('✅ Driver ride offer created:', response);
-      Alert.alert(
-        'Success',
-        'Your ride offer has been created! Passengers can now see and book it.',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              handleClose();
-              onSuccess?.(offerPayload);
-            },
-          },
-        ]
-      );
+      showAlert('Success', 'Your ride offer has been created! Passengers can now see and book it.', 'success');
+      setTimeout(() => {
+        handleClose();
+        onSuccess?.(offerPayload);
+      }, 1500);
     } catch (error) {
       console.error('❌ Error creating ride offer:', error);
-      Alert.alert('Error', 'Failed to create ride offer. Please try again.');
+      showAlert('Error', 'Failed to create ride offer. Please try again.', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -261,6 +273,14 @@ export default function DriverRideOfferModal({
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <CustomAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        onClose={hideAlert}
+      />
     </Modal>
   );
 }

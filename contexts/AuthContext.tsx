@@ -43,8 +43,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       
       if (isSignedIn && isLoaded) {
         try {
+          // Get token without template for Clerk Express backend compatibility
           const token = await getToken();
-          console.log('📝 Token from getToken():', token ? '✅ Received' : '❌ null/undefined');
+          console.log('📝 Token from getToken():', token ? `✅ Received (length: ${token.length})` : '❌ null/undefined');
+          console.log('📝 Token preview:', token ? token.substring(0, 50) + '...' : 'null');
           
           if (token) {
             setAuthToken(token);

@@ -102,19 +102,40 @@ app.use((req, res, next) => {
 // Clerk authentication middleware (must be after body parsers)
 app.use(clerkAuth);
 
-// Connect to MongoDB
+// Connect to MongoDB and setup routes after connection
 let dbReady = false;
 
-connectToDatabase()
-  .then(() => {
+// Middleware to check database readiness
+app.use((req, res, next) => {
+  // Skip DB check for health endpoint
+  if (req.path.startsWith('/health')) {
+    return next();
+  }
+
+  // For other routes, check if DB is ready
+  if (!dbReady && req.path.startsWith('/api/')) {
+    return res.status(503).json({
+      error: 'Service Unavailable',
+      message: 'Database is still connecting. Please try again in a moment.',
+      code: 'DB_NOT_READY',
+    });
+  }
+  next();
+});
+
+// Initialize database connection
+(async () => {
+  try {
+    await connectToDatabase();
     dbReady = true;
-    console.log('✅ Database ready');
-  })
-  .catch((err) => {
+    console.log('✅ Database ready and routes are live');
+  } catch (err) {
     console.error('❌ MongoDB connection error:', err.message);
     console.warn('⚠️  API running in standalone mode (no database)');
     console.warn('📝 To fix: Check MONGODB_URI credentials in backend/.env');
-  });
+    dbReady = false;
+  }
+})();
 
 // Routes
 app.use('/health', healthRoutes);

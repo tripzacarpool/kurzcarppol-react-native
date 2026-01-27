@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, SafeAreaView, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, SafeAreaView, ActivityIndicator, RefreshControl } from 'react-native';
 import { Search, MapPin, Bell, SlidersHorizontal, Navigation, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { RideCard } from '@/components/RideCard';
@@ -11,6 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
 import { getAvailableRides } from '@/lib/api';
 import { subscribeToNewRides, unsubscribeFromRideEvents, initializeLocationSocket } from '@/lib/locationSocket';
+import CustomAlert, { AlertType } from '@/components/CustomAlert';
 
 export default function HomeScreen() {
   const { user } = useAuth();
@@ -23,6 +24,26 @@ export default function HomeScreen() {
   const [availableRides, setAvailableRides] = useState<any[]>([]);
   const [loadingRides, setLoadingRides] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  
+  // Custom alert state
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    title: string;
+    message: string;
+    type: AlertType;
+  }>({ title: '', message: '', type: 'info' });
+
+  const showAlert = (title: string, message: string, type: AlertType = 'info') => {
+    setAlertConfig({ title, message, type });
+    setAlertVisible(true);
+  };
+
+  const hideAlert = () => {
+    setAlertVisible(false);
+    setTimeout(() => {
+      setAlertConfig({ title: '', message: '', type: 'info' });
+    }, 300);
+  };
 
   useEffect(() => {
     fetchAvailableRides();
@@ -71,9 +92,9 @@ export default function HomeScreen() {
     const granted = await requestPermission();
     if (granted) {
       await updateLocation();
-      Alert.alert('Success', 'Location permission granted and location updated!');
+      showAlert('Success', 'Location permission granted and location updated!', 'success');
     } else {
-      Alert.alert('Permission Denied', 'Location permission is required to show nearby rides.');
+      showAlert('Permission Denied', 'Location permission is required to show nearby rides.', 'warning');
     }
   };
 
@@ -242,6 +263,14 @@ export default function HomeScreen() {
           // Refresh rides list or show success message
           console.log('✅ Ride created successfully');
         }}
+      />
+
+      <CustomAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        onClose={hideAlert}
       />
     </SafeAreaView>
   );

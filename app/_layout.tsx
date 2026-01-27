@@ -4,12 +4,14 @@ import { StatusBar } from 'expo-status-bar';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider, useAuthContext } from '@/contexts/AuthContext';
 import { LocationProvider } from '@/contexts/LocationContext';
+import { NotificationProvider } from '@/contexts/NotificationContext';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/Colors';
 import { ClerkProvider } from '@clerk/clerk-expo';
 import * as SecureStore from 'expo-secure-store';
 import { fetchAndStoreUserIP } from '@/lib/ipService';
 import { testBackendConnectivity } from '@/lib/connectivityHelper';
+import NotificationToast from '@/components/NotificationToast';
 
 const tokenCache = {
   async getToken(key: string) {
@@ -102,10 +104,11 @@ function RootLayoutNav() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="driver" />
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="admin" options={{ href: null }} />
+        <Stack.Screen name="admin" />
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="light" />
+      <NotificationToast />
     </>
   );
 }
@@ -143,9 +146,11 @@ export default function RootLayout() {
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
       <AuthProvider>
-        <LocationProvider>
-          <RootLayoutNav />
-        </LocationProvider>
+        <NotificationProvider>
+          <LocationProvider>
+            <RootLayoutNav />
+          </LocationProvider>
+        </NotificationProvider>
       </AuthProvider>
     </ClerkProvider>
   );

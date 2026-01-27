@@ -115,16 +115,19 @@ export const createRideRequest = async (req, res, next) => {
 
     // Emit socket event for new ride request
     if (io) {
-      io.emit('ride:new', {
-        id: rideRequest._id,
+      // Notify all drivers
+      io.emit('new_ride_request', {
+        rideId: rideRequest._id,
         from: rideRequest.from,
         to: rideRequest.to,
         passengers: rideRequest.passengers,
         womenOnly: rideRequest.womenOnly,
+        notes: rideRequest.notes,
         status: rideRequest.status,
         createdAt: rideRequest.createdAt,
+        createdBy: clerkId,
       });
-      console.log('📡 Broadcasted new ride to all clients');
+      console.log('📡 New ride request broadcasted to all drivers');
     }
 
     res.status(201).json({
@@ -440,14 +443,26 @@ export const acceptRide = async (req, res, next) => {
  */
 export const createDriverRideOffer = async (req, res, next) => {
   try {
+    console.log('📨 createDriverRideOffer - Request received');
+    console.log('📨 Request headers:', {
+      hasAuth: !!req.headers.authorization,
+      hasClerk: !!req.headers['x-clerk-auth'],
+    });
+    console.log('📨 Request user from Clerk middleware:', req.user);
+
     let clerkId = getClerkUserId(req);
+    console.log('🔍 clerkId from getClerkUserId:', clerkId);
 
     if (!clerkId) {
       clerkId = req.body.clerkId;
-      console.log('⚠️ Using clerkId from request body (auth not available)');
+      console.log(
+        '⚠️ Using clerkId from request body (auth not available):',
+        clerkId,
+      );
     }
 
     if (!clerkId) {
+      console.log('❌ No clerkId found - returning 401');
       return res.status(401).json({
         error: 'Unauthorized',
         details: 'clerkId is required (via auth or body)',
@@ -455,6 +470,7 @@ export const createDriverRideOffer = async (req, res, next) => {
       });
     }
 
+    console.log('✅ clerkId authenticated:', clerkId);
     const {
       from,
       to,
@@ -526,22 +542,25 @@ export const createDriverRideOffer = async (req, res, next) => {
 
     // Emit socket event for new driver ride offer
     if (io) {
-      io.emit('ride:new', {
-        id: rideOffer._id,
+      // Notify all passengers
+      io.emit('new_driver_offer', {
+        offerId: rideOffer._id,
         from: rideOffer.from,
         to: rideOffer.to,
         passengers: rideOffer.passengers,
         womenOnly: rideOffer.womenOnly,
         fare: rideOffer.fare,
-        offeredByDriver: true,
+        notes: rideOffer.notes,
         status: rideOffer.status,
         createdAt: rideOffer.createdAt,
         driver: {
+          clerkId: clerkId,
           name: `${driver.firstName} ${driver.lastName}`.trim(),
           rating: driver.rating,
+          profileImage: driver.profileImage,
         },
       });
-      console.log('📡 Broadcasted new driver ride offer to all clients');
+      console.log('📡 New driver ride offer broadcasted to all passengers');
     }
 
     res.status(201).json({

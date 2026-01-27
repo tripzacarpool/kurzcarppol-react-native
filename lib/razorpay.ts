@@ -44,7 +44,7 @@ export async function createRazorpayOrder(
   amount: number,
   userId: string,
   bookingDetails: any,
-): Promise<{ orderId: string; amount: number }> {
+): Promise<RazorpayOrderResponse> {
   try {
     const response = await fetch(`${API_URL}/api/payments/create-order`, {
       method: 'POST',
@@ -64,7 +64,11 @@ export async function createRazorpayOrder(
     }
 
     const data = await response.json();
-    return data;
+    return {
+      orderId: data.orderId,
+      amount: data.amount,
+      currency: data.currency || 'INR',
+    };
   } catch (error) {
     console.error('Error creating Razorpay order:', error);
     throw error;

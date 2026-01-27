@@ -19,12 +19,49 @@ export const apiClient = axios.create({
   },
 });
 
+// Request interceptor to log outgoing requests
+apiClient.interceptors.request.use(
+  (config) => {
+    const authHeader = config.headers['Authorization'];
+    const authHeaderStr = typeof authHeader === 'string' ? authHeader : '';
+    console.log(`📤 ${config.method?.toUpperCase()} ${config.url}`);
+    console.log(
+      '   Authorization:',
+      authHeaderStr
+        ? `✅ Set (${authHeaderStr.substring(0, 30)}...)`
+        : '❌ Not set',
+    );
+    return config;
+  },
+  (error) => {
+    console.error('❌ Request interceptor error:', error);
+    return Promise.reject(error);
+  },
+);
+
+// Response interceptor to log responses
+apiClient.interceptors.response.use(
+  (response) => {
+    console.log(`✅ ${response.status} ${response.config.url}`);
+    return response;
+  },
+  (error) => {
+    console.error(
+      `❌ ${error.response?.status || 'Error'} ${error.config?.url}`,
+      error.response?.data,
+    );
+    return Promise.reject(error);
+  },
+);
+
 // Set authorization token for authenticated requests
 export function setAuthToken(token: string | null) {
   if (token) {
     apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    console.log('✅ Authorization header set, token length:', token.length);
   } else {
     delete apiClient.defaults.headers.common['Authorization'];
+    console.log('❌ Authorization header cleared');
   }
 }
 
@@ -256,11 +293,35 @@ export async function createDriverRideOffer(rideData: {
   pickupCountry?: string;
 }) {
   try {
+    console.log('📤 Creating driver ride offer with data:', rideData);
+    console.log(
+      '📨 Current auth header:',
+      apiClient.defaults.headers.common['Authorization']
+        ? '✅ Set'
+        : '❌ Not set',
+    );
     const response = await apiClient.post('/api/rides/driver-offer', rideData);
+    console.log('✅ Ride offer created:', response.data);
     return response.data;
   } catch (error: any) {
     console.error(
-      'Error creating driver ride offer:',
+      '❌ Error creating driver ride offer:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// Cancel a ride request or driver offer
+export async function cancelRide(rideId: string) {
+  try {
+    console.log('🗑️ Cancelling ride:', rideId);
+    const response = await apiClient.delete(`/api/rides/${rideId}/cancel`);
+    console.log('✅ Ride cancelled:', response.data);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error cancelling ride:',
       error.response?.data || error.message,
     );
     throw error;

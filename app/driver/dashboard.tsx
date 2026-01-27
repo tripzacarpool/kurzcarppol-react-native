@@ -8,10 +8,10 @@ import {
   SafeAreaView,
   Switch,
   RefreshControl,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import CustomAlert, { AlertType, AlertButton } from '@/components/CustomAlert';
 import {
   Power,
   DollarSign,
@@ -32,7 +32,7 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { getAvailableRides, acceptRide } from '@/lib/api';
+import { getAvailableRides, acceptRide, cancelRide } from '@/lib/api';
 import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
 
@@ -90,9 +90,27 @@ export default function DriverDashboard() {
   const [offersLoading, setOffersLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [rideOfferModalVisible, setRideOfferModalVisible] = useState(false);
-  const locationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [cancellingOfferId, setCancellingOfferId] = useState<string | null>(null);
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    title: string;
+    message: string;
+    type: AlertType;
+    buttons?: AlertButton[];
+  } | null>(null);
+  const locationIntervalRef = useRef<NodeJS.Timeout | number | null>(null);
   const liveStateKey = user?.id ? `driver_live_state_${user.id}` : null;
   const offersKey = user?.id ? `driver_offers_${user.id}` : null;
+
+  const showAlert = (
+    title: string,
+    message: string,
+    type: 'info' | 'success' | 'error' | 'warning' = 'info',
+    buttons?: Array<{ text: string; onPress?: () => void; style?: 'default' | 'cancel' | 'destructive' }>
+  ) => {
+    setAlertConfig({ title, message, type, buttons });
+    setAlertVisible(true);
+  };
 
   const loadSavedOffers = async () => {
     if (!offersKey) return;
@@ -102,6 +120,9 @@ export default function DriverDashboard() {
       if (stored) {
         const parsed: DriverOffer[] = JSON.parse(stored);
         setMyOffers(parsed);
+        console.log('📋 Loaded saved offers:', parsed.length, parsed);
+      } else {
+        console.log('📋 No saved offers found');
       }
     } catch (error) {
       console.warn('⚠️ Unable to load saved offers:', error);
@@ -148,6 +169,7 @@ export default function DriverDashboard() {
         }
 
         await loadSavedOffers();
+        console.log('🔄 Initial state restored for user:', user.id);
       } catch (error) {
         console.warn('⚠️ Failed to restore driver state:', error);
       } finally {
@@ -250,14 +272,14 @@ export default function DriverDashboard() {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         console.log('❌ Location permission denied');
-        Alert.alert('Permission', 'Location access is required to track your ride');
+        showAlert('Permission Required', 'Location access is required to track your ride', 'warning');
         return;
       }
 
       // Start sending location every 2-3 seconds
       console.log('📍 Starting to send driver location for ride:', rideId);
       if (locationIntervalRef.current) {
-        clearInterval(locationIntervalRef.current);
+        clearInterval(locationIntervalRef.current as any);
       }
 
       locationIntervalRef.current = setInterval(async () => {
@@ -278,7 +300,7 @@ export default function DriverDashboard() {
       setActiveRideId(rideId);
     } catch (error) {
       console.error('❌ Error starting location tracking:', error);
-      Alert.alert('Error', 'Failed to start location tracking');
+      showAlert('Error', 'Failed to start location tracking', 'error');
     }
   };
 
@@ -311,10 +333,10 @@ export default function DriverDashboard() {
         setRandomRides(randomRides.filter(r => r.id !== rideId));
       }
       
-      Alert.alert('Success', 'Ride request accepted! Location tracking started.');
+      showAlert('Success', 'Ride request accepted! Location tracking started.', 'success');
     } catch (error) {
       console.error('❌ Error accepting ride:', error);
-      Alert.alert('Error', 'Failed to accept ride');
+      showAlert('Error', 'Failed to accept ride', 'error');
     }
   };
 
@@ -350,23 +372,29 @@ export default function DriverDashboard() {
   };
 
   const handleLogout = async () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', onPress: () => {} },
-      {
-        text: 'Logout',
-        onPress: async () => {
-          try {
-            // Stop location tracking
-            stopSendingLocation();
-            await signOut();
-            router.replace('/(auth)/login');
-          } catch (error) {
-            console.error('Logout error:', error);
-            Alert.alert('Error', 'Failed to logout');
-          }
+    showAlert(
+      'Logout',
+      'Are you sure you want to logout?',
+      'warning',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Stop location tracking
+              stopSendingLocation();
+              await signOut();
+              router.replace('/(auth)/login');
+            } catch (error) {
+              console.error('Logout error:', error);
+              showAlert('Error', 'Failed to logout', 'error');
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const onRefresh = async () => {
@@ -387,7 +415,56 @@ export default function DriverDashboard() {
     const updated = [hydrated, ...myOffers].slice(0, 25);
     setMyOffers(updated);
     await persistOffers(updated);
+    console.log('✅ Offer created and saved:', hydrated);
+    console.log('📋 Total offers:', updated.length);
     setSelectedTab('offers');
+  };
+
+  const handleCancelOffer = (offerId: string) => {
+    showAlert(
+      'Cancel Ride?',
+      'Are you sure you want to cancel this ride offer? Passengers cannot book it anymore.',
+      'warning',
+      [
+        {
+          text: 'Keep it',
+          style: 'cancel',
+        },
+        {
+          text: 'Cancel Ride',
+          style: 'destructive',
+          onPress: async () => {
+            await performCancelOffer(offerId);
+          },
+        },
+      ]
+    );
+  };
+
+  const performCancelOffer = async (offerId: string) => {
+    setCancellingOfferId(offerId);
+    try {
+      // Attempt to cancel via backend if available
+      try {
+        await cancelRide(offerId);
+        console.log('✅ Ride cancelled on backend');
+      } catch (backendError) {
+        console.log('⚠️ Backend cancel failed, removing from local storage:', backendError);
+      }
+      
+      // Remove from local state
+      const updated = myOffers.filter(offer => offer.id !== offerId);
+      setMyOffers(updated);
+      await persistOffers(updated);
+      
+      showAlert('Cancelled', 'Your ride offer has been cancelled.', 'success');
+      console.log('✅ Offer cancelled:', offerId);
+    } catch (error) {
+      console.error('❌ Error cancelling offer:', error);
+      showAlert('Error', 'Failed to cancel the ride. Please try again.', 'error');
+    } finally {
+      setCancellingOfferId(null);
+    }
   };
 
   const renderMyOffers = () => {
@@ -472,12 +549,25 @@ export default function DriverDashboard() {
 
             <View style={styles.offerStatusRow}>
               <Text style={styles.badgeText}>{offer.status === 'completed' ? 'Completed' : 'Live'}</Text>
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={() => setRideOfferModalVisible(true)}
-                activeOpacity={0.7}>
-                <Text style={styles.secondaryButtonText}>Create another</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={() => setRideOfferModalVisible(true)}
+                  activeOpacity={0.7}>
+                  <Text style={styles.secondaryButtonText}>Create another</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.secondaryButton, { backgroundColor: Colors.dark.error }]}
+                  onPress={() => handleCancelOffer(offer.id)}
+                  disabled={cancellingOfferId === offer.id}
+                  activeOpacity={0.7}>
+                  {cancellingOfferId === offer.id ? (
+                    <ActivityIndicator size="small" color={Colors.dark.background} />
+                  ) : (
+                    <Text style={[styles.secondaryButtonText, { color: Colors.dark.background }]}>Cancel</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         ))}
@@ -812,7 +902,7 @@ export default function DriverDashboard() {
             id: offer?.id || `local-${Date.now()}`,
             from: offer?.from || 'Pickup',
             to: offer?.to || 'Drop',
-            seats: offer?.passengers || offer?.seats || 1,
+            seats: (offer?.passengers as number) || 1,
             fare: offer?.fare,
             womenOnly: offer?.womenOnly,
             createdAt: offer?.createdAt,
@@ -854,6 +944,15 @@ export default function DriverDashboard() {
           <Text style={[styles.bottomNavText, selectedTab === 'insights' && styles.bottomNavTextActive]}>Insights</Text>
         </TouchableOpacity>
       </View>
+
+      <CustomAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        buttons={alertConfig.buttons}
+        onClose={hideAlert}
+      />
     </SafeAreaView>
   );
 }
