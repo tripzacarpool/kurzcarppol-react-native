@@ -11,7 +11,7 @@ export const DRIVER_MODE_META: Record<DriverMode, DriverModeMeta> = {
     label: 'Open Fleet',
     tagline: 'Accepts every verified rider any time',
     description:
-      'Full-time professionals who run KruZ rides throughout the day. They accept every verified passenger category and stay online beyond peak office hours.',
+      'Full-time professionals who run TripZa rides throughout the day. They accept every verified passenger category and stay online beyond peak office hours.',
   },
   community: {
     label: 'Community First',

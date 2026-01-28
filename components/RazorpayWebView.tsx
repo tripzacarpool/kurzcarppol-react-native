@@ -98,7 +98,7 @@ export function RazorpayWebView({
       </head>
       <body>
         <div class="container">
-          <div class="logo">KruZ</div>
+          <div class="logo">TripZa</div>
           <div class="amount">₹${(amount / 100).toFixed(2)}</div>
           <div class="description">${description}</div>
           <button onclick="startPayment()">Pay Now</button>

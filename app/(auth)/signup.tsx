@@ -802,7 +802,7 @@ export default function SignupScreen() {
       console.log('🔐 Initiating Google sign-in...');
       const result = await signUp?.create({
         strategy: 'oauth_google',
-        redirectUrl: 'kruzapp://oauth-callback',
+        redirectUrl: 'tripzaapp://oauth-callback',
       });
 
       if (result?.status === 'complete') {

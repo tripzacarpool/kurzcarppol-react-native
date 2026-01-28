@@ -1,4 +1,5 @@
-import { View, Text, StyleSheet, TouchableOpacity, memo } from 'react-native';
+import { memo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Car, Star, Clock, MapPin, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { DRIVER_MODE_META } from '@/constants/driverModes';

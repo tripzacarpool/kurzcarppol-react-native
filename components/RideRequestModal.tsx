@@ -16,11 +16,19 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
 import { createRideRequest } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
+import LocationPicker from './LocationPicker';
+import RouteInfo from './RouteInfo';
 
 interface RideRequestModalProps {
   visible: boolean;
   onClose: () => void;
   onRideCreated?: () => void;
+}
+
+interface LocationData {
+  address: string;
+  latitude: number;
+  longitude: number;
 }
 
 export default function RideRequestModal({
@@ -31,8 +39,10 @@ export default function RideRequestModal({
   const { user } = useAuth();
   const { location } = useLocation();
   const [loading, setLoading] = useState(false);
-  const [pickupLocation, setPickupLocation] = useState('');
-  const [dropoffLocation, setDropoffLocation] = useState('');
+  const [pickupLocation, setPickupLocation] = useState<LocationData | null>(null);
+  const [dropoffLocation, setDropoffLocation] = useState<LocationData | null>(null);
+  const [showPickupPicker, setShowPickupPicker] = useState(false);
+  const [showDropoffPicker, setShowDropoffPicker] = useState(false);
   const [passengers, setPassengers] = useState(1);
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
@@ -59,12 +69,12 @@ export default function RideRequestModal({
   };
 
   const handleCreateRide = async () => {
-    if (!pickupLocation.trim()) {
-      setError('Please enter pickup location');
+    if (!pickupLocation) {
+      setError('Please select pickup location');
       return;
     }
-    if (!dropoffLocation.trim()) {
-      setError('Please enter dropoff location');
+    if (!dropoffLocation) {
+      setError('Please select dropoff location');
       return;
     }
 
@@ -82,13 +92,15 @@ export default function RideRequestModal({
       
       const ridePayload = {
         clerkId: user.id,
-        from: pickupLocation,
-        to: dropoffLocation,
+        from: pickupLocation.address,
+        to: dropoffLocation.address,
         passengers,
         notes,
         womenOnly,
-        pickupLatitude: location?.latitude,
-        pickupLongitude: location?.longitude,
+        pickupLatitude: pickupLocation.latitude,
+        pickupLongitude: pickupLocation.longitude,
+        dropoffLatitude: dropoffLocation.latitude,
+        dropoffLongitude: dropoffLocation.longitude,
         pickupCity: location?.city,
         pickupCountry: location?.country,
       };
@@ -102,13 +114,13 @@ export default function RideRequestModal({
       
       showAlert(
         'Ride Request Created',
-        `Your ride from ${pickupLocation} to ${dropoffLocation} is now live! Drivers will start accepting it soon.`,
+        `Your ride from ${pickupLocation.address} to ${dropoffLocation.address} is now live! Drivers will start accepting it soon.`,
         'success'
       );
 
       // Reset form
-      setPickupLocation('');
-      setDropoffLocation('');
+      setPickupLocation(null);
+      setDropoffLocation(null);
       setPassengers(1);
       setNotes('');
       setWomenOnly(false);
@@ -160,19 +172,19 @@ export default function RideRequestModal({
               <MapPin size={20} color={Colors.dark.gold} />
               <Text style={styles.sectionTitle}>Pickup Location</Text>
             </View>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter pickup location"
-              placeholderTextColor={Colors.dark.textSecondary}
-              value={pickupLocation}
-              onChangeText={setPickupLocation}
-              editable={!loading}
-            />
-            {location && (
-              <Text style={styles.hint}>
-                Current: {location.city}, {location.country}
+            <TouchableOpacity
+              style={styles.locationButton}
+              onPress={() => setShowPickupPicker(true)}
+              disabled={loading}>
+              <Text
+                style={[
+                  styles.locationButtonText,
+                  !pickupLocation && styles.locationPlaceholder,
+                ]}>
+                {pickupLocation?.address || 'Select pickup location'}
               </Text>
-            )}
+              <MapPin size={18} color={Colors.dark.gold} />
+            </TouchableOpacity>
           </View>
 
           {/* Dropoff Location */}
@@ -181,15 +193,34 @@ export default function RideRequestModal({
               <MapPin size={20} color={Colors.dark.pink} />
               <Text style={styles.sectionTitle}>Dropoff Location</Text>
             </View>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter dropoff location"
-              placeholderTextColor={Colors.dark.textSecondary}
-              value={dropoffLocation}
-              onChangeText={setDropoffLocation}
-              editable={!loading}
-            />
+            <TouchableOpacity
+              style={styles.locationButton}
+              onPress={() => setShowDropoffPicker(true)}
+              disabled={loading}>
+              <Text
+                style={[
+                  styles.locationButtonText,
+                  !dropoffLocation && styles.locationPlaceholder,
+                ]}>
+                {dropoffLocation?.address || 'Select dropoff location'}
+              </Text>
+              <MapPin size={18} color={Colors.dark.pink} />
+            </TouchableOpacity>
           </View>
+
+          {/* Route Info */}
+          {pickupLocation && dropoffLocation && (
+            <RouteInfo
+              pickupLocation={{
+                latitude: pickupLocation.latitude,
+                longitude: pickupLocation.longitude,
+              }}
+              dropoffLocation={{
+                latitude: dropoffLocation.latitude,
+                longitude: dropoffLocation.longitude,
+              }}
+            />
+          )}
 
           {/* Passengers */}
           <View style={styles.section}>
@@ -292,6 +323,29 @@ export default function RideRequestModal({
         type={alertConfig.type}
         onClose={hideAlert}
       />
+
+      {/* Location Pickers */}
+      <LocationPicker
+        visible={showPickupPicker}
+        onClose={() => setShowPickupPicker(false)}
+        onLocationSelect={(loc) => {
+          setPickupLocation(loc);
+          setShowPickupPicker(false);
+        }}
+        title="Select Pickup Location"
+        initialLocation={pickupLocation || undefined}
+      />
+
+      <LocationPicker
+        visible={showDropoffPicker}
+        onClose={() => setShowDropoffPicker(false)}
+        onLocationSelect={(loc) => {
+          setDropoffLocation(loc);
+          setShowDropoffPicker(false);
+        }}
+        title="Select Dropoff Location"
+        initialLocation={dropoffLocation || undefined}
+      />
     </Modal>
   );
 }
@@ -364,6 +418,25 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     color: Colors.dark.text,
     fontSize: 15,
+  },
+  locationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  locationButtonText: {
+    flex: 1,
+    fontSize: 15,
+    color: Colors.dark.text,
+  },
+  locationPlaceholder: {
+    color: Colors.dark.textSecondary,
   },
   textArea: {
     paddingVertical: 12,

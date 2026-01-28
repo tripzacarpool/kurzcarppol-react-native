@@ -37,7 +37,7 @@ export default function WalletScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>KruZ Wallet</Text>
+          <Text style={styles.title}>TripZa Wallet</Text>
           <Text style={styles.subtitle}>Hey {userName}!</Text>
         </View>
       </View>

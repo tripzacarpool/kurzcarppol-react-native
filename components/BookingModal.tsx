@@ -96,11 +96,6 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     }
   };
 
-  if (!ride) return null;
-
-  const totalAmount = selectedSeats.length * ride.farePerSeat;
-  const driverModeInfo = DRIVER_MODE_META[ride.driverMode];
-
   const handleBack = useCallback(() => {
     switch (step) {
       case 'request':
@@ -234,6 +229,8 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   }, []);
 
   const renderSeatLayout = useMemo(() => {
+    if (!ride) return null;
+    
     const rows = 2;
     const seatsPerRow = [2, 2];
     let seatCounter = 1;
@@ -286,6 +283,8 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
 
   const renderStep = useMemo(() => {
     return () => {
+      if (!ride) return null;
+      
       switch (step) {
       case 'confirm':
         return (
@@ -308,7 +307,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             <View style={styles.infoGridClean}>
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Driver</Text>
-                <Text style={styles.infoValue}>{ride.driver.name}</Text>
+                <View style={styles.infoValueRow}>
+                  <Text style={styles.infoValue}>{ride.driver.name}</Text>
+                  <View style={styles.compactModeBadge}>
+                    <Text style={styles.compactModeText}>{driverModeInfo.label}</Text>
+                  </View>
+                </View>
               </View>
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Departure</Text>
@@ -322,11 +326,6 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                 <Text style={styles.infoLabel}>Fare/Seat</Text>
                 <Text style={styles.infoValue}>₹{ride.farePerSeat}</Text>
               </View>
-            </View>
-            <View style={styles.modeCard}>
-              <Text style={styles.modeLabel}>{driverModeInfo.label}</Text>
-              <Text style={styles.modeTagline}>{driverModeInfo.tagline}</Text>
-              <Text style={styles.modeDescription}>{driverModeInfo.description}</Text>
             </View>
             <TouchableOpacity
               style={styles.primaryButton}
@@ -602,6 +601,13 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   };
   }, [step, selectedSeats, customRequest, customFare, paymentMethod, walletBalance, processingPayment, pickupConfirmed, ride?.id, ride?.from, ride?.to, ride?.driver?.name, ride?.farePerSeat, ride?.availableSeats, ride?.driverMode, user?.id, handlePayment, handleRazorpaySuccess, handleRazorpayFailure, handleBack, handleClose, handlePickupConfirmation, handleDropConfirmation, handleSeatSelect, renderSeatLayout]);
 
+  // Early return after all hooks
+  if (!ride) return null;
+
+  // Computed values after hooks
+  const totalAmount = selectedSeats.length * ride.farePerSeat;
+  const driverModeInfo = DRIVER_MODE_META[ride.driverMode];
+
   return (
     <>
       <Modal
@@ -655,7 +661,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           amount={razorpayOrder.amount}
           currency={razorpayOrder.currency}
           keyId={getRazorpayKeyId()}
-          name="KruZ"
+          name="TripZa"
           description={`Ride from ${ride.from} to ${ride.to}`}
           prefill={{
             name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
@@ -868,6 +874,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.dark.text,
     fontWeight: '600',
+  },
+  infoValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  compactModeBadge: {
+    backgroundColor: Colors.dark.gold + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  compactModeText: {
+    fontSize: 10,
+    color: Colors.dark.gold,
+    fontWeight: '600',
+    textTransform: 'uppercase',
   },
   textInput: {
     width: '100%',

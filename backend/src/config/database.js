@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const MONGODB_URI = process.env.MONGODB_URI;
-const MONGODB_DB = process.env.MONGODB_DB || 'kruzapp';
+const MONGODB_DB = process.env.MONGODB_DB || 'tripzaapp';
 
 let cached = {
   conn: null,

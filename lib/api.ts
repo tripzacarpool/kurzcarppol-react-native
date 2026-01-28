@@ -77,7 +77,11 @@ export async function syncUserToDatabase(userData: {
     const response = await apiClient.post('/api/users/sync', userData);
     return response.data;
   } catch (error: any) {
-    console.error('Error syncing user:', error.response?.data || error.message);
+    const errorMessage =
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      error.message;
+    console.error('❌ Error syncing user to database:', errorMessage);
     throw error;
   }
 }
@@ -92,9 +96,16 @@ export async function syncUserToDatabase_Safe(userData: {
 }) {
   try {
     return await syncUserToDatabase(userData);
-  } catch (error) {
-    // In development, just log the error and continue
-    console.warn('API sync skipped (development mode):', error);
+  } catch (error: any) {
+    // In development, just log the error and return mock response
+    const errorCode = error.response?.data?.code;
+    if (errorCode === 'NO_AUTH_USER') {
+      console.log('⏳ User sync skipped - not authenticated yet');
+    } else {
+      console.warn(
+        '⚠️ User sync failed (development mode), using mock response',
+      );
+    }
     return {
       clerkId: userData.clerkId,
       email: userData.email,

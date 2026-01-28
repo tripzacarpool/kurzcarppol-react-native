@@ -1,31 +1,46 @@
 {
   "expo": {
-    "name": "KruZ",
-    "slug": "kruzcarppool",
+    "name": "TripZa",
+    "slug": "tripza",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "kruzapp",
+    "scheme": "tripzaapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "resizeMode": "contain",
       "backgroundColor": "#0A0A0A"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rideshare.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to your location to show you nearby rides and track your trip.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to your location to show you nearby rides and track your trip."
+      },
+      "config": {
+        "googleMapsApiKey": "AIzaSyAWpVF1UfbtUsUbdv7SM8jautI7Y0QWx0U"
       }
     },
     "android": {
-      "package": "com.kruzcarppool.app",
+      "package": "com.tripza.app",
       "adaptiveIcon": {
         "backgroundColor": "#0A0A0A"
       },
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAWpVF1UfbtUsUbdv7SM8jautI7Y0QWx0U"
+        }
+      }
     },
     "web": {
       "bundler": "metro",
@@ -41,10 +56,22 @@
           "locationAlwaysAndWhenInUsePermission": "Allow this app to use your location to show nearby rides and track trips.",
           "locationWhenInUsePermission": "Allow this app to use your location to show nearby rides and track trips."
         }
+      ],
+      [
+        "react-native-maps",
+        {
+          "useGoogleMaps": true
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "125079d6-42c5-4c68-bbbf-c3b1858c8b80"
+      }
     }
   }
 }

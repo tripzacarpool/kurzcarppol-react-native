@@ -147,7 +147,7 @@ app.use('/api/rides', rideRoutes);
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'KruZ Backend API',
+    message: 'TripZa Backend API',
     version: '1.0.0',
     environment: NODE_ENV,
     status: 'running',
@@ -187,7 +187,7 @@ export { io };
 // Start Server
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`🚀 KruZ Backend Server`);
+  console.log(`🚀 TripZa Backend Server`);
   console.log(`${'='.repeat(60)}`);
   console.log(`📍 Environment: ${NODE_ENV}`);
   console.log(`🌐 Server: http://0.0.0.0:${PORT}`);

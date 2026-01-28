@@ -112,6 +112,13 @@ export default function DriverDashboard() {
     setAlertVisible(true);
   };
 
+  const hideAlert = () => {
+    setAlertVisible(false);
+    setTimeout(() => {
+      setAlertConfig(null);
+    }, 300);
+  };
+
   const loadSavedOffers = async () => {
     if (!offersKey) return;
     try {
@@ -947,10 +954,10 @@ export default function DriverDashboard() {
 
       <CustomAlert
         visible={alertVisible}
-        title={alertConfig.title}
-        message={alertConfig.message}
-        type={alertConfig.type}
-        buttons={alertConfig.buttons}
+        title={alertConfig?.title || ''}
+        message={alertConfig?.message || ''}
+        type={alertConfig?.type || 'info'}
+        buttons={alertConfig?.buttons}
         onClose={hideAlert}
       />
     </SafeAreaView>

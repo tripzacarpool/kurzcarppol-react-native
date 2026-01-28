@@ -136,7 +136,7 @@ export default function LoginScreen() {
     try {
       const result = await signIn?.create({
         strategy: 'oauth_google',
-        redirectUrl: 'kruzapp://oauth-callback',
+        redirectUrl: 'tripzaapp://oauth-callback',
       });
 
       if (result?.status === 'complete') {

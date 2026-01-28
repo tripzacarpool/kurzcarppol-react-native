@@ -112,7 +112,10 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       setLocation(locationData);
 
       if (user) {
-        // Update user location in MongoDB via API
+        // Update user location in MongoDB via backend API
+        // NOTE: This is for user location tracking, NOT for live ride tracking
+        // Live ride tracking uses WebSocket (see lib/locationSocket.ts)
+        // NO Google Maps API calls here - just backend storage
         try {
           const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
           const locationUrl = `${API_URL}/api/users/location`;

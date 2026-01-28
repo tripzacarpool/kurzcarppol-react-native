@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,16 @@ import {
   SafeAreaView,
   Alert,
 } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import { MapView, Marker, Polyline, PROVIDER_GOOGLE, checkMapAvailability, MapPlaceholder } from './ConditionalMap';
 import { MapPin, Phone, MessageCircle, X, Navigation } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
+import { MAP_CONFIG } from '@/config/googleMaps';
+import {
+  fetchRouteFromGoogle,
+  calculateDistance,
+  estimateETA,
+  type RouteCoordinate,
+} from '@/lib/routeService';
 import {
   subscribeToRideLocation,
   unsubscribeFromRideLocation,
@@ -41,32 +48,71 @@ export default function RideTrackingMap({
   pickupLocation,
   dropoffLocation,
 }: RideTrackingMapProps) {
+  const mapRef = useRef<any>(null);
   const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
   const [routePath, setRoutePath] = useState<DriverLocation[]>([]);
+  const [plannedRoute, setPlannedRoute] = useState<RouteCoordinate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [eta, setEta] = useState<string>('Calculating...');
+  const [distanceRemaining, setDistanceRemaining] = useState<string>('--');
+
+  // Fetch planned route from Google Directions API - ONLY ONCE!
+  useEffect(() => {
+    console.log('🗺️ Fetching initial route from Google Directions API (ONE-TIME)');
+    
+    fetchRouteFromGoogle(pickupLocation, dropoffLocation).then((result) => {
+      if (result.success && result.routes.length > 0) {
+        setPlannedRoute(result.routes);
+        console.log('✅ Initial route loaded from Google');
+      } else {
+        console.error('❌ Failed to fetch route:', result.error);
+        // Fallback: draw straight line
+        setPlannedRoute([pickupLocation, dropoffLocation]);
+      }
+    });
+  }, []);
 
   useEffect(() => {
-    console.log('🗺️ Subscribing to ride location:', rideId);
+    console.log('🗺️ Subscribing to ride location via WebSocket (NOT Google API)');
 
-    // Subscribe to driver location updates
+    // Subscribe to driver location updates from BACKEND (not Google!)
     const unsubscribe = subscribeToRideLocation(
       rideId,
       (location: DriverLocation) => {
-        console.log('📍 Driver location received:', location);
+        console.log('📍 Driver location from WebSocket:', location);
         setDriverLocation(location);
         setIsLoading(false);
 
-        // Add to route path (keep last 50 points)
+        // Calculate ETA and distance remaining (without Google API calls)
+        const distance = calculateDistance(
+          { latitude: location.latitude, longitude: location.longitude },
+          dropoffLocation
+        );
+        setDistanceRemaining(`${distance.toFixed(1)} km`);
+        setEta(estimateETA(distance));
+
+        // Add to route path (keep last 50 points for performance)
         setRoutePath((prev) => [...prev.slice(-49), location]);
+
+        // Animate map camera to follow driver
+        if (mapRef.current) {
+          mapRef.current.animateCamera({
+            center: {
+              latitude: location.latitude,
+              longitude: location.longitude,
+            },
+            zoom: 15,
+          }, { duration: MAP_CONFIG.MAP_ANIMATION_DURATION });
+        }
       }
     );
 
     return () => {
-      console.log('🛑 Unsubscribing from ride location');
+      console.log('🛑 Unsubscribing from ride location WebSocket');
       unsubscribeFromRideLocation(rideId);
       if (unsubscribe) unsubscribe();
     };
-  }, [rideId]);
+  }, [rideId, dropoffLocation]);
 
   const handleCall = () => {
     Alert.alert('Call Driver', `Calling ${driverName}...`);
@@ -88,76 +134,89 @@ export default function RideTrackingMap({
 
   return (
     <SafeAreaView style={styles.container}>
-      <MapView
-        style={styles.map}
-        initialRegion={{
-          latitude: driverLocation?.latitude || pickupLocation.latitude,
-          longitude: driverLocation?.longitude || pickupLocation.longitude,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
-        region={
-          driverLocation
-            ? {
-                latitude: driverLocation.latitude,
-                longitude: driverLocation.longitude,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05,
-              }
-            : undefined
-        }>
-        {/* Pickup location marker */}
-        <Marker
-          coordinate={pickupLocation}
-          title="Pickup Location"
-          pinColor={Colors.dark.gold}>
-          <View style={styles.markerContainer}>
-            <MapPin size={20} color={Colors.dark.gold} />
-          </View>
-        </Marker>
-
-        {/* Dropoff location marker */}
-        <Marker
-          coordinate={dropoffLocation}
-          title="Dropoff Location"
-          pinColor={Colors.dark.pink}>
-          <View style={styles.markerContainer}>
-            <MapPin size={20} color={Colors.dark.pink} />
-          </View>
-        </Marker>
-
-        {/* Driver location marker */}
-        {driverLocation && (
-          <Marker
-            coordinate={{
-              latitude: driverLocation.latitude,
-              longitude: driverLocation.longitude,
-            }}
-            title={driverName}
-            pinColor={Colors.dark.success}>
-            <View style={styles.driverMarker}>
-              <Navigation
-                size={16}
-                color={Colors.dark.background}
-                fill={Colors.dark.success}
+      {checkMapAvailability() && MapView ? (
+        <>
+          <MapView
+            ref={mapRef}
+            provider={PROVIDER_GOOGLE}
+            style={styles.map}
+            customMapStyle={MAP_CONFIG.MAP_STYLE}
+            initialRegion={{
+              latitude: driverLocation?.latitude || pickupLocation.latitude,
+              longitude: driverLocation?.longitude || pickupLocation.longitude,
+              latitudeDelta: MAP_CONFIG.DEFAULT_REGION.latitudeDelta,
+              longitudeDelta: MAP_CONFIG.DEFAULT_REGION.longitudeDelta,
+            }}>
+            
+            {/* Planned route polyline (from Google Directions API - fetched once) */}
+            {plannedRoute.length > 0 && Polyline && (
+              <Polyline
+                coordinates={plannedRoute}
+                strokeColor={Colors.dark.gold + '60'}
+                strokeWidth={4}
+                lineDashPattern={[1]}
               />
-            </View>
-          </Marker>
-        )}
+            )}
 
-        {/* Driver route path */}
-        {routePath.length > 1 && (
-          <Polyline
-            coordinates={routePath.map((loc) => ({
-              latitude: loc.latitude,
-              longitude: loc.longitude,
-            }))}
-            strokeColor={Colors.dark.success}
-            strokeWidth={3}
-            lineDashPattern={[10, 5]}
-          />
-        )}
-      </MapView>
+            {/* Pickup location marker */}
+            {Marker && (
+              <Marker
+                coordinate={pickupLocation}
+                title="Pickup Location"
+                pinColor={Colors.dark.gold}>
+                <View style={styles.markerContainer}>
+                  <MapPin size={20} color={Colors.dark.gold} />
+                </View>
+              </Marker>
+            )}
+
+            {/* Dropoff location marker */}
+            {Marker && (
+              <Marker
+                coordinate={dropoffLocation}
+                title="Dropoff Location"
+                pinColor={Colors.dark.pink}>
+                <View style={styles.markerContainer}>
+                  <MapPin size={20} color={Colors.dark.pink} />
+                </View>
+              </Marker>
+            )}
+
+            {/* Driver location marker (updated via WebSocket) */}
+            {driverLocation && Marker && (
+              <Marker
+                coordinate={{
+                  latitude: driverLocation.latitude,
+                  longitude: driverLocation.longitude,
+                }}
+                title={driverName}
+                pinColor={Colors.dark.success}>
+                <View style={styles.driverMarker}>
+                  <Navigation
+                    size={16}
+                    color={Colors.dark.background}
+                    fill={Colors.dark.success}
+                  />
+                </View>
+              </Marker>
+            )}
+
+            {/* Driver's traveled path (from WebSocket updates, not Google) */}
+            {routePath.length > 1 && Polyline && (
+              <Polyline
+                coordinates={routePath.map((loc) => ({
+                  latitude: loc.latitude,
+                  longitude: loc.longitude,
+                }))}
+                strokeColor={Colors.dark.success}
+                strokeWidth={3}
+              />
+            )}
+          </MapView>
+        </>
+      ) : (
+        <MapPlaceholder message="Ride tracking requires a development build" />
+      )}
 
       {/* Driver Info Card */}
       <View style={styles.driverCard}>
@@ -192,12 +251,12 @@ export default function RideTrackingMap({
         </View>
       </View>
 
-      {/* Location Status */}
+      {/* Location Status with real-time ETA (calculated locally, no Google API) */}
       {driverLocation && (
         <View style={styles.statusBanner}>
           <View style={styles.statusDot} />
           <Text style={styles.statusText}>
-            Driver is {Math.round(Math.random() * 5 + 2)} minutes away
+            {eta} away • {distanceRemaining}
           </Text>
         </View>
       )}

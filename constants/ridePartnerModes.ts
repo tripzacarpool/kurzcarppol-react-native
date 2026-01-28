@@ -28,7 +28,7 @@ export const RIDE_PARTNER_MODES: Record<RidePartnerMode, RidePartnerModeMeta> =
       title: 'Professional Ride Partner',
       badge: 'Travels regularly · Cab / commercial permit',
       description:
-        'Fleet owners or licensed cab drivers who want a verified passenger pipeline on KruZ.',
+        'Fleet owners or licensed cab drivers who want a verified passenger pipeline on TripZa.',
       vehicleHint: 'Commercial or cab vehicle, commercial permit required',
     },
   };

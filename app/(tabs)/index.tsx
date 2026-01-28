@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, SafeAreaView, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, SafeAreaView, ActivityIndicator, RefreshControl, Dimensions } from 'react-native';
 import { Search, MapPin, Bell, SlidersHorizontal, Navigation, Plus } from 'lucide-react-native';
+import { MapView, Marker, PROVIDER_GOOGLE, checkMapAvailability, MapPlaceholder } from '@/components/ConditionalMap';
 import { Colors } from '@/constants/Colors';
 import { RideCard } from '@/components/RideCard';
 import { BookingModal } from '@/components/BookingModal';
 import RideRequestModal from '@/components/RideRequestModal';
+import LocationPicker from '@/components/LocationPicker';
 import { mockRides, mockNotifications } from '@/data/mockData';
 import { Ride } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
@@ -12,6 +14,9 @@ import { useLocation } from '@/contexts/LocationContext';
 import { getAvailableRides } from '@/lib/api';
 import { subscribeToNewRides, unsubscribeFromRideEvents, initializeLocationSocket } from '@/lib/locationSocket';
 import CustomAlert, { AlertType } from '@/components/CustomAlert';
+import { MAP_CONFIG } from '@/config/googleMaps';
+
+const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
   const { user } = useAuth();
@@ -21,6 +26,12 @@ export default function HomeScreen() {
   const [selectedRide, setSelectedRide] = useState<Ride | null>(null);
   const [bookingModalVisible, setBookingModalVisible] = useState(false);
   const [rideRequestModalVisible, setRideRequestModalVisible] = useState(false);
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [selectedDestination, setSelectedDestination] = useState<{
+    address: string;
+    latitude: number;
+    longitude: number;
+  } | null>(null);
   const [availableRides, setAvailableRides] = useState<any[]>([]);
   const [loadingRides, setLoadingRides] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -180,11 +191,76 @@ export default function HomeScreen() {
             ) : null}
           </TouchableOpacity>
 
+          {/* Interactive Map with Search */}
+          <View style={styles.mapSection}>
+            {checkMapAvailability() && MapView ? (
+              <>
+                <MapView
+                  provider={PROVIDER_GOOGLE}
+                  style={styles.map}
+                  customMapStyle={MAP_CONFIG.MAP_STYLE}
+                  region={{
+                    latitude: location?.latitude || MAP_CONFIG.DEFAULT_REGION.latitude,
+                    longitude: location?.longitude || MAP_CONFIG.DEFAULT_REGION.longitude,
+                    latitudeDelta: 0.05,
+                    longitudeDelta: 0.05,
+                  }}
+                  showsUserLocation
+                  showsMyLocationButton>
+                  
+                  {/* Current location marker */}
+                  {location && Marker && (
+                    <Marker
+                      coordinate={{
+                        latitude: location.latitude,
+                        longitude: location.longitude,
+                      }}
+                      title="Your Location"
+                      pinColor={Colors.dark.gold}>
+                      <View style={styles.currentLocationMarker}>
+                        <Navigation size={20} color={Colors.dark.background} fill={Colors.dark.gold} />
+                      </View>
+                    </Marker>
+                  )}
+
+                  {/* Selected destination marker */}
+                  {selectedDestination && Marker && (
+                    <Marker
+                      coordinate={{
+                        latitude: selectedDestination.latitude,
+                        longitude: selectedDestination.longitude,
+                      }}
+                      title={selectedDestination.address}
+                      pinColor={Colors.dark.pink}>
+                      <View style={styles.destinationMarker}>
+                        <MapPin size={20} color={Colors.dark.background} fill={Colors.dark.pink} />
+                      </View>
+                    </Marker>
+                  )}
+                </MapView>
+
+                {/* Search Overlay */}
+                <TouchableOpacity
+                  style={styles.searchOverlay}
+                  onPress={() => setShowLocationPicker(true)}
+                  activeOpacity={0.9}>
+                  <Search size={20} color={Colors.dark.textSecondary} />
+                  <Text style={styles.searchOverlayText}>
+                    {selectedDestination?.address || 'Where do you want to go?'}
+                  </Text>
+                  <SlidersHorizontal size={20} color={Colors.dark.gold} />
+                </TouchableOpacity>
+              </>
+            ) : (
+              <MapPlaceholder message="Interactive maps require a development build" />
+            )}
+          </View>
+
           <View style={styles.searchContainer}>
             <Search size={20} color={Colors.dark.textSecondary} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Where do you want to go?"
+              placeholder="Search rides by location..."
               placeholderTextColor={Colors.dark.textSecondary}
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -271,6 +347,18 @@ export default function HomeScreen() {
         message={alertConfig.message}
         type={alertConfig.type}
         onClose={hideAlert}
+      />
+
+      <LocationPicker
+        visible={showLocationPicker}
+        onClose={() => setShowLocationPicker(false)}
+        onLocationSelect={(loc) => {
+          setSelectedDestination(loc);
+          setSearchQuery(loc.address);
+          setShowLocationPicker(false);
+        }}
+        title="Where do you want to go?"
+        initialLocation={selectedDestination || undefined}
       />
     </SafeAreaView>
   );
@@ -363,6 +451,58 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
     fontSize: 11,
     marginTop: 2,
+  },
+  mapSection: {
+    height: 200,
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 16,
+    position: 'relative',
+  },
+  map: {
+    flex: 1,
+  },
+  searchOverlay: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    backgroundColor: Colors.dark.card,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 12,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  searchOverlayText: {
+    flex: 1,
+    color: Colors.dark.text,
+    fontSize: 15,
+  },
+  currentLocationMarker: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.gold,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#fff',
+  },
+  destinationMarker: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.pink,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#fff',
   },
   searchContainer: {
     flexDirection: 'row',
