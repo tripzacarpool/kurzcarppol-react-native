@@ -20,7 +20,7 @@ const components: MapComponents = {
   PROVIDER_GOOGLE: null,
 };
 
-if (isNativePlatform && !isExpoGoRuntime) {
+if (isNativePlatform) {
   try {
     const mapsModule = require('react-native-maps');
     const hasNativeView = Boolean(
@@ -33,7 +33,7 @@ if (isNativePlatform && !isExpoGoRuntime) {
       components.Polyline = mapsModule.Polyline;
       components.PROVIDER_GOOGLE = mapsModule.PROVIDER_GOOGLE;
     } else {
-      console.warn('react-native-maps native view not registered. Build the dev client again.');
+      console.warn('AIRMap native view missing. Rebuild the app with react-native-maps installed.');
     }
   } catch (error) {
     console.warn('react-native-maps failed to load:', error);
@@ -52,7 +52,7 @@ export const checkMapAvailability = () => isMapAvailable;
 export function MapPlaceholder({ message }: { message?: string }) {
   const defaultMessage = isExpoGoRuntime
     ? 'Install the development build to use interactive maps.'
-    : 'Map component is unavailable in this build. Recreate the dev client.';
+    : 'Map component failed to initialize. Reinstall the dev build after rebuilding.';
 
   return (
     <View style={styles.placeholder}>
