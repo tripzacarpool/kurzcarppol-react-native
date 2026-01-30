@@ -7,10 +7,12 @@
     "scheme": "tripzaapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": false,
+    "icon": "./assets/icon.png",
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rideshare.app",
+      "icon": "./assets/icon.png",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to your location to show you nearby rides and track your trip.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to your location to show you nearby rides and track your trip."
@@ -22,6 +24,7 @@
     "android": {
       "package": "com.tripza.app",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0A"
       },
       "permissions": [
