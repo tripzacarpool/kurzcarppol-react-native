@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, Platform } from 'react-native';
+import { View, Text, StyleSheet, Platform, UIManager } from 'react-native';
 import Constants from 'expo-constants';
 import { MapPin } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
@@ -23,10 +23,18 @@ const components: MapComponents = {
 if (isNativePlatform && !isExpoGoRuntime) {
   try {
     const mapsModule = require('react-native-maps');
-    components.MapView = mapsModule.default ?? mapsModule;
-    components.Marker = mapsModule.Marker;
-    components.Polyline = mapsModule.Polyline;
-    components.PROVIDER_GOOGLE = mapsModule.PROVIDER_GOOGLE;
+    const hasNativeView = Boolean(
+      UIManager?.getViewManagerConfig?.('AIRMap') || UIManager?.hasViewManagerConfig?.('AIRMap')
+    );
+
+    if (hasNativeView) {
+      components.MapView = mapsModule.default ?? mapsModule;
+      components.Marker = mapsModule.Marker;
+      components.Polyline = mapsModule.Polyline;
+      components.PROVIDER_GOOGLE = mapsModule.PROVIDER_GOOGLE;
+    } else {
+      console.warn('react-native-maps native view not registered. Build the dev client again.');
+    }
   } catch (error) {
     console.warn('react-native-maps failed to load:', error);
   }
@@ -44,15 +52,15 @@ export const checkMapAvailability = () => isMapAvailable;
 export function MapPlaceholder({ message }: { message?: string }) {
   const defaultMessage = isExpoGoRuntime
     ? 'Install the development build to use interactive maps.'
-    : 'Map component failed to load.';
+    : 'Map component is unavailable in this build. Recreate the dev client.';
 
   return (
     <View style={styles.placeholder}>
       <MapPin size={48} color={Colors.dark.textSecondary} />
       <Text style={styles.placeholderText}>{message ?? defaultMessage}</Text>
-      {isExpoGoRuntime && (
-        <Text style={styles.placeholderSubtext}>Run npx expo run:android</Text>
-      )}
+      <Text style={styles.placeholderSubtext}>
+        {isExpoGoRuntime ? 'Run npx expo run:android' : 'Re-run npx expo run:android after installing maps.'}
+      </Text>
     </View>
   );
 }

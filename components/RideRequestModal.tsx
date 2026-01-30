@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -18,10 +18,7 @@ import { createRideRequest } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
-import {
-  VEHICLE_TYPE_OPTIONS,
-  type RideVehicleType,
-} from '@/constants/vehicleTypes';
+import { VEHICLE_TYPE_OPTIONS, type RideVehicleType } from '@/constants/vehicleTypes';
 
 interface RideRequestModalProps {
   visible: boolean;
@@ -52,14 +49,36 @@ export default function RideRequestModal({
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
   const [error, setError] = useState('');
-  
-  // Custom alert state
+
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState<{
     title: string;
     message: string;
     type: AlertType;
   }>({ title: '', message: '', type: 'info' });
+
+  // Prefill pickup with current location to reduce form friction.
+  useEffect(() => {
+    if (!visible || pickupLocation || !location?.latitude || !location?.longitude) {
+      return;
+    }
+
+    setPickupLocation({
+      address:
+        location.city && location.country
+          ? `${location.city}, ${location.country}`
+          : 'Current Location',
+      latitude: location.latitude,
+      longitude: location.longitude,
+    });
+  }, [
+    visible,
+    pickupLocation,
+    location?.latitude,
+    location?.longitude,
+    location?.city,
+    location?.country,
+  ]);
 
   const showAlert = (title: string, message: string, type: AlertType = 'info') => {
     setAlertConfig({ title, message, type });
@@ -93,8 +112,6 @@ export default function RideRequestModal({
     }
 
     try {
-      console.log('🚗 Creating ride request...');
-      
       const ridePayload = {
         clerkId: user.id,
         from: pickupLocation.address,
@@ -111,20 +128,14 @@ export default function RideRequestModal({
         pickupCountry: location?.country,
       };
 
-      console.log('📦 Payload:', ridePayload);
+      await createRideRequest(ridePayload);
 
-      // Call backend API to create ride
-      const response = await createRideRequest(ridePayload);
-      
-      console.log('✅ Ride request created successfully!', response);
-      
       showAlert(
         'Ride Request Created',
         `Your ride from ${pickupLocation.address} to ${dropoffLocation.address} is now live! Drivers will start accepting it soon.`,
-        'success'
+        'success',
       );
 
-      // Reset form
       setPickupLocation(null);
       setDropoffLocation(null);
       setPassengers(1);
@@ -139,18 +150,21 @@ export default function RideRequestModal({
     } catch (err: any) {
       const errorMsg = err?.response?.data?.error || err?.message || 'Failed to create ride';
       setError(errorMsg);
-      console.error('❌ Error creating ride:', err);
     } finally {
       setLoading(false);
     }
   };
 
   const incrementPassengers = () => {
-    if (passengers < 4) setPassengers(passengers + 1);
+    if (passengers < 4) {
+      setPassengers(passengers + 1);
+    }
   };
 
   const decrementPassengers = () => {
-    if (passengers > 1) setPassengers(passengers - 1);
+    if (passengers > 1) {
+      setPassengers(passengers - 1);
+    }
   };
 
   return (
@@ -173,7 +187,6 @@ export default function RideRequestModal({
             </View>
           ) : null}
 
-          {/* Pickup Location */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <MapPin size={20} color={Colors.dark.gold} />
@@ -194,7 +207,6 @@ export default function RideRequestModal({
             </TouchableOpacity>
           </View>
 
-          {/* Dropoff Location */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <MapPin size={20} color={Colors.dark.pink} />
@@ -215,7 +227,6 @@ export default function RideRequestModal({
             </TouchableOpacity>
           </View>
 
-          {/* Route Info */}
           {pickupLocation && dropoffLocation && (
             <RouteInfo
               pickupLocation={{
@@ -229,12 +240,12 @@ export default function RideRequestModal({
             />
           )}
 
-          {/* Passengers */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Users size={20} color={Colors.dark.gold} />
               <Text style={styles.sectionTitle}>Number of Passengers</Text>
             </View>
+            <Text style={styles.sectionSubtitle}>Up to 4 passengers per request.</Text>
             <View style={styles.passengerControl}>
               <TouchableOpacity
                 onPress={decrementPassengers}
@@ -242,9 +253,24 @@ export default function RideRequestModal({
                 style={[
                   styles.passengerButton,
                   (passengers === 1 || loading) && styles.passengerButtonDisabled,
-                ]}>
+                ]}
+                activeOpacity={0.7}>
+                <Minus size={20} color={Colors.dark.text} />
+              </TouchableOpacity>
+              <Text style={styles.passengerCount}>{passengers}</Text>
+              <TouchableOpacity
+                onPress={incrementPassengers}
+                disabled={passengers === 4 || loading}
+                style={[
+                  styles.passengerButton,
+                  (passengers === 4 || loading) && styles.passengerButtonDisabled,
+                ]}
+                activeOpacity={0.7}>
+                <Plus size={20} color={Colors.dark.text} />
+              </TouchableOpacity>
+            </View>
+          </View>
 
-          {/* Vehicle Type */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Preferred Vehicle Type</Text>
             <Text style={styles.sectionSubtitle}>
@@ -271,31 +297,14 @@ export default function RideRequestModal({
                       {option.label}
                     </Text>
                     {option.subtitle ? (
-                      <Text style={styles.vehicleTypeSubtitle}>
-                        {option.subtitle}
-                      </Text>
+                      <Text style={styles.vehicleTypeSubtitle}>{option.subtitle}</Text>
                     ) : null}
                   </TouchableOpacity>
                 );
               })}
             </View>
           </View>
-                <Minus size={20} color={Colors.dark.text} />
-              </TouchableOpacity>
-              <Text style={styles.passengerCount}>{passengers}</Text>
-              <TouchableOpacity
-                onPress={incrementPassengers}
-                disabled={passengers === 4 || loading}
-                style={[
-                  styles.passengerButton,
-                  (passengers === 4 || loading) && styles.passengerButtonDisabled,
-                ]}>
-                <Plus size={20} color={Colors.dark.text} />
-              </TouchableOpacity>
-            </View>
-          </View>
 
-          {/* Special Requests */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Special Requests</Text>
             <TextInput
@@ -310,7 +319,6 @@ export default function RideRequestModal({
             />
           </View>
 
-          {/* Women Only Toggle */}
           <View style={styles.section}>
             <TouchableOpacity
               style={[
@@ -368,7 +376,6 @@ export default function RideRequestModal({
         onClose={hideAlert}
       />
 
-      {/* Location Pickers */}
       <LocationPicker
         visible={showPickupPicker}
         onClose={() => setShowPickupPicker(false)}
