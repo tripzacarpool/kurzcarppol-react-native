@@ -106,6 +106,7 @@ export interface Ride {
     number: string;
     color: string;
   };
+  vehicleType?: RideVehicleType;
   from: string;
   to: string;
   pickupPoint: {
@@ -173,3 +174,5 @@ export interface Trip {
     rating: number;
   };
 }
+
+export type RideVehicleType = 'two_wheeler' | 'four_wheeler';

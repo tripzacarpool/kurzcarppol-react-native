@@ -10,7 +10,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { X, MapPin, Clock, Users, Plus, Minus } from 'lucide-react-native';
+import { X, MapPin, Users, Plus, Minus } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
@@ -18,6 +18,10 @@ import { createRideRequest } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
+import {
+  VEHICLE_TYPE_OPTIONS,
+  type RideVehicleType,
+} from '@/constants/vehicleTypes';
 
 interface RideRequestModalProps {
   visible: boolean;
@@ -44,6 +48,7 @@ export default function RideRequestModal({
   const [showPickupPicker, setShowPickupPicker] = useState(false);
   const [showDropoffPicker, setShowDropoffPicker] = useState(false);
   const [passengers, setPassengers] = useState(1);
+  const [vehicleType, setVehicleType] = useState<RideVehicleType>('four_wheeler');
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
   const [error, setError] = useState('');
@@ -95,6 +100,7 @@ export default function RideRequestModal({
         from: pickupLocation.address,
         to: dropoffLocation.address,
         passengers,
+        vehicleType,
         notes,
         womenOnly,
         pickupLatitude: pickupLocation.latitude,
@@ -122,6 +128,7 @@ export default function RideRequestModal({
       setPickupLocation(null);
       setDropoffLocation(null);
       setPassengers(1);
+      setVehicleType('four_wheeler');
       setNotes('');
       setWomenOnly(false);
 
@@ -236,6 +243,43 @@ export default function RideRequestModal({
                   styles.passengerButton,
                   (passengers === 1 || loading) && styles.passengerButtonDisabled,
                 ]}>
+
+          {/* Vehicle Type */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Preferred Vehicle Type</Text>
+            <Text style={styles.sectionSubtitle}>
+              Drivers matching this vehicle will be prioritised.
+            </Text>
+            <View style={styles.vehicleTypeRow}>
+              {VEHICLE_TYPE_OPTIONS.map((option) => {
+                const isActive = option.value === vehicleType;
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.vehicleTypeOption,
+                      isActive && styles.vehicleTypeOptionActive,
+                    ]}
+                    onPress={() => setVehicleType(option.value)}
+                    disabled={loading}
+                    activeOpacity={0.7}>
+                    <Text
+                      style={[
+                        styles.vehicleTypeLabel,
+                        isActive && styles.vehicleTypeLabelActive,
+                      ]}>
+                      {option.label}
+                    </Text>
+                    {option.subtitle ? (
+                      <Text style={styles.vehicleTypeSubtitle}>
+                        {option.subtitle}
+                      </Text>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
                 <Minus size={20} color={Colors.dark.text} />
               </TouchableOpacity>
               <Text style={styles.passengerCount}>{passengers}</Text>
@@ -409,6 +453,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.dark.text,
   },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    marginTop: 6,
+  },
   input: {
     backgroundColor: Colors.dark.card,
     borderWidth: 1,
@@ -446,6 +495,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.dark.textSecondary,
     marginTop: 8,
+  },
+  vehicleTypeRow: {
+    flexDirection: 'column',
+    gap: 12,
+    marginTop: 12,
+  },
+  vehicleTypeOption: {
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  vehicleTypeOptionActive: {
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '20',
+  },
+  vehicleTypeLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.dark.text,
+  },
+  vehicleTypeLabelActive: {
+    color: Colors.dark.gold,
+  },
+  vehicleTypeSubtitle: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    marginTop: 4,
   },
   passengerControl: {
     flexDirection: 'row',

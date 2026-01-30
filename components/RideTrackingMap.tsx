@@ -76,7 +76,7 @@ export default function RideTrackingMap({
     console.log('🗺️ Subscribing to ride location via WebSocket (NOT Google API)');
 
     // Subscribe to driver location updates from BACKEND (not Google!)
-    const unsubscribe = subscribeToRideLocation(
+    subscribeToRideLocation(
       rideId,
       (location: DriverLocation) => {
         console.log('📍 Driver location from WebSocket:', location);
@@ -110,9 +110,8 @@ export default function RideTrackingMap({
     return () => {
       console.log('🛑 Unsubscribing from ride location WebSocket');
       unsubscribeFromRideLocation(rideId);
-      if (unsubscribe) unsubscribe();
     };
-  }, [rideId, dropoffLocation]);
+  }, [rideId, dropoffLocation.latitude, dropoffLocation.longitude]);
 
   const handleCall = () => {
     Alert.alert('Call Driver', `Calling ${driverName}...`);

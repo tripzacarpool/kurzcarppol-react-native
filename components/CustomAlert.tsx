@@ -50,7 +50,7 @@ export default function CustomAlert({
     }
   };
 
-  const handleButtonPress = (button: CustomAlertButton) => {
+  const handleButtonPress = (button: AlertButton) => {
     if (button.onPress) {
       button.onPress();
     }

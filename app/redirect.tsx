@@ -14,6 +14,17 @@ export default function RedirectScreen() {
 
   useEffect(() => {
     // Animate entrance
+    const rotationAnimation = Animated.loop(
+      Animated.timing(rotateAnim, {
+        toValue: 1,
+        duration: 2000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+
+    rotationAnimation.start();
+
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -26,16 +37,13 @@ export default function RedirectScreen() {
         friction: 7,
         useNativeDriver: true,
       }),
-      Animated.loop(
-        Animated.timing(rotateAnim, {
-          toValue: 1,
-          duration: 2000,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        })
-      ).start(),
     ]).start();
-  }, []);
+
+    return () => {
+      rotationAnimation.stop();
+      rotateAnim.setValue(0);
+    };
+  }, [fadeAnim, scaleAnim, rotateAnim]);
 
   useEffect(() => {
     if (isLoading || !user?.id) {

@@ -1,8 +1,19 @@
-import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, View, Platform } from 'react-native';
+import {
+  TouchableOpacity,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  View,
+  Platform,
+  Animated,
+  Easing,
+  ViewStyle,
+  StyleProp,
+} from 'react-native';
 import { Colors } from '@/constants/Colors';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useSignUp } from '@clerk/clerk-react';
+import { useEffect, useRef } from 'react';
 
 interface GoogleSignInButtonProps {
   onPress?: () => void;
@@ -11,14 +22,25 @@ interface GoogleSignInButtonProps {
 }
 
 export function GoogleSignInButton({ onPress, loading, text = "Continue with Google" }: GoogleSignInButtonProps) {
-  const { signUp } = useSignUp();
+  const shimmerTranslate = useRef(new Animated.Value(-120)).current;
 
-  const handlePressIn = () => {
-    // Placeholder for press animation
-  };
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.timing(shimmerTranslate, {
+        toValue: 200,
+        duration: 1600,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: true,
+      }),
+    );
 
-  const handlePressOut = () => {
-    // Placeholder for release animation
+    animation.start();
+    return () => animation.stop();
+  }, [shimmerTranslate]);
+
+  const animatedShimmerStyle: StyleProp<ViewStyle> = {
+    transform: [{ translateX: shimmerTranslate }],
+    opacity: loading ? 0.35 : 0.6,
   };
 
   return (
@@ -68,7 +90,6 @@ export function GoogleSignInButton({ onPress, loading, text = "Continue with Goo
       </LinearGradient>
     </TouchableOpacity>
   );
-}
 }
 
 const styles = StyleSheet.create({

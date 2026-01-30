@@ -50,6 +50,12 @@
           "locationAlwaysAndWhenInUsePermission": "Allow this app to use your location to show nearby rides and track trips.",
           "locationWhenInUsePermission": "Allow this app to use your location to show nearby rides and track trips."
         }
+      ],
+      [
+        "react-native-maps",
+        {
+          "useGoogleMaps": true
+        }
       ]
     ],
     "experiments": {

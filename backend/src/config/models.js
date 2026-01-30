@@ -144,6 +144,11 @@ const rideRequestSchema = new Schema(
     from: { type: String, required: true },
     to: { type: String, required: true },
     passengers: { type: Number, required: true, min: 1, max: 4 },
+    vehicleType: {
+      type: String,
+      enum: ['two_wheeler', 'four_wheeler'],
+      default: 'four_wheeler',
+    },
     notes: String,
     womenOnly: { type: Boolean, default: false },
     pickupLatitude: Number,

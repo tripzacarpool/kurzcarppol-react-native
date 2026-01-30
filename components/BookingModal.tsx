@@ -129,8 +129,13 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     onClose();
   }, [onClose]);
 
+  const totalAmount = useMemo(() => {
+    if (!ride) return 0;
+    return selectedSeats.length * ride.farePerSeat;
+  }, [ride?.farePerSeat, selectedSeats.length]);
+
   const handlePayment = useCallback(async () => {
-    if (!paymentMethod || !user?.id) return;
+    if (!paymentMethod || !user?.id || !ride) return;
 
     setProcessingPayment(true);
 
@@ -170,7 +175,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       showAlert('Error', error.message || 'Payment failed', 'error');
       setProcessingPayment(false);
     }
-  }, [paymentMethod, user?.id, totalAmount, ride, selectedSeats]);
+  }, [paymentMethod, user?.id, totalAmount, ride, selectedSeats, showAlert]);
 
   const handleRazorpaySuccess = useCallback(async (paymentId: string, orderId: string, signature: string) => {
     try {
@@ -605,7 +610,6 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   if (!ride) return null;
 
   // Computed values after hooks
-  const totalAmount = selectedSeats.length * ride.farePerSeat;
   const driverModeInfo = DRIVER_MODE_META[ride.driverMode];
 
   return (

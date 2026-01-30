@@ -15,6 +15,10 @@ import { X, MapPin, Users, DollarSign, FileText } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { createDriverRideOffer } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
+import {
+  VEHICLE_TYPE_OPTIONS,
+  type RideVehicleType,
+} from '@/constants/vehicleTypes';
 
 interface DriverRideOfferModalProps {
   visible: boolean;
@@ -41,6 +45,7 @@ export default function DriverRideOfferModal({
   const [fare, setFare] = useState('');
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
+  const [vehicleType, setVehicleType] = useState<RideVehicleType>('four_wheeler');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Custom alert state
@@ -88,6 +93,7 @@ export default function DriverRideOfferModal({
         from: from.trim(),
         to: to.trim(),
         passengers: passengerCount,
+        vehicleType,
         fare: fareAmount,
         notes: notes.trim(),
         womenOnly,
@@ -122,6 +128,7 @@ export default function DriverRideOfferModal({
     setFare('');
     setNotes('');
     setWomenOnly(false);
+    setVehicleType('four_wheeler');
     onClose();
   };
 
@@ -211,6 +218,42 @@ export default function DriverRideOfferModal({
                     onChangeText={setFare}
                     keyboardType="decimal-pad"
                   />
+                </View>
+              </View>
+
+              <View style={styles.vehicleSection}>
+                <Text style={styles.vehicleTitle}>Vehicle Type</Text>
+                <Text style={styles.vehicleSubtitle}>
+                  Let riders know what you are driving today.
+                </Text>
+                <View style={styles.vehicleTypeList}>
+                  {VEHICLE_TYPE_OPTIONS.map((option) => {
+                    const isActive = option.value === vehicleType;
+                    return (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[
+                          styles.vehicleChip,
+                          isActive && styles.vehicleChipActive,
+                        ]}
+                        onPress={() => setVehicleType(option.value)}
+                        disabled={isSubmitting}
+                        activeOpacity={0.7}>
+                        <Text
+                          style={[
+                            styles.vehicleChipLabel,
+                            isActive && styles.vehicleChipLabelActive,
+                          ]}>
+                          {option.label}
+                        </Text>
+                        {option.subtitle ? (
+                          <Text style={styles.vehicleChipSubtitle}>
+                            {option.subtitle}
+                          </Text>
+                        ) : null}
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
 
@@ -359,6 +402,49 @@ const styles = StyleSheet.create({
   textArea: {
     minHeight: 80,
     paddingTop: 16,
+  },
+  vehicleSection: {
+    marginTop: 8,
+  },
+  vehicleTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.dark.text,
+  },
+  vehicleSubtitle: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    marginTop: 6,
+  },
+  vehicleTypeList: {
+    flexDirection: 'column',
+    gap: 12,
+    marginTop: 12,
+  },
+  vehicleChip: {
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  vehicleChipActive: {
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '20',
+  },
+  vehicleChipLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.dark.text,
+  },
+  vehicleChipLabelActive: {
+    color: Colors.dark.gold,
+  },
+  vehicleChipSubtitle: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    marginTop: 4,
   },
   row: {
     flexDirection: 'row',

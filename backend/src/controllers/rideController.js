@@ -7,6 +7,11 @@ export function setSocketIO(socketInstance) {
   io = socketInstance;
 }
 
+const VEHICLE_TYPES = ['two_wheeler', 'four_wheeler'];
+
+const normalizeVehicleType = (value) =>
+  VEHICLE_TYPES.includes(value) ? value : 'four_wheeler';
+
 /**
  * Helper to get userId from Clerk auth (works with both old and new API)
  */
@@ -52,6 +57,7 @@ export const createRideRequest = async (req, res, next) => {
       from,
       to,
       passengers,
+      vehicleType,
       notes,
       womenOnly,
       pickupLatitude,
@@ -77,6 +83,8 @@ export const createRideRequest = async (req, res, next) => {
       });
     }
 
+    const sanitizedVehicleType = normalizeVehicleType(vehicleType);
+
     // Find user
     const user = await UserProfile.findOne({ clerkId });
     if (!user) {
@@ -94,6 +102,7 @@ export const createRideRequest = async (req, res, next) => {
       from,
       to,
       passengers,
+      vehicleType: sanitizedVehicleType,
       notes: notes || '',
       womenOnly: womenOnly || false,
       pickupLatitude: pickupLatitude || null,
@@ -110,6 +119,7 @@ export const createRideRequest = async (req, res, next) => {
       from,
       to,
       passengers,
+      vehicleType: sanitizedVehicleType,
       womenOnly,
     });
 
@@ -121,6 +131,7 @@ export const createRideRequest = async (req, res, next) => {
         from: rideRequest.from,
         to: rideRequest.to,
         passengers: rideRequest.passengers,
+        vehicleType: rideRequest.vehicleType,
         womenOnly: rideRequest.womenOnly,
         notes: rideRequest.notes,
         status: rideRequest.status,
@@ -140,6 +151,7 @@ export const createRideRequest = async (req, res, next) => {
         passengers: rideRequest.passengers,
         notes: rideRequest.notes,
         womenOnly: rideRequest.womenOnly,
+        vehicleType: rideRequest.vehicleType,
         status: rideRequest.status,
         createdAt: rideRequest.createdAt,
       },
@@ -198,6 +210,7 @@ export const getUserRideRequests = async (req, res, next) => {
         passengers: ride.passengers,
         notes: ride.notes,
         womenOnly: ride.womenOnly,
+        vehicleType: ride.vehicleType,
         status: ride.status,
         createdAt: ride.createdAt,
         acceptedBy: ride.acceptedBy,
@@ -278,6 +291,7 @@ export const getAvailableRides = async (req, res, next) => {
           passengers: ride.passengers,
           notes: ride.notes,
           womenOnly: ride.womenOnly,
+          vehicleType: ride.vehicleType,
           status: ride.status,
           createdAt: ride.createdAt,
           pickupLatitude: ride.pickupLatitude,
@@ -475,6 +489,7 @@ export const createDriverRideOffer = async (req, res, next) => {
       from,
       to,
       passengers,
+      vehicleType,
       notes,
       womenOnly,
       fare,
@@ -501,6 +516,8 @@ export const createDriverRideOffer = async (req, res, next) => {
       });
     }
 
+    const sanitizedVehicleType = normalizeVehicleType(vehicleType);
+
     // Find driver
     const driver = await UserProfile.findOne({ clerkId });
     if (!driver) {
@@ -518,6 +535,7 @@ export const createDriverRideOffer = async (req, res, next) => {
       from,
       to,
       passengers,
+      vehicleType: sanitizedVehicleType,
       notes: notes || '',
       womenOnly: womenOnly || false,
       fare: fare || 0,
@@ -537,6 +555,7 @@ export const createDriverRideOffer = async (req, res, next) => {
       from,
       to,
       passengers,
+      vehicleType: sanitizedVehicleType,
       fare,
     });
 
@@ -549,6 +568,7 @@ export const createDriverRideOffer = async (req, res, next) => {
         to: rideOffer.to,
         passengers: rideOffer.passengers,
         womenOnly: rideOffer.womenOnly,
+        vehicleType: rideOffer.vehicleType,
         fare: rideOffer.fare,
         notes: rideOffer.notes,
         status: rideOffer.status,
@@ -573,6 +593,7 @@ export const createDriverRideOffer = async (req, res, next) => {
         passengers: rideOffer.passengers,
         notes: rideOffer.notes,
         womenOnly: rideOffer.womenOnly,
+        vehicleType: rideOffer.vehicleType,
         fare: rideOffer.fare,
         offeredByDriver: rideOffer.offeredByDriver,
         status: rideOffer.status,

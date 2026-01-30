@@ -1,24 +1,58 @@
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { MapPin } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 
-// In Expo Go, maps are not available - export null components
-// Maps will only work in a development build with: npx expo run:android
+type MapComponents = {
+  MapView: any;
+  Marker: any;
+  Polyline: any;
+  PROVIDER_GOOGLE: any;
+};
 
-export const MapView: any = null;
-export const Marker: any = null;
-export const Polyline: any = null;
-export const PROVIDER_GOOGLE: any = null;
+const isNativePlatform = Platform.OS === 'ios' || Platform.OS === 'android';
+const isExpoGoRuntime = Constants.appOwnership === 'expo';
 
-export const checkMapAvailability = () => false;
-export function MapPlaceholder({ message = "Maps require a development build" }: { message?: string }) {
+const components: MapComponents = {
+  MapView: null,
+  Marker: null,
+  Polyline: null,
+  PROVIDER_GOOGLE: null,
+};
+
+if (isNativePlatform && !isExpoGoRuntime) {
+  try {
+    const mapsModule = require('react-native-maps');
+    components.MapView = mapsModule.default ?? mapsModule;
+    components.Marker = mapsModule.Marker;
+    components.Polyline = mapsModule.Polyline;
+    components.PROVIDER_GOOGLE = mapsModule.PROVIDER_GOOGLE;
+  } catch (error) {
+    console.warn('react-native-maps failed to load:', error);
+  }
+}
+
+const isMapAvailable = Boolean(components.MapView);
+
+export const MapView = components.MapView;
+export const Marker = components.Marker;
+export const Polyline = components.Polyline;
+export const PROVIDER_GOOGLE = components.PROVIDER_GOOGLE;
+
+export const checkMapAvailability = () => isMapAvailable;
+
+export function MapPlaceholder({ message }: { message?: string }) {
+  const defaultMessage = isExpoGoRuntime
+    ? 'Install the development build to use interactive maps.'
+    : 'Map component failed to load.';
+
   return (
     <View style={styles.placeholder}>
       <MapPin size={48} color={Colors.dark.textSecondary} />
-      <Text style={styles.placeholderText}>{message}</Text>
-      <Text style={styles.placeholderSubtext}>
-        Run: npx expo run:android
-      </Text>
+      <Text style={styles.placeholderText}>{message ?? defaultMessage}</Text>
+      {isExpoGoRuntime && (
+        <Text style={styles.placeholderSubtext}>Run npx expo run:android</Text>
+      )}
     </View>
   );
 }

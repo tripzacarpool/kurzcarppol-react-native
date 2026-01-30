@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { RideVehicleType } from '@/types';
 import {
   RidePartnerMode,
   RidePartnerVehicleType,
@@ -223,6 +224,7 @@ export async function createRideRequest(rideData: {
   from: string;
   to: string;
   passengers: number;
+  vehicleType?: RideVehicleType;
   notes?: string;
   womenOnly?: boolean;
   pickupLatitude?: number;
@@ -295,6 +297,7 @@ export async function createDriverRideOffer(rideData: {
   from: string;
   to: string;
   passengers: number;
+  vehicleType?: RideVehicleType;
   fare?: number;
   notes?: string;
   womenOnly?: boolean;
