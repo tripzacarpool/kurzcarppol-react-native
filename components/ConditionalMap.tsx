@@ -23,6 +23,7 @@ const components: MapComponents = {
 if (isNativePlatform) {
   try {
     const mapsModule = require('react-native-maps');
+
     const hasNativeView = Boolean(
       UIManager?.getViewManagerConfig?.('AIRMap') || UIManager?.hasViewManagerConfig?.('AIRMap')
     );
@@ -33,7 +34,9 @@ if (isNativePlatform) {
       components.Polyline = mapsModule.Polyline;
       components.PROVIDER_GOOGLE = mapsModule.PROVIDER_GOOGLE;
     } else {
-      console.warn('AIRMap native view missing. Rebuild the app with react-native-maps installed.');
+      console.warn(
+        'AIRMap native view missing from UIManager. Rebuild the native project (expo prebuild && expo run) or regenerate the EAS dev build so react-native-maps is compiled.'
+      );
     }
   } catch (error) {
     console.warn('react-native-maps failed to load:', error);
