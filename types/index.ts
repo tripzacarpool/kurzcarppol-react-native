@@ -124,10 +124,42 @@ export interface Ride {
   totalSeats: number;
   farePerSeat: number;
   isWomenOnly: boolean;
-  status: 'upcoming' | 'active' | 'completed';
+  status:
+    | 'upcoming'
+    | 'active'
+    | 'completed'
+    | 'booked'
+    | 'ongoing'
+    | 'cancelled';
   distance: string;
   duration: string;
   driverMode: DriverMode;
+  pickupLatitude?: number;
+  pickupLongitude?: number;
+  dropoffLatitude?: number;
+  dropoffLongitude?: number;
+  pickupCity?: string;
+  pickupCountry?: string;
+  dropoffCity?: string;
+  dropoffCountry?: string;
+  bookingDetails?: {
+    confirmedAt?: string;
+    seatNumbers?: number[];
+    totalAmount?: number;
+    paymentMethod?: 'wallet' | 'upi' | 'cash' | 'unknown';
+    customRequest?: string;
+    passengerName?: string;
+    passengerPhone?: string;
+    pickupEta?: string;
+  };
+  pickupStatus?: {
+    driverConfirmedAt?: string;
+    passengerConfirmedAt?: string;
+  };
+  dropoffStatus?: {
+    passengerConfirmedAt?: string;
+    completedAt?: string;
+  };
 }
 
 export interface Booking {

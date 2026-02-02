@@ -1,4 +1,5 @@
 import { UserProfile, RideRequest } from '../config/models.js';
+import { locationService } from '../services/locationService.js';
 
 // Socket.io instance will be injected
 let io = null;
@@ -56,36 +57,35 @@ export const createRideRequest = async (req, res, next) => {
     const {
       from,
       to,
-      passengers,
+      passengers = 1,
       vehicleType,
-      notes,
-      womenOnly,
+      notes = '',
+      womenOnly = false,
       pickupLatitude,
       pickupLongitude,
       pickupCity,
       pickupCountry,
-    } = req.body;
+      dropoffLatitude,
+      dropoffLongitude,
+      dropoffCity,
+      dropoffCountry,
+    } = req.body || {};
 
-    // Validation
     if (!from || !to) {
       return res.status(400).json({
-        error: 'Missing required fields',
-        details: 'from and to locations are required',
+        error: 'Invalid ride request',
+        details: '`from` and `to` are required',
         code: 'MISSING_FIELDS',
       });
     }
 
-    if (!passengers || passengers < 1 || passengers > 4) {
-      return res.status(400).json({
-        error: 'Invalid passenger count',
-        details: 'Passenger count must be between 1 and 4',
-        code: 'INVALID_PASSENGERS',
-      });
-    }
+    const parsedPassengers = Number.parseInt(passengers, 10);
+    const sanitizedPassengers = Number.isFinite(parsedPassengers)
+      ? Math.max(1, parsedPassengers)
+      : 1;
 
     const sanitizedVehicleType = normalizeVehicleType(vehicleType);
 
-    // Find user
     const user = await UserProfile.findOne({ clerkId });
     if (!user) {
       return res.status(404).json({
@@ -101,7 +101,7 @@ export const createRideRequest = async (req, res, next) => {
       clerkId,
       from,
       to,
-      passengers,
+      passengers: sanitizedPassengers,
       vehicleType: sanitizedVehicleType,
       notes: notes || '',
       womenOnly: womenOnly || false,
@@ -109,6 +109,10 @@ export const createRideRequest = async (req, res, next) => {
       pickupLongitude: pickupLongitude || null,
       pickupCity: pickupCity || null,
       pickupCountry: pickupCountry || null,
+      dropoffLatitude: dropoffLatitude || null,
+      dropoffLongitude: dropoffLongitude || null,
+      dropoffCity: dropoffCity || null,
+      dropoffCountry: dropoffCountry || null,
       status: 'waiting',
     });
 
@@ -118,7 +122,7 @@ export const createRideRequest = async (req, res, next) => {
       rideId: rideRequest._id,
       from,
       to,
-      passengers,
+      passengers: sanitizedPassengers,
       vehicleType: sanitizedVehicleType,
       womenOnly,
     });
@@ -298,6 +302,13 @@ export const getAvailableRides = async (req, res, next) => {
           pickupLongitude: ride.pickupLongitude,
           pickupCity: ride.pickupCity,
           pickupCountry: ride.pickupCountry,
+          dropoffLatitude: ride.dropoffLatitude,
+          dropoffLongitude: ride.dropoffLongitude,
+          dropoffCity: ride.dropoffCity,
+          dropoffCountry: ride.dropoffCountry,
+          bookingDetails: ride.bookingDetails,
+          pickupStatus: ride.pickupStatus,
+          dropoffStatus: ride.dropoffStatus,
         };
 
         if (type === 'offers') {
@@ -424,13 +435,25 @@ export const acceptRide = async (req, res, next) => {
     await ride.save();
 
     console.log(`✅ Ride ${rideId} accepted by driver ${clerkId}`);
-
-    // Emit socket event for ride acceptance
     if (io) {
       io.emit('ride:accepted', {
-        id: ride._id,
+        rideId: ride._id,
         status: ride.status,
         acceptedBy: ride.acceptedBy,
+        driverClerkId: clerkId,
+        passengerClerkId: ride.clerkId,
+        from: ride.from,
+        to: ride.to,
+        pickup: {
+          latitude: ride.pickupLatitude,
+          longitude: ride.pickupLongitude,
+          address: ride.from,
+        },
+        dropoff: {
+          latitude: ride.dropoffLatitude,
+          longitude: ride.dropoffLongitude,
+          address: ride.to,
+        },
       });
       console.log('📡 Broadcasted ride acceptance to all clients');
     }
@@ -446,6 +469,355 @@ export const acceptRide = async (req, res, next) => {
     });
   } catch (error) {
     console.error('❌ Accept ride error:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Passenger confirms booking after payment
+ * POST /api/rides/:rideId/booking
+ */
+export const confirmRideBooking = async (req, res, next) => {
+  try {
+    let clerkId = getClerkUserId(req);
+    const { rideId } = req.params;
+
+    if (!clerkId) {
+      clerkId = req.body.clerkId;
+      console.log('⚠️ Using clerkId from request body (auth not available)');
+    }
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'clerkId is required (via auth or body)',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    const ride = await RideRequest.findById(rideId).populate(
+      'userId',
+      'firstName lastName phone',
+    );
+
+    if (!ride) {
+      return res.status(404).json({
+        error: 'Ride not found',
+        code: 'RIDE_NOT_FOUND',
+      });
+    }
+
+    if (ride.clerkId !== clerkId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details: 'Only the passenger can confirm this booking',
+        code: 'NOT_RIDE_OWNER',
+      });
+    }
+
+    if (!ride.acceptedBy?.clerkId) {
+      return res.status(400).json({
+        error: 'Ride has not been accepted by a driver yet',
+        code: 'RIDE_NOT_ACCEPTED',
+      });
+    }
+
+    const {
+      seatNumbers = [],
+      totalAmount = 0,
+      paymentMethod = 'unknown',
+      customRequest = '',
+      pickupEta,
+      passengerPhone,
+    } = req.body;
+
+    ride.bookingDetails = {
+      confirmedAt: new Date(),
+      seatNumbers,
+      totalAmount,
+      paymentMethod,
+      customRequest,
+      passengerName:
+        `${ride.userId?.firstName || ''} ${ride.userId?.lastName || ''}`.trim() ||
+        'Passenger',
+      passengerPhone: passengerPhone || ride.userId?.phone || null,
+      pickupEta: pickupEta ? new Date(pickupEta) : null,
+    };
+    ride.status = 'booked';
+    ride.updatedAt = new Date();
+    await ride.save();
+
+    if (io) {
+      io.emit('ride:booked', {
+        rideId: ride._id,
+        driverClerkId: ride.acceptedBy?.clerkId,
+        passengerClerkId: ride.clerkId,
+        status: ride.status,
+        bookingDetails: ride.bookingDetails,
+        from: ride.from,
+        to: ride.to,
+        pickup: {
+          latitude: ride.pickupLatitude,
+          longitude: ride.pickupLongitude,
+          address: ride.from,
+        },
+        dropoff: {
+          latitude: ride.dropoffLatitude,
+          longitude: ride.dropoffLongitude,
+          address: ride.to,
+        },
+      });
+      console.log('📡 Broadcasted ride booking confirmation');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Booking confirmed',
+      ride: {
+        id: ride._id,
+        status: ride.status,
+        bookingDetails: ride.bookingDetails,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Confirm booking error:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Driver confirms that passenger has been picked up
+ * POST /api/rides/:rideId/pickup/driver
+ */
+export const driverConfirmPickup = async (req, res, next) => {
+  try {
+    let clerkId = getClerkUserId(req);
+    const { rideId } = req.params;
+
+    if (!clerkId) {
+      clerkId = req.body.clerkId;
+      console.log('⚠️ Using clerkId from request body (auth not available)');
+    }
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'clerkId is required (via auth or body)',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    const ride = await RideRequest.findById(rideId);
+
+    if (!ride) {
+      return res.status(404).json({
+        error: 'Ride not found',
+        code: 'RIDE_NOT_FOUND',
+      });
+    }
+
+    if (ride.acceptedBy?.clerkId !== clerkId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details: 'Only the assigned driver can confirm pickup',
+        code: 'NOT_ASSIGNED_DRIVER',
+      });
+    }
+
+    ride.pickupStatus = {
+      ...ride.pickupStatus,
+      driverConfirmedAt: new Date(),
+    };
+    ride.status = 'ongoing';
+    ride.updatedAt = new Date();
+    await ride.save();
+
+    if (io) {
+      io.emit('ride:pickup-driver', {
+        rideId: ride._id,
+        driverClerkId: ride.acceptedBy?.clerkId,
+        passengerClerkId: ride.clerkId,
+        status: ride.status,
+        pickupStatus: ride.pickupStatus,
+        pickup: {
+          latitude: ride.pickupLatitude,
+          longitude: ride.pickupLongitude,
+          address: ride.from,
+        },
+        dropoff: {
+          latitude: ride.dropoffLatitude,
+          longitude: ride.dropoffLongitude,
+          address: ride.to,
+        },
+      });
+      console.log('📡 Broadcasted driver pickup confirmation');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Pickup confirmed by driver',
+      ride: {
+        id: ride._id,
+        status: ride.status,
+        pickupStatus: ride.pickupStatus,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Driver pickup confirmation error:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Passenger confirms they have boarded the vehicle
+ * POST /api/rides/:rideId/pickup/passenger
+ */
+export const passengerConfirmPickup = async (req, res, next) => {
+  try {
+    let clerkId = getClerkUserId(req);
+    const { rideId } = req.params;
+
+    if (!clerkId) {
+      clerkId = req.body.clerkId;
+      console.log('⚠️ Using clerkId from request body (auth not available)');
+    }
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'clerkId is required (via auth or body)',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    const ride = await RideRequest.findById(rideId);
+
+    if (!ride) {
+      return res.status(404).json({
+        error: 'Ride not found',
+        code: 'RIDE_NOT_FOUND',
+      });
+    }
+
+    if (ride.clerkId !== clerkId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details: 'Only the passenger can confirm pickup',
+        code: 'NOT_RIDE_OWNER',
+      });
+    }
+
+    ride.pickupStatus = {
+      ...ride.pickupStatus,
+      passengerConfirmedAt: new Date(),
+    };
+    if (ride.status !== 'ongoing') {
+      ride.status = 'ongoing';
+    }
+    ride.updatedAt = new Date();
+    await ride.save();
+
+    if (io) {
+      io.emit('ride:pickup-passenger', {
+        rideId: ride._id,
+        driverClerkId: ride.acceptedBy?.clerkId,
+        passengerClerkId: ride.clerkId,
+        status: ride.status,
+        pickupStatus: ride.pickupStatus,
+      });
+      console.log('📡 Broadcasted passenger pickup confirmation');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Pickup confirmed by passenger',
+      ride: {
+        id: ride._id,
+        status: ride.status,
+        pickupStatus: ride.pickupStatus,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Passenger pickup confirmation error:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Passenger confirms drop-off and completes the ride
+ * POST /api/rides/:rideId/complete
+ */
+export const completeRide = async (req, res, next) => {
+  try {
+    let clerkId = getClerkUserId(req);
+    const { rideId } = req.params;
+
+    if (!clerkId) {
+      clerkId = req.body.clerkId;
+      console.log('⚠️ Using clerkId from request body (auth not available)');
+    }
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'clerkId is required (via auth or body)',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    const ride = await RideRequest.findById(rideId);
+
+    if (!ride) {
+      return res.status(404).json({
+        error: 'Ride not found',
+        code: 'RIDE_NOT_FOUND',
+      });
+    }
+
+    if (ride.clerkId !== clerkId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details: 'Only the passenger can complete the ride',
+        code: 'NOT_RIDE_OWNER',
+      });
+    }
+
+    ride.dropoffStatus = {
+      ...ride.dropoffStatus,
+      passengerConfirmedAt: new Date(),
+      completedAt: new Date(),
+    };
+    ride.status = 'completed';
+    ride.completedAt = new Date();
+    ride.updatedAt = new Date();
+    await ride.save();
+
+    if (ride.acceptedBy?.clerkId) {
+      locationService.endRide(ride._id.toString(), ride.acceptedBy.clerkId);
+    }
+
+    if (io) {
+      io.emit('ride:completed', {
+        rideId: ride._id,
+        driverClerkId: ride.acceptedBy?.clerkId,
+        passengerClerkId: ride.clerkId,
+        status: ride.status,
+        dropoffStatus: ride.dropoffStatus,
+      });
+      console.log('📡 Broadcasted ride completion');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Ride marked as completed',
+      ride: {
+        id: ride._id,
+        status: ride.status,
+        dropoffStatus: ride.dropoffStatus,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Complete ride error:', error.message);
     next(error);
   }
 };

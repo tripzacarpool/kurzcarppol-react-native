@@ -32,8 +32,8 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { getAvailableRides, acceptRide, cancelRide } from '@/lib/api';
-import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents } from '@/lib/locationSocket';
+import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup } from '@/lib/api';
+import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
 
 interface Ride {
@@ -80,6 +80,9 @@ export default function DriverDashboard() {
   const [randomRides, setRandomRides] = useState<Ride[]>([]);
   const [myOffers, setMyOffers] = useState<DriverOffer[]>([]);
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
+  const [activeRideDetails, setActiveRideDetails] = useState<Ride | null>(null);
+  const [driverPickupConfirmed, setDriverPickupConfirmed] = useState(false);
+  const [pickupConfirming, setPickupConfirming] = useState(false);
   const [stats, setStats] = useState<DriverStats>({
     earnings: 2450,
     ridesCount: 12,
@@ -247,6 +250,36 @@ export default function DriverDashboard() {
     }
   }, [isLive, user?.id, liveStateReady]);
 
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const socket = getLocationSocket();
+
+    const handlePassengerPickup = (data: any) => {
+      if (data.driverClerkId !== user.id || !activeRideId || data.rideId !== activeRideId) {
+        return;
+      }
+      setDriverPickupConfirmed(true);
+      showAlert('Passenger Onboard', 'Passenger confirmed pickup. Start navigation to the drop-off.', 'success');
+    };
+
+    const handleRideCompleted = (data: any) => {
+      if (data.driverClerkId !== user.id || !activeRideId || data.rideId !== activeRideId) {
+        return;
+      }
+      stopSendingLocation();
+      showAlert('Ride Completed', 'Passenger marked the ride complete. Payout is on the way.', 'success');
+    };
+
+    socket.on('ride:pickup-passenger', handlePassengerPickup);
+    socket.on('ride:completed', handleRideCompleted);
+
+    return () => {
+      socket.off('ride:pickup-passenger', handlePassengerPickup);
+      socket.off('ride:completed', handleRideCompleted);
+    };
+  }, [user?.id, activeRideId]);
+
   const fetchLiveRides = async () => {
     if (!user?.id) return;
     try {
@@ -318,6 +351,9 @@ export default function DriverDashboard() {
       console.log('🛑 Stopped sending location');
     }
     setActiveRideId(null);
+    setActiveRideDetails(null);
+    setDriverPickupConfirmed(false);
+    setPickupConfirming(false);
   };
 
   const handleAcceptRide = async (rideId: string, isLive: boolean) => {
@@ -332,6 +368,10 @@ export default function DriverDashboard() {
         // Start tracking location for this ride
         await startSendingLocation(rideId);
       }
+
+      const acceptedRide = (isLive ? liveRides : randomRides).find((r) => r.id === rideId) || null;
+      setActiveRideDetails(acceptedRide);
+      setDriverPickupConfirmed(false);
       
       // Remove from list
       if (isLive) {
@@ -363,6 +403,25 @@ export default function DriverDashboard() {
       }
     } catch (error) {
       console.error('❌ Error rejecting ride:', error);
+    }
+  };
+
+  const handleDriverPickupConfirm = async () => {
+    if (!activeRideId) {
+      showAlert('No Active Ride', 'Accept a ride before marking pickup.', 'warning');
+      return;
+    }
+
+    try {
+      setPickupConfirming(true);
+      await driverConfirmPickup(activeRideId);
+      setDriverPickupConfirmed(true);
+      showAlert('Passenger Notified', 'Passenger alerted to confirm onboarding.', 'success');
+    } catch (error) {
+      console.error('❌ Error confirming pickup:', error);
+      showAlert('Error', 'Failed to notify passenger. Try again.', 'error');
+    } finally {
+      setPickupConfirming(false);
     }
   };
 
@@ -735,6 +794,51 @@ export default function DriverDashboard() {
 
         {selectedTab === 'live' && (
           <>
+            {activeRideDetails && (
+              <View style={styles.activeRideCard}>
+                <View style={styles.activeRideHeader}>
+                  <Text style={styles.sectionTitle}>Active Ride</Text>
+                  <View
+                    style={[
+                      styles.activeRideStatus,
+                      driverPickupConfirmed && styles.activeRideStatusSuccess,
+                    ]}>
+                    <Text style={styles.activeRideStatusText}>
+                      {driverPickupConfirmed ? 'Passenger onboard' : 'Pickup pending'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.activeRidePassenger}>{activeRideDetails.passenger}</Text>
+                <View style={styles.requestRoute}>
+                  <View style={styles.routeRow}>
+                    <MapPin size={14} color={Colors.dark.gold} />
+                    <Text style={styles.routeText}>{activeRideDetails.from}</Text>
+                  </View>
+                  <View style={styles.routeLine} />
+                  <View style={styles.routeRow}>
+                    <MapPin size={14} color={Colors.dark.pink} />
+                    <Text style={styles.routeText}>{activeRideDetails.to}</Text>
+                  </View>
+                </View>
+                <Text style={styles.activeRideHint}>
+                  Tap the button once the passenger is seated so they can confirm onboarding.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.acceptButton, (pickupConfirming || driverPickupConfirmed) && styles.disabledButton]}
+                  onPress={handleDriverPickupConfirm}
+                  disabled={pickupConfirming || driverPickupConfirmed}
+                  activeOpacity={0.7}>
+                  {pickupConfirming ? (
+                    <ActivityIndicator color={Colors.dark.background} />
+                  ) : (
+                    <Text style={styles.acceptButtonText}>
+                      {driverPickupConfirmed ? 'Waiting for passenger' : 'Mark passenger picked'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
             {isLive && (liveRides.length > 0 || randomRides.length > 0) && (
               <View style={styles.requestsSection}>
                 {/* LIVE RIDES SECTION */}
@@ -1106,6 +1210,46 @@ const styles = StyleSheet.create({
   },
   requestsSection: {
     marginBottom: 20,
+  },
+  activeRideCard: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold,
+  },
+  activeRideHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  activeRideStatus: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: Colors.dark.border + '60',
+  },
+  activeRideStatusSuccess: {
+    backgroundColor: Colors.dark.success + '30',
+  },
+  activeRideStatusText: {
+    color: Colors.dark.text,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  activeRidePassenger: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    marginBottom: 10,
+  },
+  activeRideHint: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    marginBottom: 14,
   },
   requestsHeader: {
     flexDirection: 'row',

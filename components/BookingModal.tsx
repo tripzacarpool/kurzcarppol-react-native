@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { RazorpayWebView } from './RazorpayWebView';
 import { DRIVER_MODE_META } from '@/constants/driverModes';
 import CustomAlert, { AlertType } from './CustomAlert';
+import RideTrackingMap from './RideTrackingMap';
 import {
   processWalletPayment,
   getWalletBalance,
@@ -24,6 +25,11 @@ import {
   getRazorpayKeyId,
   RazorpayOrderResponse,
 } from '@/lib/razorpay';
+import {
+  confirmRideBooking,
+  passengerConfirmPickup,
+  completeRide,
+} from '@/lib/api';
 
 interface BookingModalProps {
   visible: boolean;
@@ -40,11 +46,16 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   const [customRequest, setCustomRequest] = useState('');
   const [customFare, setCustomFare] = useState('');
   const [pickupConfirmed, setPickupConfirmed] = useState(false);
+  const [bookingConfirmed, setBookingConfirmed] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'wallet' | 'upi' | null>(null);
   const [walletBalance, setWalletBalance] = useState(0);
   const [processingPayment, setProcessingPayment] = useState(false);
   const [showRazorpay, setShowRazorpay] = useState(false);
   const [razorpayOrder, setRazorpayOrder] = useState<RazorpayOrderResponse | null>(null);
+  const [trackingActive, setTrackingActive] = useState(false);
+  const [pickupActionLoading, setPickupActionLoading] = useState(false);
+  const [completionLoading, setCompletionLoading] = useState(false);
+  const [showTrackingMap, setShowTrackingMap] = useState(false);
   
   // Custom alert state
   const [alertVisible, setAlertVisible] = useState(false);
@@ -74,8 +85,13 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       setCustomRequest('');
       setCustomFare('');
       setPickupConfirmed(false);
+      setBookingConfirmed(false);
       setPaymentMethod(null);
       setProcessingPayment(false);
+      setTrackingActive(false);
+      setPickupActionLoading(false);
+      setCompletionLoading(false);
+      setShowTrackingMap(false);
     }
   }, [visible]);
 
@@ -85,6 +101,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       loadWalletBalance();
     }
   }, [step, user]);
+
+  useEffect(() => {
+    if (step === 'tracking' && pickupConfirmed) {
+      setTrackingActive(true);
+    }
+  }, [step, pickupConfirmed]);
 
   const loadWalletBalance = async () => {
     if (!user?.id) return;
@@ -124,8 +146,13 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     setCustomRequest('');
     setCustomFare('');
     setPickupConfirmed(false);
+    setBookingConfirmed(false);
     setPaymentMethod(null);
     setProcessingPayment(false);
+    setTrackingActive(false);
+    setPickupActionLoading(false);
+    setCompletionLoading(false);
+    setShowTrackingMap(false);
     onClose();
   }, [onClose]);
 
@@ -134,8 +161,48 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     return selectedSeats.length * ride.farePerSeat;
   }, [ride?.farePerSeat, selectedSeats.length]);
 
+  const pickupLocation = useMemo(() => {
+    if (!ride) return null;
+    if (ride.pickupPoint?.lat && ride.pickupPoint?.lng) {
+      return {
+        latitude: ride.pickupPoint.lat,
+        longitude: ride.pickupPoint.lng,
+      };
+    }
+    const latitude = (ride as any).pickupLatitude;
+    const longitude = (ride as any).pickupLongitude;
+    if (typeof latitude === 'number' && typeof longitude === 'number') {
+      return { latitude, longitude };
+    }
+    return null;
+  }, [ride]);
+
+  const dropoffLocation = useMemo(() => {
+    if (!ride) return null;
+    if (ride.dropPoint?.lat && ride.dropPoint?.lng) {
+      return {
+        latitude: ride.dropPoint.lat,
+        longitude: ride.dropPoint.lng,
+      };
+    }
+    const latitude = (ride as any).dropoffLatitude;
+    const longitude = (ride as any).dropoffLongitude;
+    if (typeof latitude === 'number' && typeof longitude === 'number') {
+      return { latitude, longitude };
+    }
+    return null;
+  }, [ride]);
+
   const handlePayment = useCallback(async () => {
     if (!paymentMethod || !user?.id || !ride) return;
+    if (selectedSeats.length === 0) {
+      showAlert('Select Seats', 'Pick at least one seat before paying.', 'warning');
+      return;
+    }
+    if (bookingConfirmed) {
+      showAlert('Already Booked', 'Booking already confirmed. Proceed to pickup verification.', 'info');
+      return;
+    }
 
     setProcessingPayment(true);
 
@@ -150,7 +217,14 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         });
 
         if (result.success) {
-          showAlert('Success', 'Payment secured in escrow. Driver will receive it after drop-off.', 'success');
+          await confirmRideBooking(ride.id, {
+            seatNumbers: selectedSeats,
+            totalAmount,
+            paymentMethod: 'wallet',
+            customRequest: customRequest || undefined,
+          });
+          setBookingConfirmed(true);
+          showAlert('Success', 'Payment secured in escrow. Driver notified with your details.', 'success');
           setPickupConfirmed(false);
           setStep('boarding');
         } else {
@@ -175,21 +249,27 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       showAlert('Error', error.message || 'Payment failed', 'error');
       setProcessingPayment(false);
     }
-  }, [paymentMethod, user?.id, totalAmount, ride, selectedSeats, showAlert]);
+  }, [paymentMethod, user?.id, totalAmount, ride, selectedSeats, showAlert, customRequest, bookingConfirmed]);
 
   const handleRazorpaySuccess = useCallback(async (paymentId: string, orderId: string, signature: string) => {
     try {
+      if (!ride) return;
       setShowRazorpay(false);
       setProcessingPayment(true);
 
       const verified = await verifyPayment(orderId, paymentId, signature);
       
       if (verified) {
+        await confirmRideBooking(ride.id, {
+          seatNumbers: selectedSeats,
+          totalAmount,
+          paymentMethod: 'upi',
+          customRequest: customRequest || undefined,
+        });
+        setBookingConfirmed(true);
         showAlert('Success!', 'Payment secured in escrow. Confirm pickup to start tracking.', 'success');
-        setTimeout(() => {
-          setPickupConfirmed(false);
-          setStep('boarding');
-        }, 1500);
+        setPickupConfirmed(false);
+        setStep('boarding');
       } else {
         showAlert('Error', 'Payment verification failed. Please contact support.', 'error');
       }
@@ -199,21 +279,54 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } finally {
       setProcessingPayment(false);
     }
-  }, []);
+  }, [ride, selectedSeats, totalAmount, customRequest, showAlert]);
 
   const handleRazorpayFailure = useCallback((error: string) => {
     setShowRazorpay(false);
     showAlert('Payment Failed', error, 'error');
   }, []);
 
-  const handlePickupConfirmation = useCallback(() => {
-    setPickupConfirmed(true);
-    setStep('tracking');
-  }, []);
+  const handlePickupConfirmation = useCallback(async () => {
+    if (!ride) return;
+    if (pickupConfirmed) {
+      setTrackingActive(true);
+      setShowTrackingMap(true);
+      setStep('tracking');
+      return;
+    }
 
-  const handleDropConfirmation = useCallback(() => {
-    setStep('completed');
-  }, []);
+    try {
+      setPickupActionLoading(true);
+      await passengerConfirmPickup(ride.id);
+      setPickupConfirmed(true);
+      setTrackingActive(true);
+      setShowTrackingMap(true);
+      setStep('tracking');
+      showAlert('Pickup Confirmed', 'Live tracking has started.', 'success');
+    } catch (error: any) {
+      console.error('Pickup confirmation error:', error);
+      showAlert('Error', error.message || 'Unable to confirm pickup', 'error');
+    } finally {
+      setPickupActionLoading(false);
+    }
+  }, [ride, pickupConfirmed, showAlert]);
+
+  const handleDropConfirmation = useCallback(async () => {
+    if (!ride) return;
+    try {
+      setCompletionLoading(true);
+      await completeRide(ride.id);
+      setTrackingActive(false);
+      setShowTrackingMap(false);
+      setStep('completed');
+      showAlert('Ride Completed', 'Ride marked as complete. Driver will receive payout automatically.', 'success');
+    } catch (error: any) {
+      console.error('Ride completion error:', error);
+      showAlert('Error', error.message || 'Unable to complete ride', 'error');
+    } finally {
+      setCompletionLoading(false);
+    }
+  }, [ride, showAlert]);
 
   const handleSeatSelect = useCallback((seatNumber: number) => {
     setSelectedSeats((prev) => {
@@ -507,8 +620,16 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             </View>
             <Text style={styles.stepTitle}>Ride in Progress</Text>
             <Text style={styles.stepDescription}>
-              GPS tracking is active. Confirm drop-off when you exit so we can release the driver payout.
+              GPS tracking is active. You can open the live map to follow your driver in real time. Confirm drop-off when you exit so we can release the driver payout.
             </Text>
+            <TouchableOpacity
+              style={[styles.secondaryButton, !trackingActive && styles.disabledButton]}
+              onPress={() => setShowTrackingMap(true)}
+              disabled={!trackingActive}>
+              <Text style={styles.secondaryButtonText}>
+                {trackingActive ? 'Open Live Map' : 'Waiting for live tracking'}
+              </Text>
+            </TouchableOpacity>
             <View style={styles.statusCard}>
               <Text style={styles.statusCardLabel}>Passenger Status</Text>
               <View style={styles.statusCardRow}>
@@ -526,9 +647,14 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               <Text style={styles.trackingValue}>{ride.distance}</Text>
             </View>
             <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={handleDropConfirmation}>
-              <Text style={styles.primaryButtonText}>Mark myself dropped off</Text>
+              style={[styles.primaryButton, completionLoading && styles.primaryButtonDisabled]}
+              onPress={handleDropConfirmation}
+              disabled={completionLoading}>
+              {completionLoading ? (
+                <ActivityIndicator color={Colors.dark.background} />
+              ) : (
+                <Text style={styles.primaryButtonText}>Mark myself dropped off</Text>
+              )}
             </TouchableOpacity>
             <Text style={styles.escrowNote}>Driver payout releases after every passenger on the route is marked finished.</Text>
           </View>
@@ -571,9 +697,16 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               </View>
             </View>
             <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={handlePickupConfirmation}>
-              <Text style={styles.primaryButtonText}>I boarded the car</Text>
+              style={[styles.primaryButton, (pickupActionLoading || pickupConfirmed) && styles.primaryButtonDisabled]}
+              onPress={handlePickupConfirmation}
+              disabled={pickupActionLoading}>
+              {pickupActionLoading ? (
+                <ActivityIndicator color={Colors.dark.background} />
+              ) : (
+                <Text style={styles.primaryButtonText}>
+                  {pickupConfirmed ? 'Tracking Live' : 'I boarded the car'}
+                </Text>
+              )}
             </TouchableOpacity>
             <Text style={styles.escrowNote}>Escrow releases only after the passenger is marked dropped.</Text>
           </View>
@@ -685,6 +818,23 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         type={alertConfig.type}
         onClose={hideAlert}
       />
+
+      {showTrackingMap && pickupLocation && dropoffLocation && (
+        <Modal
+          visible={showTrackingMap}
+          animationType="slide"
+          transparent={false}
+          onRequestClose={() => setShowTrackingMap(false)}>
+          <RideTrackingMap
+            rideId={ride.id}
+            driverName={ride.driver?.name || 'Driver'}
+            driverRating={ride.driver?.rating || 5}
+            pickupLocation={pickupLocation}
+            dropoffLocation={dropoffLocation}
+            onClose={() => setShowTrackingMap(false)}
+          />
+        </Modal>
+      )}
     </>
   );
 }
@@ -1138,6 +1288,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 8,
+  },
+  primaryButtonDisabled: {
+    opacity: 0.6,
   },
   disabledButton: {
     opacity: 0.5,

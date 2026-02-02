@@ -231,6 +231,10 @@ export async function createRideRequest(rideData: {
   pickupLongitude?: number;
   pickupCity?: string;
   pickupCountry?: string;
+  dropoffLatitude?: number;
+  dropoffLongitude?: number;
+  dropoffCity?: string;
+  dropoffCountry?: string;
 }) {
   try {
     const response = await apiClient.post('/api/rides/create', rideData);
@@ -336,6 +340,77 @@ export async function cancelRide(rideId: string) {
   } catch (error: any) {
     console.error(
       '❌ Error cancelling ride:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function confirmRideBooking(
+  rideId: string,
+  payload: {
+    seatNumbers?: number[];
+    totalAmount?: number;
+    paymentMethod?: 'wallet' | 'upi' | 'cash' | 'unknown';
+    customRequest?: string;
+    pickupEta?: string;
+    passengerPhone?: string;
+  },
+) {
+  try {
+    const response = await apiClient.post(
+      `/api/rides/${rideId}/booking`,
+      payload,
+    );
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error confirming booking:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function driverConfirmPickup(rideId: string) {
+  try {
+    const response = await apiClient.post(
+      `/api/rides/${rideId}/pickup/driver`,
+      {},
+    );
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error confirming pickup (driver):',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function passengerConfirmPickup(rideId: string) {
+  try {
+    const response = await apiClient.post(
+      `/api/rides/${rideId}/pickup/passenger`,
+      {},
+    );
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error confirming pickup (passenger):',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function completeRide(rideId: string) {
+  try {
+    const response = await apiClient.post(`/api/rides/${rideId}/complete`, {});
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error completing ride:',
       error.response?.data || error.message,
     );
     throw error;

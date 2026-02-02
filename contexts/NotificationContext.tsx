@@ -55,8 +55,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
 
     const socket = getLocationSocket();
 
-    // Listen for new ride requests from passengers
-    socket.on('new_ride_request', (data: any) => {
+    const handleRideRequest = (data: any) => {
       console.log('🔔 New ride request notification:', data);
       addNotification({
         type: 'ride_created',
@@ -69,8 +68,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           rideId: data.rideId,
         },
       });
-      
-      // Show alert notification if app is in foreground
+
       if (user?.role === 'ride_partner') {
         showCustomAlert(
           'New Ride Request',
@@ -78,10 +76,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           'info'
         );
       }
-    });
+    };
 
-    // Listen for new driver offers
-    socket.on('new_driver_offer', (data: any) => {
+    const handleDriverOffer = (data: any) => {
       console.log('🔔 New driver offer notification:', data);
       addNotification({
         type: 'offer_created',
@@ -96,7 +93,6 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         },
       });
 
-      // Show alert notification if app is in foreground
       if (user?.role !== 'ride_partner') {
         showCustomAlert(
           'New Ride Available',
@@ -104,10 +100,12 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           'success'
         );
       }
-    });
+    };
 
-    // Listen for ride acceptance
-    socket.on('ride_accepted', (data: any) => {
+    const handleRideAccepted = (data: any) => {
+      if (data.passengerClerkId && data.passengerClerkId !== user?.id) {
+        return;
+      }
       console.log('🔔 Ride accepted notification:', data);
       addNotification({
         type: 'ride_accepted',
@@ -125,34 +123,97 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         `Your ride from ${data.from} to ${data.to} has been accepted!`,
         'success'
       );
-    });
+    };
 
-    // Listen for offer booking
-    socket.on('offer_booked', (data: any) => {
-      console.log('🔔 Offer booked notification:', data);
+    const handleRideBooked = (data: any) => {
+      if (data.driverClerkId !== user?.id) return;
+      console.log('🔔 Booking confirmed for driver:', data);
+      const seats = Array.isArray(data.bookingDetails?.seatNumbers)
+        ? `Seats ${data.bookingDetails.seatNumbers.join(', ')}`
+        : 'Booking confirmed';
       addNotification({
         type: 'offer_booked',
-        title: 'Ride Booked',
-        message: `Your ride offer from ${data.from} to ${data.to} has been booked`,
+        title: 'Passenger Confirmed Booking',
+        message: `${data.bookingDetails?.passengerName || 'Passenger'} confirmed ${seats} for ${data.from} → ${data.to}`,
         data: {
           from: data.from,
           to: data.to,
-          rideId: data.offerId,
+          rideId: data.rideId,
         },
       });
 
       showCustomAlert(
-        'Ride Booked',
-        `Your ride offer from ${data.from} to ${data.to} has been booked!`,
-        'success'
+        'Passenger Confirmed',
+        `${data.bookingDetails?.passengerName || 'Passenger'} is ready for pickup at ${data.from}`,
+        'info'
       );
-    });
+    };
+
+    const handleDriverPickup = (data: any) => {
+      if (data.passengerClerkId !== user?.id) return;
+      console.log('🔔 Driver marked pickup:', data);
+      addNotification({
+        type: 'ride_accepted',
+        title: 'Driver Has Arrived',
+        message: 'Your driver marked you as picked up. Confirm if you are onboard.',
+        data: {
+          rideId: data.rideId,
+        },
+      });
+
+      showCustomAlert('Driver Picked You Up', 'Confirm onboarding when you are inside the vehicle.', 'info');
+    };
+
+    const handlePassengerPickup = (data: any) => {
+      if (data.driverClerkId !== user?.id) return;
+      console.log('🔔 Passenger confirmed pickup:', data);
+      addNotification({
+        type: 'ride_accepted',
+        title: 'Passenger Onboard',
+        message: 'Passenger confirmed they are in the car. Start navigation to drop point.',
+        data: {
+          rideId: data.rideId,
+        },
+      });
+    };
+
+    const handleRideCompleted = (data: any) => {
+      if (data.driverClerkId !== user?.id && data.passengerClerkId !== user?.id) {
+        return;
+      }
+      console.log('🔔 Ride completed event:', data);
+      addNotification({
+        type: 'ride_accepted',
+        title: 'Ride Completed',
+        message: 'Ride marked as complete. Thank you for travelling with TripZa!',
+        data: {
+          rideId: data.rideId,
+        },
+      });
+
+      showCustomAlert('Ride Completed', 'Ride marked as finished. Fare will settle automatically.', 'success');
+    };
+
+    socket.on('new_ride_request', handleRideRequest);
+    socket.on('new_driver_offer', handleDriverOffer);
+    socket.on('ride_accepted', handleRideAccepted);
+    socket.on('ride:accepted', handleRideAccepted);
+    socket.on('offer_booked', handleRideBooked);
+    socket.on('ride:booked', handleRideBooked);
+    socket.on('ride:pickup-driver', handleDriverPickup);
+    socket.on('ride:pickup-passenger', handlePassengerPickup);
+    socket.on('ride:completed', handleRideCompleted);
 
     return () => {
-      socket.off('new_ride_request');
-      socket.off('new_driver_offer');
-      socket.off('ride_accepted');
-      socket.off('offer_booked');
+      socket.off('new_ride_request', handleRideRequest);
+      socket.off('new_driver_offer', handleDriverOffer);
+      socket.off('ride_accepted', handleRideAccepted);
+      socket.off('ride:accepted', handleRideAccepted);
+      socket.off('offer_booked', handleRideBooked);
+      socket.off('ride:booked', handleRideBooked);
+      socket.off('ride:pickup-driver', handleDriverPickup);
+      socket.off('ride:pickup-passenger', handlePassengerPickup);
+      socket.off('ride:completed', handleRideCompleted);
     };
   }, [user?.id, user?.role]);
 

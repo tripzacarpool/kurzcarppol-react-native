@@ -6,6 +6,10 @@ import {
   acceptRide,
   createDriverRideOffer,
   cancelRide,
+  confirmRideBooking,
+  driverConfirmPickup,
+  passengerConfirmPickup,
+  completeRide,
 } from '../controllers/rideController.js';
 
 const router = express.Router();
@@ -25,6 +29,18 @@ router.get('/available', getAvailableRides);
 
 // POST /api/rides/:rideId/accept - Accept a ride
 router.post('/:rideId/accept', acceptRide);
+
+// POST /api/rides/:rideId/booking - Passenger confirms booking
+router.post('/:rideId/booking', confirmRideBooking);
+
+// POST /api/rides/:rideId/pickup/driver - Driver confirms pickup
+router.post('/:rideId/pickup/driver', driverConfirmPickup);
+
+// POST /api/rides/:rideId/pickup/passenger - Passenger confirms boarding
+router.post('/:rideId/pickup/passenger', passengerConfirmPickup);
+
+// POST /api/rides/:rideId/complete - Passenger completes ride
+router.post('/:rideId/complete', completeRide);
 
 // DELETE /api/rides/:rideId/cancel - Cancel a ride
 router.delete('/:rideId/cancel', cancelRide);
