@@ -7,6 +7,8 @@ import {
   updateUserIP,
   logoutUser,
   getProfile,
+  updatePushToken,
+  updateDriverVerification,
 } from '../controllers/userController.js';
 
 const router = express.Router();
@@ -31,5 +33,11 @@ router.put('/location', updateUserLocation);
 
 // PUT /api/users/ip - Store user IP address
 router.put('/ip', updateUserIP);
+
+// POST /api/users/push-token - Update push notification token
+router.post('/push-token', updatePushToken);
+
+// POST /api/users/driver-verification - Update driver verification status
+router.post('/driver-verification', updateDriverVerification);
 
 export default router;

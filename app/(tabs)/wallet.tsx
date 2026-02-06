@@ -1,26 +1,23 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator } from 'react-native';
 import { Wallet, Plus, ArrowUpRight, ArrowDownRight, CreditCard } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { mockUser } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
-
-const transactions = [
-  { id: 't1', type: 'credit', amount: 120, description: 'Wallet Added', date: 'Today, 2:30 PM' },
-  { id: 't2', type: 'debit', amount: 80, description: 'Ride Payment', date: 'Today, 9:15 AM' },
-  { id: 't3', type: 'credit', amount: 200, description: 'Wallet Added', date: 'Yesterday, 6:45 PM' },
-  { id: 't4', type: 'debit', amount: 100, description: 'Ride Payment', date: 'Jan 12, 10:30 AM' },
-  { id: 't5', type: 'credit', amount: 150, description: 'Refund', date: 'Jan 11, 3:20 PM' },
-];
+import { getWalletBalance, getWalletTransactions } from '@/lib/api';
 
 export default function WalletScreen() {
   const { user } = useAuth();
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (user) {
       loadUserProfile();
+      loadWalletData();
     }
   }, [user]);
 
@@ -31,24 +28,60 @@ export default function WalletScreen() {
     }
   };
 
+  const loadWalletData = async () => {
+    if (user) {
+      try {
+        setLoading(true);
+        const [balance, txns] = await Promise.all([
+          getWalletBalance(user.id),
+          getWalletTransactions(user.id),
+        ]);
+        setWalletBalance(balance);
+        setTransactions(txns);
+      } catch (error) {
+        console.error('Error loading wallet data:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadWalletData();
+    setRefreshing(false);
+  };
+
   const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>TripZa Wallet</Text>
+          <Text style={styles.title}>RaahEasy Wallet</Text>
           <Text style={styles.subtitle}>Hey {userName}!</Text>
         </View>
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={Colors.dark.gold}
+          />
+        }
+      >
         <View style={styles.balanceCard}>
           <View style={styles.balanceHeader}>
             <Wallet size={32} color={Colors.dark.gold} />
             <Text style={styles.balanceLabel}>Available Balance</Text>
           </View>
-          <Text style={styles.balanceAmount}>₹{mockUser.walletBalance}</Text>
+          <Text style={styles.balanceAmount}>
+            {loading ? '...' : `₹${walletBalance.toFixed(2)}`}
+          </Text>
           <View style={styles.actionButtons}>
             <TouchableOpacity style={styles.addMoneyButton} activeOpacity={0.7}>
               <Plus size={20} color={Colors.dark.background} />
@@ -63,8 +96,19 @@ export default function WalletScreen() {
 
         <View style={styles.transactionsSection}>
           <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          {loading && transactions.length === 0 && (
+            <View style={styles.emptyState}>
+              <ActivityIndicator size="large" color={Colors.dark.gold} />
+              <Text style={styles.emptyText}>Loading transactions...</Text>
+            </View>
+          )}
+          {!loading && transactions.length === 0 && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No transactions yet</Text>
+            </View>
+          )}
           {transactions.map((transaction, index) => (
-            <View key={transaction.id}>
+            <View key={transaction.id || transaction._id}>
               <View style={styles.transactionCard}>
                 <View
                   style={[
@@ -83,7 +127,14 @@ export default function WalletScreen() {
                   <Text style={styles.transactionDescription}>
                     {transaction.description}
                   </Text>
-                  <Text style={styles.transactionDate}>{transaction.date}</Text>
+                  <Text style={styles.transactionDate}>
+                    {new Date(transaction.createdAt || transaction.date).toLocaleDateString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </Text>
                 </View>
                 <Text
                   style={[
@@ -92,7 +143,7 @@ export default function WalletScreen() {
                       ? styles.creditAmount
                       : styles.debitAmount,
                   ]}>
-                  {transaction.type === 'credit' ? '+' : '-'}₹{transaction.amount}
+                  {transaction.type === 'credit' ? '+' : '-'}₹{Math.abs(transaction.amount || 0).toFixed(2)}
                 </Text>
               </View>
             </View>
@@ -195,6 +246,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.dark.text,
     marginBottom: 16,
+  },
+  emptyState: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  emptyText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 14,
+    marginTop: 12,
   },
   transactionCard: {
     flexDirection: 'row',

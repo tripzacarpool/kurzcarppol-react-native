@@ -1,7 +1,6 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator } from 'react-native';
 import { MapPin, Star, Calendar, User as UserIcon, Plus, X } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { mockTrips } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';

@@ -2,7 +2,6 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Swi
 import { useRouter } from 'expo-router';
 import { User, Star, MapPin, Shield, Bell, HelpCircle, LogOut, ChevronRight, Users, Car, UserCog, Check, Globe, Navigation } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { mockUser } from '@/data/mockData';
 import { UserRole } from '@/types';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -110,9 +109,9 @@ export default function ProfileScreen() {
     }
   };
 
-  const userDisplayName = userProfile?.full_name || (user?.firstName + ' ' + (user?.lastName || '')) || mockUser.name;
-  const userEmail = user?.email || mockUser.email;
-  const userRating = userProfile?.rating || mockUser.rating;
+  const userDisplayName = userProfile?.full_name || (user?.firstName + ' ' + (user?.lastName || '')) || 'User';
+  const userEmail = user?.email || 'user@example.com';
+  const userRating = userProfile?.rating || 4.5;
   const totalTrips = userProfile?.total_trips || 0;
 
   return (
@@ -120,7 +119,7 @@ export default function ProfileScreen() {
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <View style={styles.avatarContainer}>
-            <View style={[styles.avatar, mockUser.gender === 'female' && styles.femaleAvatar]}>
+            <View style={styles.avatar}>
               <User size={48} color={Colors.dark.text} />
             </View>
             <TouchableOpacity style={styles.editButton}>

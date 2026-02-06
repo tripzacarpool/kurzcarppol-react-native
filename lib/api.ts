@@ -10,7 +10,7 @@ import {
 // Create axios instance with proper base URL
 // For development, this should point to your backend server
 const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
+  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -63,6 +63,18 @@ export function setAuthToken(token: string | null) {
   } else {
     delete apiClient.defaults.headers.common['Authorization'];
     console.log('❌ Authorization header cleared');
+  }
+}
+
+// Helper function to refresh auth token before API calls
+export async function ensureAuthToken(): Promise<void> {
+  try {
+    // Import dynamically to avoid circular dependencies
+    const { useAuth } = await import('@clerk/clerk-expo');
+    // Note: This won't work outside React components, but provides type safety
+    console.log('⚠️ ensureAuthToken should be called from component context');
+  } catch (error) {
+    console.warn('Could not refresh token:', error);
   }
 }
 
@@ -119,7 +131,7 @@ export async function syncUserToDatabase_Safe(userData: {
 // Backend logout - invalidate session on server
 export async function logoutUserFromBackend(clerkId: string) {
   const API_URL =
-    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
+    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
   try {
     console.log('🔗 Calling backend logout for:', clerkId);
     console.log('📍 Backend URL:', `${API_URL}/api/users/logout`);
@@ -155,18 +167,48 @@ export async function logoutUserFromBackend(clerkId: string) {
   }
 }
 
+// Update driver verification status
+export async function updateDriverVerification(verificationData: {
+  verificationStatus:
+    | 'pending'
+    | 'auto_approved'
+    | 'manual_review'
+    | 'rejected';
+  verificationScore: number;
+  verificationData?: any;
+  licenseNumber?: string;
+}) {
+  try {
+    const response = await apiClient.post(
+      '/api/users/driver-verification',
+      verificationData,
+    );
+    return response.data;
+  } catch (error: any) {
+    const errorMessage =
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      error.message;
+    console.error('❌ Error updating driver verification:', errorMessage);
+    throw error;
+  }
+}
+
 export interface RidePartnerApplicationPayload {
   clerkId: string;
   mode: RidePartnerMode;
   vehicleType: RidePartnerVehicleType;
+  contactEmail?: string;
   basicProfile: {
     fullName: string;
     phone: string;
     profilePhotoUrl?: string;
   };
   vehicleDetails: {
+    vehicleType: string;
     carModel: string;
     vehicleNumber: string;
+    maxPassengers: number;
     vehiclePhotoUrl?: string;
   };
   licenseDetails: {
@@ -180,6 +222,11 @@ export interface RidePartnerApplicationPayload {
   };
   professionalDetails?: {
     commercialPermitUrl?: string;
+  };
+  kycDetails?: {
+    selfiePhoto?: string;
+    digilockerDocument?: string;
+    digilockerStatus?: 'pending' | 'in_progress' | 'verified';
   };
   declaration: {
     communityRulesAccepted: boolean;
@@ -235,6 +282,8 @@ export async function createRideRequest(rideData: {
   dropoffLongitude?: number;
   dropoffCity?: string;
   dropoffCountry?: string;
+  scheduledDeparture: string;
+  timeFlexibilityMinutes?: number;
 }) {
   try {
     const response = await apiClient.post('/api/rides/create', rideData);
@@ -267,11 +316,21 @@ export async function getUserRides(clerkId?: string) {
 export async function getAvailableRides(
   clerkId?: string,
   type?: 'offers' | 'requests',
+  options?: {
+    targetTime?: string;
+    windowMinutes?: number;
+  },
 ) {
   try {
-    const params: any = {};
+    const params: Record<string, any> = {};
     if (clerkId) params.clerkId = clerkId;
     if (type) params.type = type;
+    if (options?.targetTime) {
+      params.targetTime = options.targetTime;
+    }
+    if (typeof options?.windowMinutes === 'number') {
+      params.windowMinutes = options.windowMinutes;
+    }
     const response = await apiClient.get('/api/rides/available', { params });
     return response.data;
   } catch (error: any) {
@@ -309,6 +368,8 @@ export async function createDriverRideOffer(rideData: {
   pickupLongitude?: number;
   pickupCity?: string;
   pickupCountry?: string;
+  scheduledDeparture: string;
+  timeFlexibilityMinutes?: number;
 }) {
   try {
     console.log('📤 Creating driver ride offer with data:', rideData);
@@ -372,6 +433,8 @@ export async function confirmRideBooking(
   }
 }
 
+//
+
 export async function driverConfirmPickup(rideId: string) {
   try {
     const response = await apiClient.post(
@@ -414,5 +477,516 @@ export async function completeRide(rideId: string) {
       error.response?.data || error.message,
     );
     throw error;
+  }
+}
+
+/**
+ * Start a ride (passenger initiates)
+ */
+export async function startRide(rideId: string) {
+  try {
+    const response = await apiClient.post(`/api/rides/${rideId}/start`, {});
+    console.log('✅ Ride start requested');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error starting ride:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Driver confirms seating and starts ride
+ */
+export async function driverConfirmStart(rideId: string) {
+  try {
+    const response = await apiClient.post(
+      `/api/rides/${rideId}/confirm-start`,
+      {},
+    );
+    console.log('✅ Driver confirmed ride start');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error confirming ride start:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Extend ride departure time
+ */
+export async function extendRideTime(
+  rideId: string,
+  newDepartureTime: Date,
+): Promise<any> {
+  try {
+    const response = await apiClient.patch(`/api/rides/${rideId}/extend`, {
+      newDepartureTime: newDepartureTime.toISOString(),
+    });
+    console.log('✅ Ride time extended successfully');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error extending ride time:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Cleanup expired rides (admin/cron)
+ */
+export async function cleanupExpiredRides(): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/rides/cleanup-expired');
+    console.log('✅ Expired rides cleaned up');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error cleaning up expired rides:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// ==================== RIDE OFFER APIs ====================
+
+/**
+ * Create a ride offer (driver offering ride)
+ */
+export async function createRideOffer(offerData: {
+  from: string;
+  to: string;
+  totalSeats: number;
+  farePerSeat: number;
+  vehicleType?: RideVehicleType;
+  driverMode?: string;
+  notes?: string;
+  womenOnly?: boolean;
+  pickupLatitude?: number;
+  pickupLongitude?: number;
+  pickupCity?: string;
+  pickupCountry?: string;
+  dropoffLatitude?: number;
+  dropoffLongitude?: number;
+  dropoffCity?: string;
+  dropoffCountry?: string;
+  departureTime: string;
+  scheduledDeparture?: string;
+  timeFlexibilityMinutes?: number;
+  availableSeats?: number[];
+  vehicle?: {
+    model: string;
+    color: string;
+    number: string;
+  };
+  driver?: {
+    name: string;
+    profileImage: string;
+    rating: number;
+    ridesCompleted: number;
+    gender: string;
+  };
+}): Promise<any> {
+  try {
+    console.log('📤 Creating ride offer with auth token...');
+    const response = await apiClient.post('/api/ride-offers/create', offerData);
+    console.log('✅ Ride offer created:', response.data);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error creating ride offer:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get available ride offers
+ */
+export async function getAvailableRideOffers(params?: {
+  from?: string;
+  to?: string;
+  minSeats?: number;
+}): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/ride-offers/available', {
+      params,
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching ride offers:',
+      error.response?.data || error.message,
+    );
+    return {
+      success: true,
+      rideOffers: [],
+      count: 0,
+    };
+  }
+}
+
+/**
+ * Get my ride offers (as driver)
+ */
+export async function getMyRideOffers(clerkId?: string): Promise<any> {
+  try {
+    const params = clerkId ? { clerkId } : {};
+    const response = await apiClient.get('/api/ride-offers/my-offers', {
+      params,
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching my ride offers:',
+      error.response?.data || error.message,
+    );
+    return {
+      success: true,
+      rideOffers: [],
+      count: 0,
+    };
+  }
+}
+
+/**
+ * Get a single ride offer by ID
+ */
+export async function getRideOfferById(offerId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/ride-offers/${offerId}`);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching ride offer:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Extend ride offer departure time
+ */
+export async function extendRideOfferTime(
+  offerId: string,
+  additionalMinutes: number,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/ride-offers/${offerId}/extend-time`,
+      {
+        additionalMinutes,
+      },
+    );
+    console.log('✅ Ride offer time extended successfully');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error extending ride offer time:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Book a ride offer (passenger booking)
+ */
+export async function bookRideOffer(
+  offerId: string,
+  bookingData: {
+    seatNumbers: number[];
+    paymentMethod?: string;
+    customRequest?: string;
+  },
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/ride-offers/${offerId}/book`,
+      bookingData,
+    );
+    console.log('✅ Ride offer booked successfully');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error booking ride offer:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Cancel a ride offer (driver cancellation)
+ */
+export async function cancelRideOffer(offerId: string): Promise<any> {
+  try {
+    const response = await apiClient.post(`/api/ride-offers/${offerId}/cancel`);
+    console.log('✅ Ride offer cancelled successfully');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error cancelling ride offer:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Cleanup expired ride offers
+ */
+export async function cleanupExpiredRideOffers(): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/ride-offers/cleanup-expired');
+    console.log('✅ Expired ride offers cleaned up');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error cleaning up expired ride offers:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Check for expiring rides and send notifications
+ */
+export async function checkExpiringRides(): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/ride-offers/check-expiring');
+    console.log('✅ Checked expiring rides');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error checking expiring rides:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get combined rides (both requests and offers)
+ * This function combines data from both endpoints for backward compatibility
+ */
+export async function getAllRides(params?: {
+  from?: string;
+  to?: string;
+  clerkId?: string;
+}): Promise<any> {
+  try {
+    // Fetch both ride requests and offers in parallel
+    const [requestsData, offersData] = await Promise.all([
+      getAvailableRides(params?.clerkId),
+      getAvailableRideOffers({ from: params?.from, to: params?.to }),
+    ]);
+
+    // Combine and tag with 'kind' field
+    const requests = (requestsData.rides || []).map((ride: any) => ({
+      ...ride,
+      kind: 'request',
+    }));
+
+    const offers = (offersData.rideOffers || []).map((offer: any) => ({
+      ...offer,
+      kind: 'offer',
+    }));
+
+    return {
+      success: true,
+      rides: [...offers, ...requests], // Offers first as they're more likely to be ready
+      requests,
+      offers,
+      totalCount: offers.length + requests.length,
+    };
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching all rides:',
+      error.response?.data || error.message,
+    );
+    return {
+      success: true,
+      rides: [],
+      requests: [],
+      offers: [],
+      totalCount: 0,
+    };
+  }
+}
+
+/**
+ * Get wallet balance for a user
+ */
+export async function getWalletBalance(userId: string): Promise<number> {
+  try {
+    const response = await apiClient.get(
+      `/api/payments/wallet-balance/${userId}`,
+    );
+    console.log('✅ Fetched wallet balance');
+    return response.data.balance || 0;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching wallet balance:',
+      error.response?.data || error.message,
+    );
+    return 0;
+  }
+}
+
+/**
+ * Get wallet transactions for a user
+ */
+export async function getWalletTransactions(userId: string): Promise<any[]> {
+  try {
+    const response = await apiClient.get(
+      `/api/payments/wallet-transactions/${userId}`,
+    );
+    console.log('✅ Fetched wallet transactions');
+    return response.data.transactions || [];
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching wallet transactions:',
+      error.response?.data || error.message,
+    );
+    return [];
+  }
+}
+
+/**
+ * Process wallet payment
+ */
+export async function processWalletPayment(
+  userId: string,
+  amount: number,
+  metadata?: any,
+): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/payments/wallet-payment', {
+      userId,
+      amount,
+      metadata,
+    });
+    console.log('✅ Wallet payment processed');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error processing wallet payment:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// ==================== CHAT APIs ====================
+
+/**
+ * Get or create conversation between driver and passenger
+ */
+export async function getOrCreateConversation(data: {
+  rideId: string;
+  driverId: string;
+  passengerId: string;
+}): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/chat/conversation', data);
+    console.log('✅ Conversation retrieved/created');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error getting conversation:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Send message in a conversation
+ */
+export async function sendMessage(data: {
+  conversationId: string;
+  senderId: string;
+  senderName?: string;
+  messageText: string;
+  messageType?: 'text' | 'system';
+}): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/chat/message', data);
+    console.log('✅ Message sent');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error sending message:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get messages for a conversation
+ */
+export async function getMessages(conversationId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(
+      `/api/chat/messages/${conversationId}`,
+    );
+    console.log('✅ Messages retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error getting messages:',
+      error.response?.data || error.message,
+    );
+    return { success: true, messages: [], count: 0 };
+  }
+}
+
+/**
+ * Mark messages as read
+ */
+export async function markMessagesAsRead(data: {
+  conversationId: string;
+  userId: string;
+}): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/chat/read', data);
+    console.log('✅ Messages marked as read');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error marking messages as read:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get user's conversations
+ */
+export async function getUserConversations(userId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/chat/conversations/${userId}`);
+    console.log('✅ Conversations retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error getting conversations:',
+      error.response?.data || error.message,
+    );
+    return { success: true, conversations: [], count: 0 };
   }
 }

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with gradient (no rounded corners for adaptive icon) -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#D4AF37;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#C5A028;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1024" height="1024" fill="url(#bgGradient)"/>
+  
+  <!-- Re text with modern styling -->
+  <text 
+    x="512" 
+    y="540" 
+    font-family="'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" 
+    font-size="430" 
+    font-weight="800" 
+    fill="#0A0A0A" 
+    text-anchor="middle" 
+    dominant-baseline="middle"
+    letter-spacing="-20"
+    filter="url(#shadow)"
+  >Re</text>
+  
+  <!-- Subtle accent line -->
+  <rect x="205" y="798" width="614" height="20" rx="10" fill="#0A0A0A" opacity="0.25"/>
+</svg>

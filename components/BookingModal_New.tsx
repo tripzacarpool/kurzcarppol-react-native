@@ -278,7 +278,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           </View>
           <View style={styles.confirmationRow}>
             <Clock size={20} color={Colors.dark.gold} />
-            <Text style={styles.confirmationText}>{ride.departureTime}</Text>
+            <Text style={styles.confirmationText}>
+              {new Date(ride.departureTime).toLocaleString('en-IN', {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              })}
+            </Text>
           </View>
         </View>
 

@@ -14,6 +14,9 @@ export interface AuthUser {
   role?: UserRole;
   ridePartnerProfile?: RidePartnerProfile | null;
   ridePartnerStatus?: RidePartnerApplicationStatus;
+  driverVerified?: boolean;
+  verificationBatch?: string;
+  verificationStatus?: 'pending' | 'auto_approved' | 'manual_review' | 'rejected';
 }
 
 export interface AuthContextType {
@@ -116,7 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const syncUserWithDatabase = async (authUser: AuthUser) => {
     try {
-      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
+      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
       const syncUrl = `${API_URL}/api/users/sync`;
       console.log('🔗 Syncing to:', syncUrl);
       

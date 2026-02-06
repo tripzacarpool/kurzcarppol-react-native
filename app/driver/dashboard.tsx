@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import CustomAlert, { AlertType, AlertButton } from '@/components/CustomAlert';
 import {
   Power,
@@ -27,14 +28,17 @@ import {
   LayoutDashboard,
   List,
   BarChart3,
+  ShieldCheck,
 } from 'lucide-react-native';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
+import type { DriverVerificationResult, DriverVerificationStatus } from '@/types';
 import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup } from '@/lib/api';
 import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
+import VerificationBadge from '@/components/VerificationBadge';
 
 interface Ride {
   id: string;
@@ -70,6 +74,19 @@ interface DriverOffer {
 
 type DashboardTab = 'live' | 'offers' | 'insights';
 
+function formatVerificationStatusLabel(status: DriverVerificationStatus) {
+  switch (status) {
+    case 'auto_approved':
+      return 'Auto approved';
+    case 'manual_review':
+      return 'Manual review';
+    case 'rejected':
+      return 'Rejected';
+    default:
+      return 'Pending';
+  }
+}
+
 export default function DriverDashboard() {
   const router = useRouter();
   const { user, signOut } = useAuthContext();
@@ -93,6 +110,7 @@ export default function DriverDashboard() {
   const [offersLoading, setOffersLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [rideOfferModalVisible, setRideOfferModalVisible] = useState(false);
+  const [editingOffer, setEditingOffer] = useState<DriverOffer | null>(null);
   const [cancellingOfferId, setCancellingOfferId] = useState<string | null>(null);
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState<{
@@ -101,9 +119,12 @@ export default function DriverDashboard() {
     type: AlertType;
     buttons?: AlertButton[];
   } | null>(null);
+  const [verificationStatus, setVerificationStatus] = useState<DriverVerificationStatus>('pending');
+  const [verificationScore, setVerificationScore] = useState<number | null>(null);
   const locationIntervalRef = useRef<NodeJS.Timeout | number | null>(null);
   const liveStateKey = user?.id ? `driver_live_state_${user.id}` : null;
   const offersKey = user?.id ? `driver_offers_${user.id}` : null;
+  const verificationKey = user?.id ? `driver_verification_${user.id}` : null;
 
   const showAlert = (
     title: string,
@@ -129,8 +150,25 @@ export default function DriverDashboard() {
       const stored = await AsyncStorage.getItem(offersKey);
       if (stored) {
         const parsed: DriverOffer[] = JSON.parse(stored);
-        setMyOffers(parsed);
-        console.log('📋 Loaded saved offers:', parsed.length, parsed);
+        console.log('📋 Raw parsed offers:', parsed);
+        // Filter out invalid offers with missing critical fields
+        const validOffers = parsed.filter(offer => {
+          const isValid = offer && 
+            offer.id && 
+            typeof offer.from === 'string' && 
+            offer.from.trim().length > 0 &&
+            typeof offer.to === 'string' && 
+            offer.to.trim().length > 0 &&
+            typeof offer.seats === 'number' &&
+            offer.seats > 0;
+          
+          if (!isValid) {
+            console.warn('⚠️ Filtering out invalid offer:', JSON.stringify(offer));
+          }
+          return isValid;
+        });
+        setMyOffers(validOffers);
+        console.log('✅ Loaded valid offers:', validOffers.length);
       } else {
         console.log('📋 No saved offers found');
       }
@@ -144,7 +182,23 @@ export default function DriverDashboard() {
   const persistOffers = async (offers: DriverOffer[]) => {
     if (!offersKey) return;
     try {
-      await AsyncStorage.setItem(offersKey, JSON.stringify(offers));
+      // Validate all offers before saving
+      const validOffers = offers.filter(offer =>
+        offer &&
+        offer.id &&
+        typeof offer.from === 'string' &&
+        offer.from.trim().length > 0 &&
+        typeof offer.to === 'string' &&
+        offer.to.trim().length > 0 &&
+        typeof offer.seats === 'number' &&
+        offer.seats > 0
+      );
+      
+      if (validOffers.length !== offers.length) {
+        console.warn(`⚠️ Filtered out ${offers.length - validOffers.length} invalid offers before saving`);
+      }
+      
+      await AsyncStorage.setItem(offersKey, JSON.stringify(validOffers));
     } catch (error) {
       console.warn('⚠️ Unable to persist offers:', error);
     }
@@ -158,6 +212,49 @@ export default function DriverDashboard() {
       console.warn('⚠️ Unable to persist live toggle:', error);
     }
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+
+      const loadVerificationState = async () => {
+        if (!verificationKey) {
+          if (!isMounted) return;
+          setVerificationStatus('pending');
+          setVerificationScore(null);
+          return;
+        }
+        try {
+          const stored = await AsyncStorage.getItem(verificationKey);
+          if (!isMounted) return;
+          if (!stored) {
+            setVerificationStatus('pending');
+            setVerificationScore(null);
+            return;
+          }
+          const parsed = JSON.parse(stored) as { result?: DriverVerificationResult };
+          if (parsed?.result) {
+            setVerificationStatus(parsed.result.status);
+            setVerificationScore(parsed.result.score ?? null);
+          } else {
+            setVerificationStatus('pending');
+            setVerificationScore(null);
+          }
+        } catch (error) {
+          if (!isMounted) return;
+          console.warn('Warning: Unable to load driver verification status:', error);
+          setVerificationStatus('pending');
+          setVerificationScore(null);
+        }
+      };
+
+      loadVerificationState();
+
+      return () => {
+        isMounted = false;
+      };
+    }, [verificationKey]),
+  );
 
   useEffect(() => {
     if (!user?.id) {
@@ -473,8 +570,14 @@ export default function DriverDashboard() {
   };
 
   const handleOfferCreatedFromModal = async (offer: DriverOffer) => {
+    // Ensure all required fields have valid values
     const hydrated: DriverOffer = {
-      ...offer,
+      id: offer.id || `local-${Date.now()}`,
+      from: offer.from || 'Pickup Location',
+      to: offer.to || 'Drop Location',
+      seats: typeof offer.seats === 'number' ? offer.seats : 1,
+      fare: offer.fare,
+      womenOnly: offer.womenOnly,
       createdAt: offer.createdAt || new Date().toISOString(),
       status: offer.status || 'live',
     };
@@ -571,41 +674,66 @@ export default function DriverDashboard() {
             <RefreshCw size={18} color={Colors.dark.gold} />
           </TouchableOpacity>
         </View>
-        {myOffers.map((offer) => (
+        {myOffers
+          .filter(offer => offer && offer.id && offer.from && offer.to && offer.seats != null)
+          .map((offer) => {
+          const truncateAddr = (addr: string = '', max: number = 25) => {
+            if (!addr) return '';
+            return addr.length > max ? addr.substring(0, max) + '...' : addr;
+          };
+
+          return (
           <View key={offer.id} style={[styles.requestCard, styles.offerCard]}>
             <View style={styles.requestHeader}>
-              <Text style={styles.passengerName}>{offer.from} → {offer.to}</Text>
-              {offer.fare ? (
-                <Text style={styles.requestFare}>₹{offer.fare}</Text>
-              ) : (
-                <Text style={styles.detailText}>Fare on arrival</Text>
-              )}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.passengerName} numberOfLines={1}>{truncateAddr(offer.from, 20)} → {truncateAddr(offer.to, 20)}</Text>
+                {offer.createdAt && typeof offer.createdAt === 'string' && (
+                  <Text style={styles.offerTime}>
+                    {new Date(offer.createdAt).toLocaleString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </Text>
+                )}
+              </View>
+              <View style={styles.fareAndSeatsContainer}>
+                {offer.fare != null && typeof offer.fare === 'number' && (
+                  <Text style={styles.requestFare}>₹{offer.fare}<Text style={styles.perSeatSmall}>/seat</Text></Text>
+                )}
+                {offer.seats != null && typeof offer.seats === 'number' && (
+                  <Text style={styles.seatsCount}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
+                )}
+              </View>
             </View>
 
             <View style={styles.requestRoute}>
               <View style={styles.routeRow}>
                 <MapPin size={14} color={Colors.dark.gold} />
-                <Text style={styles.routeText}>{offer.from}</Text>
+                <Text style={styles.routeText}>{offer.from || 'N/A'}</Text>
               </View>
               <View style={styles.routeLine} />
               <View style={styles.routeRow}>
                 <MapPin size={14} color={Colors.dark.pink} />
-                <Text style={styles.routeText}>{offer.to}</Text>
+                <Text style={styles.routeText}>{offer.to || 'N/A'}</Text>
               </View>
             </View>
 
             <View style={styles.requestDetails}>
-              <View style={styles.detailRow}>
-                <Users size={14} color={Colors.dark.textSecondary} />
-                <Text style={styles.detailText}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
-              </View>
+              {offer.seats != null && typeof offer.seats === 'number' && (
+                <View style={styles.detailRow}>
+                  <Users size={14} color={Colors.dark.textSecondary} />
+                  <Text style={styles.detailText}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
+                </View>
+              )}
               {offer.womenOnly && (
                 <View style={styles.detailRow}>
                   <Star size={14} color={Colors.dark.pink} />
                   <Text style={styles.detailText}>Women only</Text>
                 </View>
               )}
-              {offer.createdAt && (
+              {offer.createdAt && typeof offer.createdAt === 'string' && (
                 <View style={styles.detailRow}>
                   <Clock size={14} color={Colors.dark.textSecondary} />
                   <Text style={styles.detailText}>Created {new Date(offer.createdAt).toLocaleString()}</Text>
@@ -614,29 +742,35 @@ export default function DriverDashboard() {
             </View>
 
             <View style={styles.offerStatusRow}>
-              <Text style={styles.badgeText}>{offer.status === 'completed' ? 'Completed' : 'Live'}</Text>
+              <Text style={[styles.badgeText, styles.liveBadge]}>
+                {(offer.status || 'live') === 'completed' ? '✓ Completed' : '🔴 Live'}
+              </Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <TouchableOpacity
-                  style={styles.secondaryButton}
-                  onPress={() => setRideOfferModalVisible(true)}
+                  style={styles.editButton}
+                  onPress={() => {
+                    setEditingOffer(offer);
+                    setRideOfferModalVisible(true);
+                  }}
                   activeOpacity={0.7}>
-                  <Text style={styles.secondaryButtonText}>Create another</Text>
+                  <Text style={styles.editButtonText}>Edit</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.secondaryButton, { backgroundColor: Colors.dark.error }]}
+                  style={[styles.cancelButton]}
                   onPress={() => handleCancelOffer(offer.id)}
                   disabled={cancellingOfferId === offer.id}
                   activeOpacity={0.7}>
                   {cancellingOfferId === offer.id ? (
-                    <ActivityIndicator size="small" color={Colors.dark.background} />
+                    <ActivityIndicator size="small" color={Colors.dark.error} />
                   ) : (
-                    <Text style={[styles.secondaryButtonText, { color: Colors.dark.background }]}>Cancel</Text>
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
                   )}
                 </TouchableOpacity>
               </View>
             </View>
           </View>
-        ))}
+          );
+        })}
       </View>
     );
   };
@@ -721,9 +855,17 @@ export default function DriverDashboard() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.userInfo}>
-            <Text style={styles.headerTitle}>
-              Welcome, {user?.firstName || 'Driver'}
-            </Text>
+            <View style={styles.welcomeRow}>
+              <Text style={styles.headerTitle}>
+                Welcome, {user?.firstName || 'Driver'}
+              </Text>
+              <VerificationBadge
+                verificationBatch={user?.verificationBatch}
+                driverVerified={user?.driverVerified}
+                size="small"
+                showLabel={false}
+              />
+            </View>
             <Text style={styles.headerSubtitle}>Ready to earn?</Text>
           </View>
         </View>
@@ -750,6 +892,38 @@ export default function DriverDashboard() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }>
+        <View style={styles.verificationCard}>
+          <View style={styles.verificationHeader}>
+            <View style={styles.verificationIcon}>
+              <ShieldCheck size={20} color={Colors.dark.gold} />
+            </View>
+            <View style={styles.verificationCopy}>
+              <Text style={styles.verificationTitle}>Driver Verification</Text>
+              <Text style={styles.verificationStatus}>
+                {formatVerificationStatusLabel(verificationStatus)}
+              </Text>
+              <Text style={styles.verificationHelper}>
+                {verificationStatus === 'auto_approved'
+                  ? 'All automated checks cleared. Keep documents handy for audits.'
+                  : 'Complete camera capture to unlock payouts and go live.'}
+              </Text>
+              {verificationScore !== null ? (
+                <Text style={styles.verificationScore}>
+                  Last score: {verificationScore}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.verificationButton}
+            onPress={() => router.push('/driver/verification')}
+            activeOpacity={0.8}>
+            <Text style={styles.verificationButtonText}>
+              {verificationStatus === 'auto_approved' ? 'View details' : 'Start verification'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.statusCard}>
           <View style={styles.statusHeader}>
             <View style={styles.statusIcon}>
@@ -1007,16 +1181,35 @@ export default function DriverDashboard() {
 
       <DriverRideOfferModal
         visible={rideOfferModalVisible}
-        onClose={() => setRideOfferModalVisible(false)}
+        editingOffer={editingOffer}
+        onClose={() => {
+          setRideOfferModalVisible(false);
+          setEditingOffer(null);
+        }}
         onSuccess={(offer) => {
+          if (!offer) {
+            console.error('❌ No offer data received from modal');
+            return;
+          }
+          
+          const from = offer.from?.trim() || '';
+          const to = offer.to?.trim() || '';
+          const seats = typeof offer.passengers === 'number' && offer.passengers > 0 ? offer.passengers : 1;
+          
+          if (!from || !to) {
+            console.error('❌ Invalid offer data: missing from/to locations');
+            showAlert('Error', 'Please provide valid pickup and drop-off locations', 'error');
+            return;
+          }
+          
           handleOfferCreatedFromModal({
-            id: offer?.id || `local-${Date.now()}`,
-            from: offer?.from || 'Pickup',
-            to: offer?.to || 'Drop',
-            seats: (offer?.passengers as number) || 1,
-            fare: offer?.fare,
-            womenOnly: offer?.womenOnly,
-            createdAt: offer?.createdAt,
+            id: offer.id || `local-${Date.now()}`,
+            from,
+            to,
+            seats,
+            fare: offer.fare,
+            womenOnly: offer.womenOnly,
+            createdAt: offer.createdAt || new Date().toISOString(),
           });
           fetchLiveRides();
         }}
@@ -1091,6 +1284,11 @@ const styles = StyleSheet.create({
   userInfo: {
     flex: 1,
   },
+  welcomeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
@@ -1125,6 +1323,66 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 20,
+  },
+  verificationCard: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    gap: 16,
+  },
+  verificationHeader: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  verificationIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.dark.gold + '20',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  verificationCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  verificationTitle: {
+    color: Colors.dark.text,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  verificationStatus: {
+    color: Colors.dark.gold,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  verificationHelper: {
+    color: Colors.dark.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  verificationScore: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  verificationButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.dark.gold,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  verificationButtonText: {
+    color: Colors.dark.background,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
   statusCard: {
     backgroundColor: Colors.dark.card,
@@ -1444,6 +1702,54 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 6,
+  },
+  offerTime: {
+    fontSize: 11,
+    color: Colors.dark.textSecondary,
+    marginTop: 2,
+  },
+  fareAndSeatsContainer: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  perSeatSmall: {
+    fontSize: 11,
+    color: Colors.dark.textSecondary,
+    fontWeight: '400',
+  },
+  seatsCount: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    fontWeight: '500',
+  },
+  liveBadge: {
+    flex: 1,
+  },
+  editButton: {
+    backgroundColor: Colors.dark.gold + '20',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold,
+  },
+  editButtonText: {
+    color: Colors.dark.gold,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  cancelButton: {
+    backgroundColor: Colors.dark.error + '15',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.error,
+  },
+  cancelButtonText: {
+    color: Colors.dark.error,
+    fontSize: 13,
+    fontWeight: '600',
   },
   secondaryButton: {
     paddingHorizontal: 12,

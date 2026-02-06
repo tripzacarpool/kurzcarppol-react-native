@@ -10,6 +10,10 @@ import {
   driverConfirmPickup,
   passengerConfirmPickup,
   completeRide,
+  extendRideTime,
+  cleanupExpiredRides,
+  startRide,
+  driverConfirmStart,
 } from '../controllers/rideController.js';
 
 const router = express.Router();
@@ -39,8 +43,20 @@ router.post('/:rideId/pickup/driver', driverConfirmPickup);
 // POST /api/rides/:rideId/pickup/passenger - Passenger confirms boarding
 router.post('/:rideId/pickup/passenger', passengerConfirmPickup);
 
+// POST /api/rides/:rideId/start - Passenger initiates ride start
+router.post('/:rideId/start', startRide);
+
+// POST /api/rides/:rideId/confirm-start - Driver confirms seating and starts ride
+router.post('/:rideId/confirm-start', driverConfirmStart);
+
 // POST /api/rides/:rideId/complete - Passenger completes ride
 router.post('/:rideId/complete', completeRide);
+
+// PATCH /api/rides/:rideId/extend - Extend ride departure time
+router.patch('/:rideId/extend', extendRideTime);
+
+// GET /api/rides/cleanup-expired - Cleanup expired rides (cron job)
+router.get('/cleanup-expired', cleanupExpiredRides);
 
 // DELETE /api/rides/:rideId/cancel - Cancel a ride
 router.delete('/:rideId/cancel', cancelRide);

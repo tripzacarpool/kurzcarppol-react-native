@@ -21,6 +21,14 @@ export interface RidePartnerVerificationSection {
   rejectionReason?: string;
 }
 
+export type RidePartnerKycStatus = 'pending' | 'in_progress' | 'verified';
+
+export interface RidePartnerKycDetails extends RidePartnerVerificationSection {
+  selfiePhoto?: string;
+  digilockerDocument?: string;
+  digilockerStatus: RidePartnerKycStatus;
+}
+
 export interface RidePartnerProfile {
   status: RidePartnerApplicationStatus;
   mode: RidePartnerMode;
@@ -39,6 +47,7 @@ export interface RidePartnerProfile {
     licenseNumber: string;
     licensePhotoUrl?: string;
   } & RidePartnerVerificationSection;
+  kycDetails?: RidePartnerKycDetails;
   payoutDetails: {
     accountHolderName: string;
     accountNumber: string;
@@ -72,6 +81,12 @@ export interface User {
   avatar?: string;
   walletBalance: number;
   ridePartnerProfile?: RidePartnerProfile;
+  driverVerified?: boolean;
+  verificationBatch?: string;
+  verificationStatus?: DriverVerificationStatus;
+  verificationScore?: number;
+  verificationCompletedAt?: string;
+  licenseNumber?: string;
 }
 
 export interface Vehicle {
@@ -93,12 +108,15 @@ export interface SeatLayout {
 
 export interface Ride {
   id: string;
+  rideType?: 'request' | 'offer'; // request = passenger created, offer = driver created
   driverId: string;
   driver: {
     name: string;
     rating: number;
     gender: Gender;
     ridesCompleted: number;
+    driverVerified?: boolean;
+    verificationBatch?: string;
   };
   vehicleId: string;
   vehicle: {
@@ -120,6 +138,10 @@ export interface Ride {
     lng: number;
   };
   departureTime: string;
+  scheduledDeparture?: string;
+  earliestDeparture?: string;
+  latestDeparture?: string;
+  timeFlexibilityMinutes?: number;
   availableSeats: number[];
   totalSeats: number;
   farePerSeat: number;
@@ -205,6 +227,38 @@ export interface Trip {
     name: string;
     rating: number;
   };
+  scheduledDeparture?: string;
+  earliestDeparture?: string;
+  latestDeparture?: string;
+  timeFlexibilityMinutes?: number;
 }
 
 export type RideVehicleType = 'two_wheeler' | 'four_wheeler';
+
+export type DriverVerificationStatus =
+  | 'pending'
+  | 'auto_approved'
+  | 'manual_review'
+  | 'rejected';
+
+export interface DriverVerificationAttempt {
+  attemptNumber: number;
+  submittedAt: string;
+  score: number;
+  status: DriverVerificationStatus;
+  notes?: string;
+}
+
+export interface DriverVerificationResult {
+  licenseNumber: string;
+  status: DriverVerificationStatus;
+  score: number;
+  attempts: DriverVerificationAttempt[];
+  checks: {
+    label: string;
+    passed: boolean;
+    weight: number;
+    details?: string;
+  }[];
+  locked: boolean;
+}

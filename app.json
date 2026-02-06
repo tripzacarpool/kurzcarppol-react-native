@@ -1,13 +1,18 @@
 {
   "expo": {
-    "name": "TripZa",
-    "slug": "tripza",
+    "name": "RaahEasy",
+    "slug": "raaheasy",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "tripzaapp",
-    "userInterfaceStyle": "automatic",
+    "scheme": "raaheasyapp",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": false,
     "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0A"
+    },
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
@@ -22,7 +27,7 @@
       }
     },
     "android": {
-      "package": "com.tripza.app",
+      "package": "com.raaheasy.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0A"
@@ -41,7 +46,8 @@
     },
     "web": {
       "bundler": "metro",
-      "output": "single"
+      "output": "single",
+      "favicon": "./assets/favicon.svg"
     },
     "plugins": [
       "expo-router",
@@ -53,6 +59,14 @@
           "locationAlwaysAndWhenInUsePermission": "Allow this app to use your location to show nearby rides and track trips.",
           "locationWhenInUsePermission": "Allow this app to use your location to show nearby rides and track trips."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#FFD700",
+          "sounds": ["./assets/notification.wav"]
+        }
       ]
     ],
     "experiments": {
@@ -61,7 +75,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "125079d6-42c5-4c68-bbbf-c3b1858c8b80"
+        "projectId": "536fdb51-b385-47a4-a44d-52216a6aea36"
       }
     }
   }

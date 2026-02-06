@@ -122,19 +122,13 @@ export const getWalletBalance = async (req, res, next) => {
 };
 
 /**
- * Process Wallet Payment
- * POST /api/payments/wallet-payment
+ * Get Wallet Transactions
+ * GET /api/payments/wallet-transactions/:userId
  */
-export const processWalletPayment = async (req, res, next) => {
+export const getWalletTransactions = async (req, res, next) => {
   try {
-    const { userId, amount, bookingDetails } = req.body;
-
-    if (!userId || !amount) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        details: 'userId and amount are required',
-      });
-    }
+    const { userId } = req.params;
+    const { limit = 20 } = req.query;
 
     const user = await UserProfile.findOne({ clerkId: userId });
 
@@ -144,9 +138,61 @@ export const processWalletPayment = async (req, res, next) => {
       });
     }
 
+    const transactions = (user.walletTransactions || [])
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, parseInt(limit));
+
+    res.status(200).json({
+      transactions,
+      count: transactions.length,
+      totalTransactions: (user.walletTransactions || []).length,
+    });
+  } catch (error) {
+    console.error('❌ Get wallet transactions error:', error);
+    next(error);
+  }
+};
+
+/**
+ * Process Wallet Payment
+ * POST /api/payments/wallet-payment
+ */
+export const processWalletPayment = async (req, res, next) => {
+  try {
+    console.log('\n' + '='.repeat(60));
+    console.log('💰 WALLET PAYMENT REQUEST');
+    console.log('📨 Method:', req.method);
+    console.log('📍 Path:', req.path);
+    console.log('📋 Body:', JSON.stringify(req.body, null, 2));
+    console.log('='.repeat(60) + '\n');
+
+    const { userId, amount, bookingDetails } = req.body;
+
+    if (!userId || !amount) {
+      console.log('❌ Missing required fields');
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: 'userId and amount are required',
+      });
+    }
+
+    console.log(`🔍 Looking for user: ${userId}`);
+    const user = await UserProfile.findOne({ clerkId: userId });
+
+    if (!user) {
+      console.log(`❌ User not found: ${userId}`);
+      return res.status(404).json({
+        error: 'User not found',
+      });
+    }
+
+    console.log(`✅ User found: ${user.email}`);
     const currentBalance = user.walletBalance || 0;
+    console.log(`💰 Current balance: ₹${currentBalance}`);
+    console.log(`💸 Required amount: ₹${amount}`);
 
     if (currentBalance < amount) {
+      console.log('❌ Insufficient balance');
       return res.status(400).json({
         error: 'Insufficient wallet balance',
         balance: currentBalance,
@@ -175,7 +221,10 @@ export const processWalletPayment = async (req, res, next) => {
     user.walletTransactions.push(transaction);
     await user.save();
 
-    console.log('✅ Wallet payment processed:', transaction.transactionId);
+    console.log('✅ Wallet payment processed successfully!');
+    console.log('🆔 Transaction ID:', transaction.transactionId);
+    console.log('💰 New balance: ₹' + user.walletBalance);
+    console.log('='.repeat(60) + '\n');
 
     res.status(200).json({
       success: true,

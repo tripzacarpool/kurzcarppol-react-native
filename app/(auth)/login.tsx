@@ -17,6 +17,7 @@ import { Colors } from '@/constants/Colors';
 import { useSignIn, useSession, useClerk } from '@clerk/clerk-expo';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { clearAllClerkSessions } from '@/lib/clerkSessionHelper';
+import * as NotificationService from '@/lib/notificationService';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -32,8 +33,8 @@ export default function LoginScreen() {
   // Redirect to home if already signed in
   useEffect(() => {
     if (isSignedIn) {
-      console.log('✅ Already signed in, redirecting to tabs...');
-      router.replace('/(tabs)');
+      console.log('✅ Already signed in, redirecting to driver dashboard...');
+      router.replace('/driver/dashboard');
     }
   }, [isSignedIn]);
 
@@ -102,9 +103,18 @@ export default function LoginScreen() {
           console.log('⚠️ Session state not confirmed, but proceeding...');
         }
         
-        // Redirect to tabs - AuthContext will detect role and redirect to driver dashboard if needed
-        console.log('🚀 Redirecting to tabs (AuthContext will handle role-based routing)...');
-        router.replace('/(tabs)');
+        // Send welcome notification
+        const userName = session?.user?.firstName || email.split('@')[0];
+        try {
+          await NotificationService.sendWelcomeNotification(userName);
+          console.log('🎉 Welcome notification sent');
+        } catch (notifError) {
+          console.log('⚠️ Could not send welcome notification:', notifError);
+        }
+        
+        // Redirect directly to driver dashboard after login
+        console.log('🚀 Redirecting to driver dashboard...');
+        router.replace('/driver/dashboard');
       } else if (result?.status === 'needs_second_factor') {
         setError('Two-factor authentication required');
       } else {
@@ -114,8 +124,8 @@ export default function LoginScreen() {
     } catch (err: any) {
       // Ignore "session_exists" error - user is already logged in
       if (err?.errors?.[0]?.code === 'session_exists') {
-        console.log('✅ Session already exists, redirecting to tabs (AuthContext will handle role-based routing)...');
-        router.replace('/(tabs)');
+        console.log('✅ Session already exists, redirecting to driver dashboard...');
+        router.replace('/driver/dashboard');
         return;
       }
       
@@ -136,17 +146,17 @@ export default function LoginScreen() {
     try {
       const result = await signIn?.create({
         strategy: 'oauth_google',
-        redirectUrl: 'tripzaapp://oauth-callback',
+        redirectUrl: 'raaheasyapp://oauth-callback',
       });
 
       if (result?.status === 'complete') {
-        router.replace('/(tabs)');
+        router.replace('/driver/dashboard');
       }
     } catch (err: any) {
       // Ignore "session_exists" error
       if (err?.errors?.[0]?.code === 'session_exists') {
-        console.log('✅ Session already exists, redirecting...');
-        router.replace('/(tabs)');
+        console.log('✅ Session already exists, redirecting to driver dashboard...');
+        router.replace('/driver/dashboard');
         return;
       }
       setError(err?.errors?.[0]?.message || 'Google sign-in failed');

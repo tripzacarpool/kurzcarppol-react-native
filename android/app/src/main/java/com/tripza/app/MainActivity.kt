@@ -1,4 +1,4 @@
-package com.tripza.app
+package com.raaheasy.app
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

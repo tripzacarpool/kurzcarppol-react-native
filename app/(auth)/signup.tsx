@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import {
   UserPlus,
   Mail,
@@ -55,6 +57,17 @@ const verificationBlueprint = [
 
 const cabOnlyBlueprint = [{ title: 'Commercial Permit', method: 'Manual transport compliance review' }];
 
+type AttachmentKey = 'profilePhotoUrl' | 'vehiclePhotoUrl' | 'licensePhotoUrl' | 'commercialPermitUrl';
+
+type AttachmentInfo = {
+  name: string;
+  uri: string;
+  mimeType?: string | null;
+  size?: number | null;
+};
+
+const MAX_UPLOAD_BYTES = 6 * 1024 * 1024; // 6 MB per document
+
 export default function SignupScreen() {
   const router = useRouter();
   const { signUp } = useSignUp();
@@ -87,6 +100,12 @@ export default function SignupScreen() {
     communityRulesAccepted: false,
     ownershipConsent: false,
   });
+  const [attachments, setAttachments] = useState<Record<AttachmentKey, AttachmentInfo | null>>({
+    profilePhotoUrl: null,
+    vehiclePhotoUrl: null,
+    licensePhotoUrl: null,
+    commercialPermitUrl: null,
+  });
   const [ridePartnerDraft, setRidePartnerDraft] = useState<RidePartnerDraft | null>(null);
   const [applicationPreview, setApplicationPreview] = useState<RidePartnerProfile | null>(null);
   const [successVariant, setSuccessVariant] = useState<'passenger' | 'ride_partner'>('passenger');
@@ -115,6 +134,111 @@ export default function SignupScreen() {
     }));
   };
 
+  const formatFileSize = (size?: number | null) => {
+    if (!size || size <= 0) {
+      return '';
+    }
+    if (size < 1024) {
+      return `${size} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${(size / 1024).toFixed(1)} KB`;
+    }
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const pickAttachment = async (field: AttachmentKey) => {
+    try {
+      const acceptedTypes =
+        field === 'commercialPermitUrl'
+          ? ['image/*', 'application/pdf']
+          : ['image/*'];
+
+      const result = await DocumentPicker.getDocumentAsync({
+        type: acceptedTypes,
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const asset = result.assets?.[0];
+      if (!asset?.uri) {
+        setError('Could not read the selected file. Please try again.');
+        return;
+      }
+
+      if (asset.size && asset.size > MAX_UPLOAD_BYTES) {
+        setError('Selected file is too large. Please pick a file under 6 MB.');
+        return;
+      }
+
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: 'base64',
+      });
+
+      const inferredMime =
+        asset.mimeType || (field === 'commercialPermitUrl' ? 'application/pdf' : 'image/jpeg');
+
+      updateRidePartnerField(field, `data:${inferredMime};base64,${base64}`);
+      setAttachments((prev) => ({
+        ...prev,
+        [field]: {
+          name: asset.name || asset.uri.split('/').pop() || 'selected-file',
+          uri: asset.uri,
+          mimeType: inferredMime,
+          size: asset.size,
+        },
+      }));
+      if (error) {
+        setError('');
+      }
+    } catch (pickerError: any) {
+      console.error('File selection error:', pickerError);
+      setError('Failed to pick file. Please try again.');
+    }
+  };
+
+  const renderUploadField = (
+    field: AttachmentKey,
+    emptyLabel: string,
+    acceptHint: string,
+  ) => {
+    const file = attachments[field];
+    const metadata = file
+      ? [file.mimeType, file.size ? formatFileSize(file.size) : null]
+          .filter(Boolean)
+          .join(' · ')
+      : acceptHint;
+
+    return (
+      <View style={styles.inputGroup}>
+        <View style={styles.inputIcon}>
+          <FileText size={20} color={Colors.dark.gold} />
+        </View>
+        <TouchableOpacity
+          style={[styles.uploadButton, loading && styles.uploadButtonDisabled]}
+          onPress={() => pickAttachment(field)}
+          activeOpacity={0.85}
+          disabled={loading}>
+          <Text style={styles.uploadButtonLabel}>
+            {file ? 'Replace File' : 'Choose File'}
+          </Text>
+        </TouchableOpacity>
+        <View style={styles.uploadMeta}>
+          <Text style={styles.uploadFileName} numberOfLines={1}>
+            {file ? file.name : emptyLabel}
+          </Text>
+          <Text style={styles.uploadFileHint} numberOfLines={1}>
+            {metadata || acceptHint}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
   const validateRidePartnerForm = () => {
     const fullName = ridePartnerForm.fullName.trim() || `${firstName} ${lastName}`.trim();
     if (!fullName) {
@@ -129,8 +253,16 @@ export default function SignupScreen() {
       setError('Vehicle model and number are required.');
       return false;
     }
+    if (!ridePartnerForm.vehiclePhotoUrl.trim()) {
+      setError('Vehicle photo upload is required.');
+      return false;
+    }
     if (!ridePartnerForm.licenseNumber.trim()) {
       setError('Driving license number is required.');
+      return false;
+    }
+    if (!ridePartnerForm.licensePhotoUrl.trim()) {
+      setError('License photo upload is required.');
       return false;
     }
     if (!ridePartnerForm.accountHolderName.trim() || !ridePartnerForm.accountNumber.trim() || !ridePartnerForm.ifscCode.trim()) {
@@ -309,19 +441,7 @@ export default function SignupScreen() {
             editable={!loading}
           />
         </View>
-        <View style={styles.inputGroup}>
-          <View style={styles.inputIcon}>
-            <FileText size={20} color={Colors.dark.gold} />
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Profile photo link (optional)"
-            placeholderTextColor={Colors.dark.textSecondary}
-            value={ridePartnerForm.profilePhotoUrl}
-            onChangeText={(value) => updateRidePartnerField('profilePhotoUrl', value)}
-            editable={!loading}
-          />
-        </View>
+        {renderUploadField('profilePhotoUrl', 'Profile photo (optional)', 'Accepted: JPG, PNG · Max 6 MB')}
       </View>
 
       <View style={styles.partnerSectionCard}>
@@ -376,19 +496,7 @@ export default function SignupScreen() {
             editable={!loading}
           />
         </View>
-        <View style={styles.inputGroup}>
-          <View style={styles.inputIcon}>
-            <FileText size={20} color={Colors.dark.gold} />
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Vehicle photo link"
-            placeholderTextColor={Colors.dark.textSecondary}
-            value={ridePartnerForm.vehiclePhotoUrl}
-            onChangeText={(value) => updateRidePartnerField('vehiclePhotoUrl', value)}
-            editable={!loading}
-          />
-        </View>
+        {renderUploadField('vehiclePhotoUrl', 'Vehicle photo required', 'Accepted: JPG, PNG · Max 6 MB')}
         {ridePartnerMode === 'professional' && (
           <Text style={styles.helperText}>Professional mode locks vehicle type to commercial cabs.</Text>
         )}
@@ -416,19 +524,7 @@ export default function SignupScreen() {
             editable={!loading}
           />
         </View>
-        <View style={styles.inputGroup}>
-          <View style={styles.inputIcon}>
-            <FileText size={20} color={Colors.dark.gold} />
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="License photo link"
-            placeholderTextColor={Colors.dark.textSecondary}
-            value={ridePartnerForm.licensePhotoUrl}
-            onChangeText={(value) => updateRidePartnerField('licensePhotoUrl', value)}
-            editable={!loading}
-          />
-        </View>
+        {renderUploadField('licensePhotoUrl', 'License photo required', 'Accepted: JPG, PNG · Max 6 MB')}
       </View>
 
       <View style={styles.partnerSectionCard}>
@@ -491,19 +587,7 @@ export default function SignupScreen() {
               <Text style={styles.partnerSectionSubtitle}>Mandatory for cab partners</Text>
             </View>
           </View>
-          <View style={styles.inputGroup}>
-            <View style={styles.inputIcon}>
-              <FileText size={20} color={Colors.dark.gold} />
-            </View>
-            <TextInput
-              style={styles.input}
-              placeholder="Permit photo or link"
-              placeholderTextColor={Colors.dark.textSecondary}
-              value={ridePartnerForm.commercialPermitUrl}
-              onChangeText={(value) => updateRidePartnerField('commercialPermitUrl', value)}
-              editable={!loading}
-            />
-          </View>
+          {renderUploadField('commercialPermitUrl', 'Permit proof required', 'Accepted: JPG, PNG, PDF · Max 6 MB')}
         </View>
       )}
 
@@ -802,7 +886,7 @@ export default function SignupScreen() {
       console.log('🔐 Initiating Google sign-in...');
       const result = await signUp?.create({
         strategy: 'oauth_google',
-        redirectUrl: 'tripzaapp://oauth-callback',
+        redirectUrl: 'raaheasyapp://oauth-callback',
       });
 
       if (result?.status === 'complete') {
@@ -1283,6 +1367,35 @@ const styles = StyleSheet.create({
     height: 56,
     color: Colors.dark.text,
     fontSize: 16,
+  },
+  uploadButton: {
+    backgroundColor: Colors.dark.gold,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  uploadButtonDisabled: {
+    opacity: 0.6,
+  },
+  uploadButtonLabel: {
+    color: Colors.dark.background,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  uploadMeta: {
+    flex: 1,
+    marginLeft: 12,
+    paddingVertical: 10,
+    gap: 2,
+  },
+  uploadFileName: {
+    color: Colors.dark.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  uploadFileHint: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
   },
   signupButton: {
     flexDirection: 'row',

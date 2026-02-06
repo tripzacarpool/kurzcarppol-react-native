@@ -7,11 +7,10 @@ import { RideCard } from '@/components/RideCard';
 import { BookingModal } from '@/components/BookingModal';
 import RideRequestModal from '@/components/RideRequestModal';
 import LocationPicker from '@/components/LocationPicker';
-import { mockRides, mockNotifications } from '@/data/mockData';
 import { Ride } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
-import { getAvailableRides } from '@/lib/api';
+import { getAvailableRides, getAllRides, getAvailableRideOffers } from '@/lib/api';
 import { subscribeToNewRides, unsubscribeFromRideEvents, initializeLocationSocket } from '@/lib/locationSocket';
 import CustomAlert, { AlertType } from '@/components/CustomAlert';
 import { MAP_CONFIG } from '@/config/googleMaps';
@@ -82,18 +81,27 @@ export default function HomeScreen() {
     if (!user?.id) return;
     try {
       setLoadingRides(true);
-      // Pass type=offers so passengers see only driver offers (not their own requests)
-      const response = await getAvailableRides(user.id, 'offers');
-      if (response.rides && Array.isArray(response.rides)) {
-        // Defensive: filter out any accidental self-authored rides
-        const filtered = response.rides.filter((ride: any) => ride.clerkId !== user.id);
+      // Use the new getAllRides API that fetches both offers and requests
+      const response = await getAvailableRideOffers();
+      if (response.rideOffers && Array.isArray(response.rideOffers)) {
+        // Filter out self-authored rides and mark as offers
+        const filtered = response.rideOffers
+          .filter((ride: any) => ride.clerkId !== user.id)
+          .map((ride: any) => ({ ...ride, rideType: 'offer' as const }));
         setAvailableRides(filtered);
         console.log('✅ Available ride offers fetched:', filtered.length);
+        console.log('📦 Rides data:', filtered);
+      } else {
+        console.warn('⚠️ No ride offers in response, using empty array');
+        setAvailableRides([]);
       }
     } catch (error) {
       console.error('❌ Error fetching available rides:', error);
-      // Fall back to mock data if API fails
-      setAvailableRides([]);
+      // Don't clear rides on error, keep showing existing data
+      if (availableRides.length === 0) {
+        console.log('📦 No rides available');
+        setAvailableRides([]);
+      }
     } finally {
       setLoadingRides(false);
     }
@@ -124,8 +132,43 @@ export default function HomeScreen() {
       : `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`
     : 'Location not available';
 
-  // Combine backend rides with mock rides for demo
-  const displayRides = availableRides.length > 0 ? availableRides : mockRides;
+  // Filter out invalid and expired rides
+  const filterValidRides = (rides: any[]) => {
+    const now = new Date();
+    return rides.filter((ride) => {
+      // Must have a valid departure time
+      if (!ride.departureTime) {
+        console.log('❌ Ride without departure time:', ride.id);
+        return false;
+      }
+
+      // Parse departure time
+      const departureTime = new Date(ride.departureTime);
+      
+      // Check if date is valid
+      if (isNaN(departureTime.getTime())) {
+        console.log('❌ Ride with invalid departure time:', ride.id, ride.departureTime);
+        return false;
+      }
+
+      // Check if ride has expired (5 minutes after departure)
+      const expirationTime = new Date(departureTime.getTime() + 5 * 60000);
+      if (now > expirationTime) {
+        console.log('⏰ Expired ride:', ride.id, 'departed at', departureTime);
+        return false;
+      }
+
+      return true;
+    });
+  };
+
+  // Filter valid rides only
+  const validAvailableRides = filterValidRides(availableRides);
+  const displayRides = validAvailableRides;
+  
+  console.log('🔍 Total available rides:', availableRides.length);
+  console.log('🔍 Valid rides after filtering:', validAvailableRides.length);
+  console.log('🔍 Display rides count:', displayRides.length);
 
   const filteredRides = displayRides.filter((ride) => {
     const matchesWomenFilter = !womenOnlyFilter || ride.womenOnly;
@@ -136,7 +179,7 @@ export default function HomeScreen() {
     return matchesWomenFilter && matchesSearch;
   });
 
-  const unreadCount = mockNotifications.filter((n) => !n.read).length;
+  const unreadCount = 0; // TODO: Implement real notifications system
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -298,30 +341,53 @@ export default function HomeScreen() {
         <View style={styles.ridesSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Available Rides</Text>
-            <Text style={styles.rideCount}>
-              {filteredRides.length} {filteredRides.length === 1 ? 'ride' : 'rides'}
-            </Text>
+            <View style={styles.rideCountContainer}>
+              {validAvailableRides.length > 0 && (
+                <View style={styles.liveBadge}>
+                  <View style={styles.liveIndicator} />
+                  <Text style={styles.liveText}>Live</Text>
+                </View>
+              )}
+              <Text style={styles.rideCount}>
+                {filteredRides.length} {filteredRides.length === 1 ? 'ride' : 'rides'}
+              </Text>
+            </View>
           </View>
 
-          {filteredRides.length === 0 ? (
+          {loadingRides && validAvailableRides.length === 0 ? (
+            <View style={styles.loadingState}>
+              <ActivityIndicator size="large" color={Colors.dark.gold} />
+              <Text style={styles.loadingText}>Loading available rides...</Text>
+            </View>
+          ) : filteredRides.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>No rides available</Text>
               <Text style={styles.emptySubtext}>
-                Try adjusting your filters or check back later
+                {searchQuery || womenOnlyFilter
+                  ? 'Try adjusting your filters or check back later'
+                  : 'Be the first to create a ride!'}
               </Text>
+              <TouchableOpacity
+                style={styles.emptyButton}
+                onPress={() => setRideRequestModalVisible(true)}>
+                <Plus size={20} color={Colors.dark.text} />
+                <Text style={styles.emptyButtonText}>Request a Ride</Text>
+              </TouchableOpacity>
             </View>
           ) : (
-            filteredRides.map((ride, index) => (
-              <View key={ride.id}>
+            <>
+              {filteredRides.map((ride, index) => (
                 <RideCard
+                  key={ride.id || `ride-${index}`}
                   ride={ride}
                   onPress={() => {
                     setSelectedRide(ride);
                     setBookingModalVisible(true);
                   }}
+                  isOwner={ride.clerkId === user?.id}
                 />
-              </View>
-            ))
+              ))}
+            </>
           )}
         </View>
       </ScrollView>
@@ -591,6 +657,43 @@ const styles = StyleSheet.create({
   rideCount: {
     fontSize: 14,
     color: Colors.dark.textSecondary,
+    fontWeight: '600',
+  },
+  rideCountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#10B98120',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
+  },
+  liveIndicator: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  liveText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#10B981',
+    textTransform: 'uppercase',
+  },
+  loadingState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
   },
   emptyState: {
     alignItems: 'center',
@@ -607,5 +710,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.dark.textSecondary,
     textAlign: 'center',
+    marginBottom: 20,
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.gold,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    gap: 8,
+  },
+  emptyButtonText: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '700',
   },
 });

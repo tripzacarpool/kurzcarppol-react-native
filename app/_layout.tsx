@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
@@ -9,6 +9,7 @@ import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/Colors';
 import { ClerkProvider } from '@clerk/clerk-expo';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchAndStoreUserIP } from '@/lib/ipService';
 import { testBackendConnectivity } from '@/lib/connectivityHelper';
 import NotificationToast from '@/components/NotificationToast';
@@ -40,6 +41,39 @@ function RootLayoutNav() {
   const { user, isLoading, isSignedIn } = useAuthContext();
   const segments = useSegments();
   const router = useRouter();
+
+  // Check for pending navigation from notification clicks
+  useEffect(() => {
+    const checkPendingNavigation = async () => {
+      if (!isSignedIn) return;
+      
+      try {
+        const pendingNavStr = await AsyncStorage.getItem('pendingNavigation');
+        if (pendingNavStr) {
+          const pendingNav = JSON.parse(pendingNavStr);
+          console.log('🔗 Found pending navigation:', pendingNav);
+          
+          // Clear the pending navigation
+          await AsyncStorage.removeItem('pendingNavigation');
+          
+          // Small delay to ensure navigation is ready
+          setTimeout(() => {
+            // Navigate based on screen type
+            if (pendingNav.screen === 'ExtendTime') {
+              router.push({
+                pathname: '/extend-time',
+                params: pendingNav.params,
+              });
+            }
+          }, 500);
+        }
+      } catch (error) {
+        console.error('Error checking pending navigation:', error);
+      }
+    };
+
+    checkPendingNavigation();
+  }, [isSignedIn, router]);
 
   // Determine if we're ready to show the app
   const isRoleLoaded = isSignedIn ? user?.role !== undefined : true;
@@ -105,6 +139,7 @@ function RootLayoutNav() {
         <Stack.Screen name="driver" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="admin" />
+        <Stack.Screen name="extend-time" />
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="light" />
@@ -119,7 +154,7 @@ export default function RootLayout() {
   // Test backend connectivity on startup (non-blocking)
   useEffect(() => {
     const checkConnectivity = async () => {
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
       console.log('🔗 Backend URL configured as:', apiUrl);
       const isReachable = await testBackendConnectivity(apiUrl);
       if (isReachable) {

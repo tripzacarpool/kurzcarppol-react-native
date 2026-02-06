@@ -69,6 +69,8 @@ export const createRideRequest = async (req, res, next) => {
       dropoffLongitude,
       dropoffCity,
       dropoffCountry,
+      scheduledDeparture,
+      timeFlexibilityMinutes,
     } = req.body || {};
 
     if (!from || !to) {
@@ -85,6 +87,41 @@ export const createRideRequest = async (req, res, next) => {
       : 1;
 
     const sanitizedVehicleType = normalizeVehicleType(vehicleType);
+
+    const now = Date.now();
+    const requestedDeparture = scheduledDeparture || now;
+    const departureDate = new Date(requestedDeparture);
+
+    if (Number.isNaN(departureDate.getTime())) {
+      return res.status(400).json({
+        error: 'Invalid departure time',
+        details:
+          'scheduledDeparture must be a valid ISO date string or timestamp',
+        code: 'INVALID_DEPARTURE_TIME',
+      });
+    }
+
+    if (departureDate.getTime() < now - 5 * 60 * 1000) {
+      return res.status(400).json({
+        error: 'Departure time must be in the future',
+        details: 'Please select a future time for the ride',
+        code: 'DEPARTURE_IN_PAST',
+      });
+    }
+
+    const flexInput =
+      timeFlexibilityMinutes === undefined || timeFlexibilityMinutes === null
+        ? 60
+        : Number(timeFlexibilityMinutes);
+    const clampedFlex = Number.isFinite(flexInput)
+      ? Math.min(Math.max(Math.round(flexInput), 0), 720)
+      : 60;
+    const earliestDeparture = new Date(
+      departureDate.getTime() - clampedFlex * 60 * 1000,
+    );
+    const latestDeparture = new Date(
+      departureDate.getTime() + clampedFlex * 60 * 1000,
+    );
 
     const user = await UserProfile.findOne({ clerkId });
     if (!user) {
@@ -113,6 +150,10 @@ export const createRideRequest = async (req, res, next) => {
       dropoffLongitude: dropoffLongitude || null,
       dropoffCity: dropoffCity || null,
       dropoffCountry: dropoffCountry || null,
+      scheduledDeparture: departureDate,
+      earliestDeparture,
+      latestDeparture,
+      timeFlexibilityMinutes: clampedFlex,
       status: 'waiting',
     });
 
@@ -138,6 +179,10 @@ export const createRideRequest = async (req, res, next) => {
         vehicleType: rideRequest.vehicleType,
         womenOnly: rideRequest.womenOnly,
         notes: rideRequest.notes,
+        scheduledDeparture: rideRequest.scheduledDeparture,
+        earliestDeparture: rideRequest.earliestDeparture,
+        latestDeparture: rideRequest.latestDeparture,
+        timeFlexibilityMinutes: rideRequest.timeFlexibilityMinutes,
         status: rideRequest.status,
         createdAt: rideRequest.createdAt,
         createdBy: clerkId,
@@ -158,6 +203,10 @@ export const createRideRequest = async (req, res, next) => {
         vehicleType: rideRequest.vehicleType,
         status: rideRequest.status,
         createdAt: rideRequest.createdAt,
+        scheduledDeparture: rideRequest.scheduledDeparture,
+        earliestDeparture: rideRequest.earliestDeparture,
+        latestDeparture: rideRequest.latestDeparture,
+        timeFlexibilityMinutes: rideRequest.timeFlexibilityMinutes,
       },
     });
   } catch (error) {
@@ -207,18 +256,38 @@ export const getUserRideRequests = async (req, res, next) => {
     );
     res.status(200).json({
       success: true,
-      rides: rides.map((ride) => ({
-        id: ride._id,
-        from: ride.from,
-        to: ride.to,
-        passengers: ride.passengers,
-        notes: ride.notes,
-        womenOnly: ride.womenOnly,
-        vehicleType: ride.vehicleType,
-        status: ride.status,
-        createdAt: ride.createdAt,
-        acceptedBy: ride.acceptedBy,
-      })),
+      rides: rides.map((ride) => {
+        const scheduledDeparture = ride.scheduledDeparture
+          ? new Date(ride.scheduledDeparture).toISOString()
+          : null;
+        const earliestDeparture = ride.earliestDeparture
+          ? new Date(ride.earliestDeparture).toISOString()
+          : null;
+        const latestDeparture = ride.latestDeparture
+          ? new Date(ride.latestDeparture).toISOString()
+          : null;
+        return {
+          id: ride._id,
+          from: ride.from,
+          to: ride.to,
+          passengers: ride.passengers,
+          notes: ride.notes,
+          womenOnly: ride.womenOnly,
+          vehicleType: ride.vehicleType,
+          status: ride.status,
+          createdAt: ride.createdAt,
+          acceptedBy: ride.acceptedBy,
+          scheduledDeparture,
+          earliestDeparture,
+          latestDeparture,
+          timeFlexibilityMinutes:
+            typeof ride.timeFlexibilityMinutes === 'number'
+              ? ride.timeFlexibilityMinutes
+              : ride.offeredByDriver
+                ? 0
+                : 60,
+        };
+      }),
       message: 'Ride requests retrieved successfully',
     });
   } catch (error) {
@@ -252,6 +321,29 @@ export const getAvailableRides = async (req, res, next) => {
 
     // Build query based on type
     const query = { status: 'waiting' };
+    const andConditions = [];
+
+    const targetTimeRaw = req.query.targetTime;
+    let targetTime = null;
+    if (targetTimeRaw) {
+      const parsed = new Date(targetTimeRaw);
+      if (!Number.isNaN(parsed.getTime())) {
+        targetTime = parsed;
+      }
+    }
+
+    const windowParam = Number.parseInt(req.query.windowMinutes, 10);
+    const windowMinutes = Number.isFinite(windowParam)
+      ? Math.min(Math.max(windowParam, 0), 720)
+      : 60;
+
+    if (targetTime) {
+      const windowMs = windowMinutes * 60 * 1000;
+      const lowerBound = new Date(targetTime.getTime() - windowMs);
+      const upperBound = new Date(targetTime.getTime() + windowMs);
+      andConditions.push({ latestDeparture: { $gte: lowerBound } });
+      andConditions.push({ earliestDeparture: { $lte: upperBound } });
+    }
 
     if (type === 'offers') {
       // Rides offered by drivers (for passengers to see)
@@ -266,6 +358,10 @@ export const getAvailableRides = async (req, res, next) => {
 
     // Exclude rides created by the requesting user
     query.clerkId = { $ne: clerkId };
+
+    if (andConditions.length) {
+      query.$and = [...(query.$and || []), ...andConditions];
+    }
 
     const availableRides = await RideRequest.find(query)
       .sort({ createdAt: -1 })
@@ -287,6 +383,26 @@ export const getAvailableRides = async (req, res, next) => {
     res.status(200).json({
       success: true,
       rides: availableRides.map((ride) => {
+        const fallbackNow = new Date();
+        const scheduledDepartureDate = ride.scheduledDeparture
+          ? new Date(ride.scheduledDeparture)
+          : ride.departureTime
+            ? new Date(ride.departureTime)
+            : null;
+        const earliestDepartureDate = ride.earliestDeparture
+          ? new Date(ride.earliestDeparture)
+          : scheduledDepartureDate;
+        const latestDepartureDate = ride.latestDeparture
+          ? new Date(ride.latestDeparture)
+          : scheduledDepartureDate;
+
+        const timeFlexibilityMinutes =
+          typeof ride.timeFlexibilityMinutes === 'number'
+            ? ride.timeFlexibilityMinutes
+            : ride.offeredByDriver
+              ? 0
+              : 60;
+
         const base = {
           id: ride._id,
           clerkId: ride.clerkId,
@@ -309,6 +425,16 @@ export const getAvailableRides = async (req, res, next) => {
           bookingDetails: ride.bookingDetails,
           pickupStatus: ride.pickupStatus,
           dropoffStatus: ride.dropoffStatus,
+          scheduledDeparture: scheduledDepartureDate
+            ? scheduledDepartureDate.toISOString()
+            : null,
+          earliestDeparture: earliestDepartureDate
+            ? earliestDepartureDate.toISOString()
+            : null,
+          latestDeparture: latestDepartureDate
+            ? latestDepartureDate.toISOString()
+            : null,
+          timeFlexibilityMinutes,
         };
 
         if (type === 'offers') {
@@ -318,7 +444,9 @@ export const getAvailableRides = async (req, res, next) => {
             kind: 'offer',
             driverMode: ride.driverMode || 'commuter',
             farePerSeat: ride.farePerSeat || ride.fare || 100,
-            departureTime: ride.departureTime || new Date().toISOString(),
+            departureTime: (
+              scheduledDepartureDate || fallbackNow
+            ).toISOString(),
             vehicle: {
               model: ride.vehicleModel || 'Vehicle',
               number: ride.vehicleNumber || 'N/A',
@@ -346,7 +474,7 @@ export const getAvailableRides = async (req, res, next) => {
           ...base,
           kind: 'request',
           driverMode: ride.driverMode || 'commuter',
-          departureTime: ride.departureTime || new Date().toISOString(),
+          departureTime: (scheduledDepartureDate || fallbackNow).toISOString(),
           vehicle: {
             model: ride.vehicleModel || 'Vehicle',
             number: ride.vehicleNumber || 'N/A',
@@ -782,6 +910,48 @@ export const completeRide = async (req, res, next) => {
       });
     }
 
+    // Calculate and transfer payment to driver (93% after platform fee)
+    if (ride.fare && ride.acceptedBy?.clerkId) {
+      const platformFee = ride.fare * 0.07; // 7% platform fee
+      const driverEarnings = ride.fare - platformFee;
+
+      try {
+        const driver = await UserProfile.findOne({
+          clerkId: ride.acceptedBy.clerkId,
+        });
+        if (driver) {
+          driver.walletBalance = (driver.walletBalance || 0) + driverEarnings;
+
+          if (!driver.walletTransactions) {
+            driver.walletTransactions = [];
+          }
+
+          driver.walletTransactions.push({
+            type: 'credit',
+            amount: driverEarnings,
+            balance: driver.walletBalance,
+            description: `Ride earnings (₹${ride.fare} - 7% fee)`,
+            rideDetails: {
+              rideId: ride._id,
+              from: ride.from,
+              to: ride.to,
+              platformFee,
+            },
+            timestamp: new Date(),
+            transactionId: `txn_${Date.now()}`,
+          });
+
+          await driver.save();
+          console.log(
+            `✅ Transferred ₹${driverEarnings} to driver (fee: ₹${platformFee})`,
+          );
+        }
+      } catch (paymentError) {
+        console.error('❌ Error transferring payment to driver:', paymentError);
+        // Continue with ride completion even if payment fails
+      }
+    }
+
     ride.dropoffStatus = {
       ...ride.dropoffStatus,
       passengerConfirmedAt: new Date(),
@@ -809,7 +979,7 @@ export const completeRide = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: 'Ride marked as completed',
+      message: 'Ride marked as completed and payment processed',
       ride: {
         id: ride._id,
         status: ride.status,
@@ -818,6 +988,155 @@ export const completeRide = async (req, res, next) => {
     });
   } catch (error) {
     console.error('❌ Complete ride error:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Start ride (passenger initiates)
+ * POST /api/rides/:rideId/start
+ */
+export const startRide = async (req, res, next) => {
+  try {
+    let clerkId = getClerkUserId(req);
+    const { rideId } = req.params;
+
+    if (!clerkId) {
+      clerkId = req.body.clerkId;
+    }
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'clerkId is required',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    const ride = await RideRequest.findById(rideId);
+
+    if (!ride) {
+      return res.status(404).json({
+        error: 'Ride not found',
+        code: 'RIDE_NOT_FOUND',
+      });
+    }
+
+    if (ride.clerkId !== clerkId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details: 'Only the passenger can start the ride',
+        code: 'NOT_RIDE_OWNER',
+      });
+    }
+
+    if (!ride.acceptedBy?.clerkId) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        details: 'Ride must be accepted by a driver first',
+        code: 'NO_DRIVER',
+      });
+    }
+
+    // Update ride status
+    ride.status = 'awaiting_driver_confirmation';
+    ride.updatedAt = new Date();
+    await ride.save();
+
+    // Notify driver to confirm seating
+    if (io) {
+      io.emit('ride:start_requested', {
+        rideId: ride._id,
+        driverClerkId: ride.acceptedBy.clerkId,
+        passengerClerkId: ride.clerkId,
+        passengerName: ride.passenger,
+      });
+      console.log('📡 Notified driver to confirm seating');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Driver notified to confirm seating',
+      ride: {
+        id: ride._id,
+        status: ride.status,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Start ride error:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Driver confirms seating and starts ride
+ * POST /api/rides/:rideId/confirm-start
+ */
+export const driverConfirmStart = async (req, res, next) => {
+  try {
+    let clerkId = getClerkUserId(req);
+    const { rideId } = req.params;
+
+    if (!clerkId) {
+      clerkId = req.body.clerkId;
+    }
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'clerkId is required',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    const ride = await RideRequest.findById(rideId);
+
+    if (!ride) {
+      return res.status(404).json({
+        error: 'Ride not found',
+        code: 'RIDE_NOT_FOUND',
+      });
+    }
+
+    if (ride.acceptedBy?.clerkId !== clerkId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details: 'Only the assigned driver can confirm start',
+        code: 'NOT_ASSIGNED_DRIVER',
+      });
+    }
+
+    // Update ride to in progress
+    ride.status = 'in_progress';
+    ride.pickupStatus = {
+      ...ride.pickupStatus,
+      driverConfirmedAt: new Date(),
+    };
+    ride.updatedAt = new Date();
+    await ride.save();
+
+    // Notify passenger that ride has started
+    if (io) {
+      io.emit('ride:started', {
+        rideId: ride._id,
+        driverClerkId: ride.acceptedBy.clerkId,
+        passengerClerkId: ride.clerkId,
+        status: 'in_progress',
+      });
+      console.log('📡 Broadcasted ride started');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Ride started successfully',
+      ride: {
+        id: ride._id,
+        status: ride.status,
+        pickupStatus: ride.pickupStatus,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Driver confirm start error:', error.message);
     next(error);
   }
 };
@@ -869,6 +1188,8 @@ export const createDriverRideOffer = async (req, res, next) => {
       pickupLongitude,
       pickupCity,
       pickupCountry,
+      scheduledDeparture,
+      timeFlexibilityMinutes,
     } = req.body;
 
     // Validation
@@ -889,6 +1210,41 @@ export const createDriverRideOffer = async (req, res, next) => {
     }
 
     const sanitizedVehicleType = normalizeVehicleType(vehicleType);
+
+    const now = Date.now();
+    const departureSource = scheduledDeparture || now;
+    const departureDate = new Date(departureSource);
+
+    if (Number.isNaN(departureDate.getTime())) {
+      return res.status(400).json({
+        error: 'Invalid departure time',
+        details:
+          'scheduledDeparture must be a valid ISO date string or timestamp',
+        code: 'INVALID_DEPARTURE_TIME',
+      });
+    }
+
+    if (departureDate.getTime() < now - 5 * 60 * 1000) {
+      return res.status(400).json({
+        error: 'Departure time must be in the future',
+        details: 'Please select a future departure time',
+        code: 'DEPARTURE_IN_PAST',
+      });
+    }
+
+    const flexMinutesInput =
+      timeFlexibilityMinutes === undefined || timeFlexibilityMinutes === null
+        ? 0
+        : Number(timeFlexibilityMinutes);
+    const flexMinutes = Number.isFinite(flexMinutesInput)
+      ? Math.min(Math.max(Math.round(flexMinutesInput), 0), 720)
+      : 0;
+    const earliestDeparture = new Date(
+      departureDate.getTime() - flexMinutes * 60 * 1000,
+    );
+    const latestDeparture = new Date(
+      departureDate.getTime() + flexMinutes * 60 * 1000,
+    );
 
     // Find driver
     const driver = await UserProfile.findOne({ clerkId });
@@ -916,6 +1272,10 @@ export const createDriverRideOffer = async (req, res, next) => {
       pickupCity: pickupCity || null,
       pickupCountry: pickupCountry || null,
       offeredByDriver: true,
+      scheduledDeparture: departureDate,
+      earliestDeparture,
+      latestDeparture,
+      timeFlexibilityMinutes: flexMinutes,
       status: 'waiting',
     });
 
@@ -943,6 +1303,10 @@ export const createDriverRideOffer = async (req, res, next) => {
         vehicleType: rideOffer.vehicleType,
         fare: rideOffer.fare,
         notes: rideOffer.notes,
+        scheduledDeparture: rideOffer.scheduledDeparture,
+        earliestDeparture: rideOffer.earliestDeparture,
+        latestDeparture: rideOffer.latestDeparture,
+        timeFlexibilityMinutes: rideOffer.timeFlexibilityMinutes,
         status: rideOffer.status,
         createdAt: rideOffer.createdAt,
         driver: {
@@ -970,6 +1334,10 @@ export const createDriverRideOffer = async (req, res, next) => {
         offeredByDriver: rideOffer.offeredByDriver,
         status: rideOffer.status,
         createdAt: rideOffer.createdAt,
+        scheduledDeparture: rideOffer.scheduledDeparture,
+        earliestDeparture: rideOffer.earliestDeparture,
+        latestDeparture: rideOffer.latestDeparture,
+        timeFlexibilityMinutes: rideOffer.timeFlexibilityMinutes,
         driver: {
           name: `${driver.firstName} ${driver.lastName}`.trim(),
           rating: driver.rating,
@@ -1057,6 +1425,154 @@ export const cancelRide = async (req, res, next) => {
     });
   } catch (error) {
     console.error('❌ Cancel ride error:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Extend ride departure time
+ * PATCH /api/rides/:rideId/extend
+ * Requires Clerk authentication
+ */
+export const extendRideTime = async (req, res, next) => {
+  try {
+    const { rideId } = req.params;
+    const { newDepartureTime, extensionMinutes } = req.body;
+
+    let clerkId = getClerkUserId(req);
+    if (!clerkId) {
+      clerkId = req.body.clerkId;
+    }
+
+    if (!clerkId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    if (!newDepartureTime && !extensionMinutes) {
+      return res.status(400).json({
+        success: false,
+        message: 'Either newDepartureTime or extensionMinutes is required',
+      });
+    }
+
+    // Find the ride
+    const ride = await RideRequest.findById(rideId);
+    if (!ride) {
+      return res.status(404).json({
+        success: false,
+        message: 'Ride not found',
+      });
+    }
+
+    // Check if user is the owner
+    if (ride.clerkId !== clerkId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the ride creator can extend the time',
+      });
+    }
+
+    // Calculate new departure time
+    let updatedDepartureTime;
+    if (newDepartureTime) {
+      updatedDepartureTime = new Date(newDepartureTime);
+    } else {
+      const currentTime = new Date(ride.departureTime);
+      updatedDepartureTime = new Date(
+        currentTime.getTime() + extensionMinutes * 60000,
+      );
+    }
+
+    // Update the ride
+    ride.departureTime = updatedDepartureTime;
+    await ride.save();
+
+    console.log(
+      `⏰ Extended ride ${rideId} departure time to ${updatedDepartureTime}`,
+    );
+
+    // Notify all connected clients about the time extension
+    if (io) {
+      io.emit('ride:time-extended', {
+        rideId: ride._id,
+        newDepartureTime: updatedDepartureTime,
+        from: ride.from,
+        to: ride.to,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Ride time extended successfully',
+      ride: {
+        id: ride._id,
+        departureTime: updatedDepartureTime,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Extend ride time error:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Get expired rides and auto-remove them
+ * GET /api/rides/cleanup-expired
+ * Cron job or manual trigger
+ */
+export const cleanupExpiredRides = async (req, res, next) => {
+  try {
+    const now = new Date();
+    // Remove rides that are 5 minutes past their departure time
+    const expirationTime = new Date(now.getTime() - 5 * 60000);
+
+    const expiredRides = await RideRequest.find({
+      departureTime: { $lt: expirationTime },
+      status: { $in: ['pending', 'active'] },
+    });
+
+    if (expiredRides.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No expired rides to cleanup',
+        count: 0,
+      });
+    }
+
+    // Update all expired rides to 'expired' status
+    const updateResult = await RideRequest.updateMany(
+      {
+        departureTime: { $lt: expirationTime },
+        status: { $in: ['pending', 'active'] },
+      },
+      {
+        $set: { status: 'expired' },
+      },
+    );
+
+    console.log(`🗑️ Cleaned up ${updateResult.modifiedCount} expired rides`);
+
+    // Notify clients about expired rides
+    if (io) {
+      expiredRides.forEach((ride) => {
+        io.emit('ride:expired', {
+          rideId: ride._id,
+          from: ride.from,
+          to: ride.to,
+        });
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Cleaned up ${updateResult.modifiedCount} expired rides`,
+      count: updateResult.modifiedCount,
+    });
+  } catch (error) {
+    console.error('❌ Cleanup expired rides error:', error.message);
     next(error);
   }
 };

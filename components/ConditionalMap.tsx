@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, Platform, UIManager } from 'react-native';
+import { View, Text, StyleSheet, Platform, UIManager, requireNativeComponent } from 'react-native';
 import Constants from 'expo-constants';
 import { MapPin } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
@@ -24,19 +24,29 @@ if (isNativePlatform) {
   try {
     const mapsModule = require('react-native-maps');
 
-    const hasNativeView = Boolean(
-      UIManager?.getViewManagerConfig?.('AIRMap') || UIManager?.hasViewManagerConfig?.('AIRMap')
-    );
+    let isNativeComponentRegistered = false;
+    try {
+      // Throws when AIRMap view manager is missing from the native binary.
+      requireNativeComponent('AIRMap');
+      isNativeComponentRegistered = true;
+    } catch (nativeComponentError) {
+      // Attempt UIManager lookup for older runtimes as a secondary check.
+      const hasLegacyRegistration = Boolean(
+        UIManager?.getViewManagerConfig?.('AIRMap') || UIManager?.hasViewManagerConfig?.('AIRMap')
+      );
+      if (!hasLegacyRegistration) {
+        console.warn(
+          'AIRMap native view missing from this build. Recreate the dev client after running expo prebuild.'
+        );
+      }
+      isNativeComponentRegistered = hasLegacyRegistration;
+    }
 
-    if (hasNativeView) {
+    if (isNativeComponentRegistered) {
       components.MapView = mapsModule.default ?? mapsModule;
       components.Marker = mapsModule.Marker;
       components.Polyline = mapsModule.Polyline;
       components.PROVIDER_GOOGLE = mapsModule.PROVIDER_GOOGLE;
-    } else {
-      console.warn(
-        'AIRMap native view missing from UIManager. Rebuild the native project (expo prebuild && expo run) or regenerate the EAS dev build so react-native-maps is compiled.'
-      );
     }
   } catch (error) {
     console.warn('react-native-maps failed to load:', error);

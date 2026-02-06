@@ -1,13 +1,20 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView } from 'react-native';
-import { Bell, CheckCheck, Calendar, CreditCard, Shield } from 'lucide-react-native';
+import { Bell, CheckCheck, Calendar, CreditCard, Shield, Trash2, Car } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { mockNotifications } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNotifications } from '@/contexts/NotificationContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
+import { setBadgeCount } from '@/lib/notificationService';
 
 const getNotificationIcon = (type: string) => {
   switch (type) {
+    case 'ride_created':
+    case 'offer_created':
+      return Car;
+    case 'ride_accepted':
+    case 'offer_booked':
+      return CheckCheck;
     case 'booking':
       return CheckCheck;
     case 'ride':
@@ -21,8 +28,26 @@ const getNotificationIcon = (type: string) => {
   }
 };
 
+const getNotificationColor = (type: string) => {
+  switch (type) {
+    case 'ride_created':
+    case 'offer_created':
+      return Colors.dark.gold;
+    case 'ride_accepted':
+    case 'offer_booked':
+      return '#4CAF50';
+    case 'payment':
+      return '#2196F3';
+    case 'alert':
+      return '#FF5722';
+    default:
+      return Colors.dark.gold;
+  }
+};
+
 export default function AlertsScreen() {
   const { user } = useAuth();
+  const { notifications, unreadCount, markAsRead, clearNotification, clearAll } = useNotifications();
   const [userProfile, setUserProfile] = useState<any>(null);
 
   useEffect(() => {
@@ -31,6 +56,11 @@ export default function AlertsScreen() {
     }
   }, [user]);
 
+  useEffect(() => {
+    // Update badge count when notifications change
+    setBadgeCount(unreadCount);
+  }, [unreadCount]);
+
   const loadUserProfile = async () => {
     if (user) {
       const profile = await getUserProfile(user.id);
@@ -38,8 +68,36 @@ export default function AlertsScreen() {
     }
   };
 
+  const handleMarkAllRead = () => {
+    notifications.forEach(n => {
+      if (!n.read) markAsRead(n.id);
+    });
+  };
+
+  const handleNotificationPress = (notificationId: string) => {
+    markAsRead(notificationId);
+    // TODO: Navigate to relevant screen based on notification data
+  };
+
+  const handleDeleteNotification = (notificationId: string) => {
+    clearNotification(notificationId);
+  };
+
   const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
-  const unreadCount = mockNotifications.filter((n) => !n.read).length;
+
+  const formatTimestamp = (timestamp: Date) => {
+    const now = new Date();
+    const diff = now.getTime() - new Date(timestamp).getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 7) return `${days}d ago`;
+    return new Date(timestamp).toLocaleDateString();
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -51,42 +109,72 @@ export default function AlertsScreen() {
               Hey {userName}! You have {unreadCount} unread notification{unreadCount !== 1 ? 's' : ''}
             </Text>
           </View>
-          <TouchableOpacity>
-            <Text style={styles.markAllRead}>Mark all as read</Text>
-          </TouchableOpacity>
+          {notifications.length > 0 && (
+            <View style={styles.headerButtons}>
+              {unreadCount > 0 && (
+                <TouchableOpacity onPress={handleMarkAllRead}>
+                  <Text style={styles.markAllRead}>Mark all as read</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={clearAll} style={styles.clearAllButton}>
+                <Trash2 size={18} color={Colors.dark.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {mockNotifications.map((notification, index) => {
-          const Icon = getNotificationIcon(notification.type);
-          return (
-            <View key={notification.id}>
-              <TouchableOpacity
-                style={[styles.notificationCard, !notification.read && styles.unreadCard]}
-                activeOpacity={0.7}>
-                <View
-                  style={[
-                    styles.iconContainer,
-                    notification.type === 'booking' && styles.bookingIcon,
-                    notification.type === 'ride' && styles.rideIcon,
-                    notification.type === 'payment' && styles.paymentIcon,
-                    notification.type === 'alert' && styles.alertIcon,
-                  ]}>
-                  <Icon size={20} color={Colors.dark.text} />
-                </View>
-                <View style={styles.notificationContent}>
-                  <View style={styles.notificationHeader}>
-                    <Text style={styles.notificationTitle}>{notification.title}</Text>
-                    {!notification.read && <View style={styles.unreadDot} />}
+        {notifications.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Bell size={64} color={Colors.dark.textSecondary} />
+            <Text style={styles.emptyText}>No notifications yet</Text>
+            <Text style={styles.emptySubtext}>
+              You'll see ride updates and alerts here
+            </Text>
+          </View>
+        ) : (
+          notifications.map((notification) => {
+            const Icon = getNotificationIcon(notification.type);
+            const iconColor = getNotificationColor(notification.type);
+            return (
+              <View key={notification.id}>
+                <TouchableOpacity
+                  style={[styles.notificationCard, !notification.read && styles.unreadCard]}
+                  activeOpacity={0.7}
+                  onPress={() => handleNotificationPress(notification.id)}>
+                  <View
+                    style={[
+                      styles.iconContainer,
+                      { backgroundColor: `${iconColor}20` },
+                    ]}>
+                    <Icon size={20} color={iconColor} />
                   </View>
-                  <Text style={styles.notificationMessage}>{notification.message}</Text>
-                  <Text style={styles.notificationTime}>{notification.createdAt}</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-          );
-        })}
+                  <View style={styles.notificationContent}>
+                    <View style={styles.notificationHeader}>
+                      <Text style={styles.notificationTitle}>{notification.title}</Text>
+                      {!notification.read && <View style={styles.unreadDot} />}
+                    </View>
+                    <Text style={styles.notificationMessage}>{notification.message}</Text>
+                    {notification.data?.from && notification.data?.to && (
+                      <Text style={styles.notificationRoute}>
+                        {notification.data.from} → {notification.data.to}
+                      </Text>
+                    )}
+                    <Text style={styles.notificationTime}>
+                      {formatTimestamp(notification.timestamp)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={() => handleDeleteNotification(notification.id)}>
+                    <Trash2 size={18} color={Colors.dark.textSecondary} />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              </View>
+            );
+          })
+        )}
 
         <View style={styles.emptySpace} />
       </ScrollView>
@@ -125,9 +213,34 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  clearAllButton: {
+    padding: 4,
+  },
   scrollView: {
     flex: 1,
     paddingHorizontal: 20,
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 80,
+  },
+  emptyText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: Colors.dark.text,
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    marginTop: 8,
   },
   notificationCard: {
     flexDirection: 'row',
@@ -150,6 +263,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+  },
+  deleteButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  notificationRoute: {
+    fontSize: 13,
+    color: Colors.dark.gold,
+    marginBottom: 4,
+    fontWeight: '500',
   },
   bookingIcon: {
     backgroundColor: Colors.dark.success + '30',

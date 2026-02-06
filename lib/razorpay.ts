@@ -2,7 +2,7 @@ import { Alert } from 'react-native';
 
 const RAZORPAY_KEY_ID =
   process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_7kAotmP1o8JR8V';
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
 
 export interface PaymentOptions {
   amount: number; // in rupees
@@ -159,7 +159,14 @@ export async function processWalletPayment(
   bookingDetails: any,
 ): Promise<{ success: boolean; transactionId?: string; error?: string }> {
   try {
-    const response = await fetch(`${API_URL}/api/payments/wallet-payment`, {
+    const url = `${API_URL}/api/payments/wallet-payment`;
+    console.log('💰 Processing wallet payment...');
+    console.log('📍 URL:', url);
+    console.log('👤 User ID:', userId);
+    console.log('💵 Amount:', amount);
+    console.log('📋 Booking:', JSON.stringify(bookingDetails));
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -171,12 +178,23 @@ export async function processWalletPayment(
       }),
     });
 
+    console.log('📡 Response status:', response.status);
+    console.log('📡 Response OK:', response.ok);
+
     if (!response.ok) {
-      const error = await response.json();
+      const errorText = await response.text();
+      console.error('❌ Response error:', errorText);
+      let error;
+      try {
+        error = JSON.parse(errorText);
+      } catch {
+        error = { message: errorText || 'Wallet payment failed' };
+      }
       throw new Error(error.message || 'Wallet payment failed');
     }
 
     const data = await response.json();
+    console.log('✅ Payment successful:', data);
     return { success: true, transactionId: data.transactionId };
   } catch (error: any) {
     console.error('Wallet payment error:', error);

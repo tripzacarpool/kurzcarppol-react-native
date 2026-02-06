@@ -570,3 +570,188 @@ export const logoutUser = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Update user push notification token
+ * POST /api/users/push-token
+ */
+export const updatePushToken = async (req, res, next) => {
+  try {
+    const clerkId = req.auth?.userId || req.body.clerkId;
+    const { pushToken } = req.body;
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'clerkId is required',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    if (!pushToken) {
+      return res.status(400).json({
+        error: 'Invalid request',
+        details: 'pushToken is required',
+        code: 'MISSING_PUSH_TOKEN',
+      });
+    }
+
+    // Find and update user
+    const user = await UserProfile.findOne({ clerkId });
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        details: 'No user profile found for this clerkId',
+        code: 'USER_NOT_FOUND',
+      });
+    }
+
+    user.pushToken = pushToken;
+    user.pushTokenUpdatedAt = new Date();
+    await user.save();
+
+    console.log(`📱 Push token updated for user ${clerkId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Push token updated successfully',
+      clerkId,
+    });
+  } catch (error) {
+    console.error('❌ Error updating push token:', error.message);
+    next(error);
+  }
+};
+
+/**
+ * Update driver verification status and assign batch
+ * POST /api/users/driver-verification
+ * Requires Clerk authentication
+ */
+export const updateDriverVerification = async (req, res, next) => {
+  try {
+    // Check Database Connection
+    const dbConnected = await checkDatabaseConnection();
+    if (!dbConnected) {
+      return res.status(503).json({
+        error: 'Database connection failed',
+        code: 'DB_CONNECTION_ERROR',
+      });
+    }
+
+    // Get authenticated user ID from Clerk middleware
+    const clerkId = req.auth?.userId;
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'Valid Clerk authentication required',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    const {
+      verificationStatus,
+      verificationScore,
+      verificationData,
+      licenseNumber,
+    } = req.body;
+
+    // Validate required fields
+    if (!verificationStatus || verificationScore === undefined) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: 'verificationStatus and verificationScore are required',
+        code: 'MISSING_FIELDS',
+      });
+    }
+
+    // Validate verification status
+    const validStatuses = [
+      'pending',
+      'auto_approved',
+      'manual_review',
+      'rejected',
+    ];
+    if (!validStatuses.includes(verificationStatus)) {
+      return res.status(400).json({
+        error: 'Invalid verification status',
+        details: `Status must be one of: ${validStatuses.join(', ')}`,
+        code: 'INVALID_STATUS',
+      });
+    }
+
+    // Find the user
+    const user = await UserProfile.findOne({ clerkId });
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        details: 'No user profile found for this clerkId',
+        code: 'USER_NOT_FOUND',
+      });
+    }
+
+    // Generate batch number if auto-approved or manual_review with high score
+    const shouldVerify =
+      verificationStatus === 'auto_approved' ||
+      (verificationStatus === 'manual_review' && verificationScore >= 85);
+
+    let verificationBatch = user.verificationBatch;
+
+    if (shouldVerify && !user.driverVerified) {
+      // Generate new batch number for MongoDB
+      const year = new Date().getFullYear();
+      const verifiedCount = await UserProfile.countDocuments({
+        driverVerified: true,
+      });
+      const batchNumber = verifiedCount + 1;
+      verificationBatch = `BATCH-${year}-${String(batchNumber).padStart(4, '0')}`;
+
+      console.log(
+        `🎫 Generated batch number: ${verificationBatch} (Total verified drivers: ${verifiedCount})`,
+      );
+    }
+
+    // Update user verification details
+    const updateData = {
+      verificationStatus,
+      verificationScore,
+      verificationData: verificationData || user.verificationData,
+      licenseNumber: licenseNumber || user.licenseNumber,
+    };
+
+    if (shouldVerify) {
+      updateData.driverVerified = true;
+      updateData.verificationBatch = verificationBatch;
+      updateData.verificationCompletedAt = new Date();
+    }
+
+    const updatedUser = await UserProfile.findOneAndUpdate(
+      { clerkId },
+      updateData,
+      { new: true, runValidators: true },
+    );
+
+    console.log(
+      `✅ Driver verification updated: ${clerkId} → ${verificationStatus}${
+        verificationBatch ? ` (${verificationBatch})` : ''
+      }`,
+    );
+
+    res.json({
+      success: true,
+      message: 'Driver verification updated successfully',
+      user: formatUserResponse(updatedUser),
+      verificationBatch: verificationBatch || null,
+    });
+  } catch (error) {
+    console.error('❌ Update driver verification error:', error.message);
+    res.status(500).json({
+      error: 'Failed to update driver verification',
+      details: error.message,
+      code: 'UPDATE_ERROR',
+    });
+  }
+};

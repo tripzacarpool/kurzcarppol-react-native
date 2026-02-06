@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { getLocationSocket } from '@/lib/locationSocket';
 import { useAuthContext } from './AuthContext';
 import CustomAlert from '@/components/CustomAlert';
+import * as NotificationService from '@/lib/notificationService';
+import * as Notifications from 'expo-notifications';
 
 export interface Notification {
   id: string;
@@ -43,11 +45,93 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     message: string;
     type: 'info' | 'success' | 'error' | 'warning';
   } | null>(null);
+  const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
+  const notificationListener = useRef<any>();
+  const responseListener = useRef<any>();
 
   const showCustomAlert = (title: string, message: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
     setAlertConfig({ title, message, type });
     setAlertVisible(true);
   };
+
+  // Initialize push notifications
+  useEffect(() => {
+    const initPushNotifications = async () => {
+      try {
+        // Setup Android channels
+        await NotificationService.setupAndroidChannel();
+
+        // Request permissions (this is needed for local notifications too)
+        const hasPermission = await NotificationService.requestNotificationPermissions();
+        if (hasPermission) {
+          console.log('✅ Notification permissions granted');
+          
+          // Try to get push token (optional - requires Firebase)
+          const token = await NotificationService.getExpoPushToken();
+          if (token) {
+            setExpoPushToken(token);
+            console.log('📱 Remote push token obtained:', token);
+            
+            // Register token with backend if user is logged in
+            if (user?.id) {
+              await NotificationService.registerPushToken(user.id, token);
+            }
+          } else {
+            console.log('ℹ️ No remote push token (using local notifications only)');
+          }
+        }
+
+        // Setup listeners for when notifications are received
+        const listeners = NotificationService.setupNotificationListeners(
+          (notification) => {
+            // Handle notification received while app is open
+            const data = notification.request.content.data as any;
+            addNotification({
+              type: data.type || 'ride_created',
+              title: notification.request.content.title || 'Notification',
+              message: notification.request.content.body || '',
+              data: data,
+            });
+          },
+          (response) => {
+            // Handle notification tap - navigate based on type
+            console.log('👆 User tapped notification:', response.notification.request.content);
+            const data = response.notification.request.content.data as any;
+            
+            // Handle ride expiring notifications with deep link
+            if (data.type === 'ride_expiring' && data.offerId) {
+              console.log('🔗 Navigate to extend time screen for ride:', data.offerId);
+              // The navigation will be handled in the root _layout
+              // Store the pending navigation
+              import('@react-native-async-storage/async-storage').then(async ({ default: AsyncStorage }) => {
+                await AsyncStorage.setItem('pendingNavigation', JSON.stringify({
+                  screen: 'ExtendTime',
+                  params: {
+                    offerId: data.offerId,
+                    rideId: data.rideId,
+                    from: data.from,
+                    to: data.to,
+                    departureTime: data.departureTime,
+                  }
+                }));
+              });
+            }
+          }
+        );
+
+        notificationListener.current = listeners.receivedListener;
+        responseListener.current = listeners.responseListener;
+
+        return () => {
+          listeners.remove();
+        };
+      } catch (error) {
+        console.error('Error initializing push notifications:', error);
+      }
+    };
+
+    initPushNotifications();
+  }, [user?.id]);
 
   // Initialize socket listeners for notifications
   useEffect(() => {
@@ -185,7 +269,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       addNotification({
         type: 'ride_accepted',
         title: 'Ride Completed',
-        message: 'Ride marked as complete. Thank you for travelling with TripZa!',
+        message: 'Ride marked as complete. Thank you for travelling with RaahEasy!',
         data: {
           rideId: data.rideId,
         },

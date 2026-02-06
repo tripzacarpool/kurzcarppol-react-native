@@ -17,6 +17,8 @@ export interface DirectionsResponse {
   routes: RouteCoordinate[];
   distance: string;
   duration: string;
+  distanceValue: number; // Distance in meters
+  durationValue: number; // Duration in seconds
   success: boolean;
   error?: string;
 }
@@ -50,6 +52,8 @@ export async function fetchRouteFromGoogle(
         routes: [],
         distance: 'Unknown',
         duration: 'Unknown',
+        distanceValue: 0,
+        durationValue: 0,
         success: false,
         error: data.status || 'No route found',
       };
@@ -63,11 +67,16 @@ export async function fetchRouteFromGoogle(
 
     console.log(`✅ Route fetched: ${leg.distance.text}, ${leg.duration.text}`);
     console.log(`📍 Route has ${points.length} waypoints`);
+    console.log(
+      `📏 Distance Value: ${leg.distance.value}m, Duration Value: ${leg.duration.value}s`,
+    );
 
     return {
       routes: points,
       distance: leg.distance.text,
       duration: leg.duration.text,
+      distanceValue: leg.distance.value, // meters
+      durationValue: leg.duration.value, // seconds
       success: true,
     };
   } catch (error: any) {
@@ -76,6 +85,8 @@ export async function fetchRouteFromGoogle(
       routes: [],
       distance: 'Unknown',
       duration: 'Unknown',
+      distanceValue: 0,
+      durationValue: 0,
       success: false,
       error: error.message,
     };

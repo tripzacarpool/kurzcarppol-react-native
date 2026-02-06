@@ -13,16 +13,21 @@ interface RouteInfoProps {
   pickupLocation: RouteCoordinate | null;
   dropoffLocation: RouteCoordinate | null;
   farePerKm?: number;
+  onFareCalculated?: (fare: number) => void;
+  onCalculationStart?: () => void;
 }
 
 export default function RouteInfo({
   pickupLocation,
   dropoffLocation,
   farePerKm = 15,
+  onFareCalculated,
+  onCalculationStart,
 }: RouteInfoProps) {
   const [distance, setDistance] = useState<string>('--');
   const [duration, setDuration] = useState<string>('--');
   const [fare, setFare] = useState<number>(0);
+  const [originalFare, setOriginalFare] = useState<number>(0);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -38,16 +43,33 @@ export default function RouteInfo({
 
     try {
       setLoading(true);
+      
+      // Notify parent that calculation has started
+      if (onCalculationStart) {
+        onCalculationStart();
+      }
+      
       const result = await fetchRouteFromGoogle(pickupLocation, dropoffLocation);
 
-      if (result.success) {
+      if (result.success && result.distanceValue > 0) {
+        // Show exact Google Maps data
         setDistance(result.distance);
         setDuration(result.duration);
 
-        // Calculate fare based on distance
-        const distanceKm = parseFloat(result.distance.replace(/[^0-9.]/g, ''));
-        const estimatedFare = Math.round(distanceKm * farePerKm);
-        setFare(estimatedFare);
+        // Calculate fare using actual Google distance value (in meters)
+        const distanceKm = result.distanceValue / 1000; // Convert meters to km
+        const baseFare = Math.round(distanceKm * farePerKm);
+        const discountedFare = Math.round(baseFare * 0.9); // 10% discount
+        setOriginalFare(baseFare);
+        setFare(discountedFare);
+        
+        console.log(`📊 Google Maps Data: ${result.distance} (${result.distanceValue}m), ${result.duration} (${result.durationValue}s)`);
+        console.log(`💰 Calculated: ₹${baseFare} → ₹${discountedFare} (10% off)`);
+        
+        // Notify parent component of calculated fare
+        if (onFareCalculated) {
+          onFareCalculated(discountedFare);
+        }
       } else {
         resetInfo();
       }
@@ -63,6 +85,7 @@ export default function RouteInfo({
     setDistance('--');
     setDuration('--');
     setFare(0);
+    setOriginalFare(0);
   };
 
   if (!pickupLocation || !dropoffLocation) {
@@ -71,7 +94,10 @@ export default function RouteInfo({
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Route Information</Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>Route Information</Text>
+        <Text style={styles.googleBadge}>🗺️ Google Maps</Text>
+      </View>
       
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -94,8 +120,15 @@ export default function RouteInfo({
 
           <View style={styles.infoCard}>
             <DollarSign size={18} color={Colors.dark.gold} />
-            <Text style={styles.infoLabel}>Est. Fare</Text>
-            <Text style={styles.infoValue}>₹{fare}</Text>
+            <Text style={styles.infoLabel}>Market Rate</Text>
+            <Text style={styles.infoValue}>₹{originalFare}</Text>
+            {originalFare > 0 && (
+              <>
+                <View style={styles.dividerLine} />
+                <Text style={styles.reducedLabel}>Your Price</Text>
+                <Text style={styles.discountedValue}>₹{fare}</Text>
+              </>
+            )}
           </View>
         </View>
       )}
@@ -112,11 +145,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.dark.border,
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   title: {
     fontSize: 15,
     fontWeight: '600',
     color: Colors.dark.text,
-    marginBottom: 12,
+  },
+  googleBadge: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.dark.gold,
+    backgroundColor: Colors.dark.background,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   loadingContainer: {
     flexDirection: 'row',
@@ -151,5 +198,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: Colors.dark.text,
+  },
+  dividerLine: {
+    width: '100%',
+    height: 1,
+    backgroundColor: Colors.dark.border,
+    marginVertical: 8,
+  },
+  reducedLabel: {
+    fontSize: 10,
+    color: Colors.dark.gold,
+    marginBottom: 2,
+    fontWeight: '600',
+  },
+  discountedValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.dark.gold,
   },
 });

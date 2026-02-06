@@ -3,6 +3,7 @@ import { Home, MapPin, Bell, Wallet, User } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { Platform, Animated } from 'react-native';
 import { useEffect, useRef } from 'react';
+import { useNotifications } from '@/contexts/NotificationContext';
 
 function AnimatedTabIcon({ Icon, color, focused }: { Icon: any; color: string; focused: boolean }) {
   const scaleAnim = useRef(new Animated.Value(focused ? 1.1 : 1)).current;
@@ -30,6 +31,8 @@ function AnimatedTabIcon({ Icon, color, focused }: { Icon: any; color: string; f
 }
 
 export default function TabLayout() {
+  const { unreadCount } = useNotifications();
+
   return (
     <Tabs
       screenOptions={{
@@ -74,7 +77,7 @@ export default function TabLayout() {
         options={{
           title: 'Alerts',
           tabBarIcon: ({ color, focused }) => <AnimatedTabIcon Icon={Bell} color={color} focused={focused} />,
-          tabBarBadge: 2,
+          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
         }}
       />
       <Tabs.Screen

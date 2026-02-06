@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 
 const BACKEND_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:5000';
+  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
 
 let socket: any = null;
 

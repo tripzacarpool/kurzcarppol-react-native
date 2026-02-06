@@ -29,6 +29,8 @@ import {
   confirmRideBooking,
   passengerConfirmPickup,
   completeRide,
+  setAuthToken,
+  bookRideOffer,
 } from '@/lib/api';
 
 interface BookingModalProps {
@@ -40,7 +42,7 @@ interface BookingModalProps {
 type BookingStep = 'confirm' | 'request' | 'seats' | 'payment' | 'boarding' | 'tracking' | 'completed';
 
 export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
-  const { user } = useAuth();
+  const { user, getAuthToken } = useAuth();
   const [step, setStep] = useState<BookingStep>('confirm');
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
   const [customRequest, setCustomRequest] = useState('');
@@ -217,12 +219,32 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         });
 
         if (result.success) {
-          await confirmRideBooking(ride.id, {
-            seatNumbers: selectedSeats,
-            totalAmount,
-            paymentMethod: 'wallet',
-            customRequest: customRequest || undefined,
-          });
+          // Get fresh token before API call
+          const token = await getAuthToken();
+          if (token) {
+            setAuthToken(token);
+            console.log('🔑 Token set for booking confirmation');
+          } else {
+            console.warn('⚠️ No token available');
+          }
+          
+          // Use correct booking endpoint based on ride type
+          if (ride.rideType === 'offer') {
+            console.log('📦 Booking ride offer:', ride.id);
+            await bookRideOffer(ride.id, {
+              seatNumbers: selectedSeats,
+              paymentMethod: 'wallet',
+              customRequest: customRequest || undefined,
+            });
+          } else {
+            console.log('📦 Booking ride request:', ride.id);
+            await confirmRideBooking(ride.id, {
+              seatNumbers: selectedSeats,
+              totalAmount,
+              paymentMethod: 'wallet',
+              customRequest: customRequest || undefined,
+            });
+          }
           setBookingConfirmed(true);
           showAlert('Success', 'Payment secured in escrow. Driver notified with your details.', 'success');
           setPickupConfirmed(false);
@@ -249,7 +271,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       showAlert('Error', error.message || 'Payment failed', 'error');
       setProcessingPayment(false);
     }
-  }, [paymentMethod, user?.id, totalAmount, ride, selectedSeats, showAlert, customRequest, bookingConfirmed]);
+  }, [paymentMethod, user?.id, totalAmount, ride, selectedSeats, showAlert, customRequest, bookingConfirmed, getAuthToken]);
 
   const handleRazorpaySuccess = useCallback(async (paymentId: string, orderId: string, signature: string) => {
     try {
@@ -260,12 +282,32 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       const verified = await verifyPayment(orderId, paymentId, signature);
       
       if (verified) {
-        await confirmRideBooking(ride.id, {
-          seatNumbers: selectedSeats,
-          totalAmount,
-          paymentMethod: 'upi',
-          customRequest: customRequest || undefined,
-        });
+        // Get fresh token before API call
+        const token = await getAuthToken();
+        if (token) {
+          setAuthToken(token);
+          console.log('🔑 Token set for booking confirmation');
+        } else {
+          console.warn('⚠️ No token available');
+        }
+        
+        // Use correct booking endpoint based on ride type
+        if (ride.rideType === 'offer') {
+          console.log('📦 Booking ride offer:', ride.id);
+          await bookRideOffer(ride.id, {
+            seatNumbers: selectedSeats,
+            paymentMethod: 'upi',
+            customRequest: customRequest || undefined,
+          });
+        } else {
+          console.log('📦 Booking ride request:', ride.id);
+          await confirmRideBooking(ride.id, {
+            seatNumbers: selectedSeats,
+            totalAmount,
+            paymentMethod: 'upi',
+            customRequest: customRequest || undefined,
+          });
+        }
         setBookingConfirmed(true);
         showAlert('Success!', 'Payment secured in escrow. Confirm pickup to start tracking.', 'success');
         setPickupConfirmed(false);
@@ -279,7 +321,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } finally {
       setProcessingPayment(false);
     }
-  }, [ride, selectedSeats, totalAmount, customRequest, showAlert]);
+  }, [ride, selectedSeats, totalAmount, customRequest, showAlert, getAuthToken]);
 
   const handleRazorpayFailure = useCallback((error: string) => {
     setShowRazorpay(false);
@@ -297,6 +339,16 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
 
     try {
       setPickupActionLoading(true);
+      
+      // Get fresh token before API call
+      const token = await getAuthToken();
+      if (token) {
+        setAuthToken(token);
+        console.log('🔑 Token set for pickup confirmation');
+      } else {
+        console.warn('⚠️ No token available');
+      }
+      
       await passengerConfirmPickup(ride.id);
       setPickupConfirmed(true);
       setTrackingActive(true);
@@ -309,12 +361,22 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } finally {
       setPickupActionLoading(false);
     }
-  }, [ride, pickupConfirmed, showAlert]);
+  }, [ride, pickupConfirmed, showAlert, getAuthToken]);
 
   const handleDropConfirmation = useCallback(async () => {
     if (!ride) return;
     try {
       setCompletionLoading(true);
+      
+      // Get fresh token before API call
+      const token = await getAuthToken();
+      if (token) {
+        setAuthToken(token);
+        console.log('🔑 Token set for ride completion');
+      } else {
+        console.warn('⚠️ No token available');
+      }
+      
       await completeRide(ride.id);
       setTrackingActive(false);
       setShowTrackingMap(false);
@@ -326,7 +388,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } finally {
       setCompletionLoading(false);
     }
-  }, [ride, showAlert]);
+  }, [ride, showAlert, getAuthToken]);
 
   const handleSeatSelect = useCallback((seatNumber: number) => {
     setSelectedSeats((prev) => {
@@ -434,7 +496,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               </View>
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Departure</Text>
-                <Text style={styles.infoValue}>{ride.departureTime}</Text>
+                <Text style={styles.infoValue}>
+                  {new Date(ride.departureTime).toLocaleString('en-IN', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  })}
+                </Text>
               </View>
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Vehicle</Text>

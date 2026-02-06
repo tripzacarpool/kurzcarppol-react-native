@@ -1,4 +1,4 @@
-# TripZa Backend API - Optimized Architecture
+# RaahEasy Backend API - Optimized Architecture
 
 Production-ready backend with clean separation of concerns: routes, controllers, middleware, and config.
 

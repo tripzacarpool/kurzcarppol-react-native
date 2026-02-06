@@ -29,8 +29,8 @@
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="tripzaapp"/>
-        <data android:scheme="exp+tripza"/>
+        <data android:scheme="raaheasyapp"/>
+        <data android:scheme="exp+raaheasy"/>
       </intent-filter>
     </activity>
     <uses-library android:name="org.apache.http.legacy" android:required="false"/>
