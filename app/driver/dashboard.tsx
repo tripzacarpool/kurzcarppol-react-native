@@ -9,10 +9,14 @@ import {
   Switch,
   RefreshControl,
   ActivityIndicator,
+  Platform,
+  Linking,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import CustomAlert, { AlertType, AlertButton } from '@/components/CustomAlert';
+import * as Notifications from 'expo-notifications';
 import {
   Power,
   DollarSign,
@@ -29,16 +33,22 @@ import {
   List,
   BarChart3,
   ShieldCheck,
+  MessageSquare,
+  User,
+  Phone,
 } from 'lucide-react-native';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
 import type { DriverVerificationResult, DriverVerificationStatus } from '@/types';
-import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup } from '@/lib/api';
+import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
+import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, getRideOfferById, setAuthToken } from '@/lib/api';
 import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
 import VerificationBadge from '@/components/VerificationBadge';
+import ChatModal from '@/components/ChatModal';
+import PushNotificationDebug from '@/components/PushNotificationDebug';
 
 interface Ride {
   id: string;
@@ -72,7 +82,28 @@ interface DriverOffer {
   status?: 'live' | 'completed' | 'draft';
 }
 
-type DashboardTab = 'live' | 'offers' | 'insights';
+interface Conversation {
+  _id: string;
+  rideId: string;
+  participants: string[];
+  driverId: string;
+  passengerId: string;
+  lastMessage: string;
+  lastMessageAt: string;
+}
+
+interface ConversationWithDetails extends Conversation {
+  otherUserName: string;
+  otherUserId: string;
+  rideDetails?: {
+    from: string;
+    to: string;
+  };
+  otherUserPhone?: string;
+  unreadCount?: number;
+}
+
+type DashboardTab = 'live' | 'offers' | 'messages' | 'insights';
 
 function formatVerificationStatusLabel(status: DriverVerificationStatus) {
   switch (status) {
@@ -121,10 +152,28 @@ export default function DriverDashboard() {
   } | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<DriverVerificationStatus>('pending');
   const [verificationScore, setVerificationScore] = useState<number | null>(null);
+  const [conversations, setConversations] = useState<ConversationWithDetails[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [selectedConversation, setSelectedConversation] = useState<ConversationWithDetails | null>(null);
+  const [chatModalVisible, setChatModalVisible] = useState(false);
+  const [debugModalVisible, setDebugModalVisible] = useState(false);
   const locationIntervalRef = useRef<NodeJS.Timeout | number | null>(null);
   const liveStateKey = user?.id ? `driver_live_state_${user.id}` : null;
   const offersKey = user?.id ? `driver_offers_${user.id}` : null;
   const verificationKey = user?.id ? `driver_verification_${user.id}` : null;
+  const { getToken } = useClerkAuth();
+
+  // Calculate total unread messages
+  const totalUnreadMessages = conversations.reduce((sum, conv) => sum + (conv.unreadCount || 0), 0);
+
+  // Update app icon badge
+  useEffect(() => {
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
+      Notifications.setBadgeCountAsync(totalUnreadMessages).catch(err => {
+        console.log('Failed to set badge count:', err);
+      });
+    }
+  }, [totalUnreadMessages]);
 
   const showAlert = (
     title: string,
@@ -169,6 +218,19 @@ export default function DriverDashboard() {
         });
         setMyOffers(validOffers);
         console.log('✅ Loaded valid offers:', validOffers.length);
+        
+        // Debug: Check what IDs look like  
+        validOffers.forEach(offer => {
+          console.log('📋 Offer ID:', offer.id, 'Type:', typeof offer.id, 'Is Local:', offer.id?.startsWith('local-'));
+        });
+        
+        // Clean up any offers with local IDs (they're stale)
+        const realOffers = validOffers.filter(offer => !offer.id?.startsWith('local-'));
+        if (realOffers.length !== validOffers.length) {
+          console.log('🧹 Cleaning up', validOffers.length - realOffers.length, 'stale local offers');
+          setMyOffers(realOffers);
+          persistOffers(realOffers);
+        }
       } else {
         console.log('📋 No saved offers found');
       }
@@ -210,6 +272,38 @@ export default function DriverDashboard() {
       await AsyncStorage.setItem(liveStateKey, value ? 'true' : 'false');
     } catch (error) {
       console.warn('⚠️ Unable to persist live toggle:', error);
+    }
+  };
+
+  const loadConversations = async () => {
+    if (!user?.id) return;
+
+    try {
+      setConversationsLoading(true);
+      console.log('🔍 [DRIVER] Loading conversations for driver ID:', user.id);
+      
+      // Set auth token
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      const { conversations: convos } = await getUserConversations(user.id);
+      console.log('📬 [DRIVER] Received enriched conversations from API:', convos?.length || 0);
+      if (convos && convos.length > 0) {
+        console.log('📋 [DRIVER] First conversation:', {
+          otherUserName: convos[0].otherUserName,
+          rideDetails: convos[0].rideDetails,
+          lastMessage: convos[0].lastMessage,
+        });
+      }
+
+      // Backend now provides enriched data with otherUserName, rideDetails, etc.
+      setConversations(convos || []);
+    } catch (error) {
+      console.error('Error loading conversations:', error);
+    } finally {
+      setConversationsLoading(false);
     }
   };
 
@@ -325,6 +419,9 @@ export default function DriverDashboard() {
       driverGoesOnline(user.id);
       console.log('🟢 Location socket initialized');
       
+      // Load conversations immediately to show unread count on home screen
+      loadConversations();
+      
       // Subscribe to new rides in real-time
       subscribeToNewRides((newRide) => {
         console.log('📨 Driver received new ride via socket:', newRide);
@@ -368,14 +465,37 @@ export default function DriverDashboard() {
       showAlert('Ride Completed', 'Passenger marked the ride complete. Payout is on the way.', 'success');
     };
 
+    const handleNewMessage = (data: any) => {
+      console.log('💬 Driver received new message via socket:', data);
+      if (data.type === 'new_message') {
+        // Immediately reload conversations to show new message
+        loadConversations();
+        
+        // Push notifications are handled by the backend - no need for in-app alerts
+        console.log('📱 New message received - push notification will be sent by backend');
+      }
+    };
+
     socket.on('ride:pickup-passenger', handlePassengerPickup);
     socket.on('ride:completed', handleRideCompleted);
+    socket.on(`user:message:${user.id}`, handleNewMessage);
 
     return () => {
       socket.off('ride:pickup-passenger', handlePassengerPickup);
       socket.off('ride:completed', handleRideCompleted);
+      socket.off(`user:message:${user.id}`, handleNewMessage);
     };
   }, [user?.id, activeRideId]);
+
+  // Load conversations when Messages tab is shown
+  useEffect(() => {
+    if (user?.id && selectedTab === 'messages') {
+      loadConversations();
+      // Poll for new messages every 10 seconds
+      const interval = setInterval(loadConversations, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [user?.id, selectedTab]);
 
   const fetchLiveRides = async () => {
     if (!user?.id) return;
@@ -560,6 +680,27 @@ export default function DriverDashboard() {
     );
   };
 
+  const handleCall = (phoneNumber: string | undefined) => {
+    if (!phoneNumber) {
+      Alert.alert('Phone number not available', 'This user has not provided a phone number.');
+      return;
+    }
+    
+    const phoneUrl = `tel:${phoneNumber}`;
+    Linking.canOpenURL(phoneUrl)
+      .then((supported) => {
+        if (supported) {
+          return Linking.openURL(phoneUrl);
+        } else {
+          Alert.alert('Not Supported', 'Phone call not supported on this device');
+        }
+      })
+      .catch((error) => {
+        console.error('Error opening phone dialer:', error);
+        Alert.alert('Error', 'Failed to open phone dialer');
+      });
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
     if (isLive) {
@@ -570,9 +711,11 @@ export default function DriverDashboard() {
   };
 
   const handleOfferCreatedFromModal = async (offer: DriverOffer) => {
+    console.log('📤 Received offer from modal:', JSON.stringify(offer, null, 2));
+    
     // Ensure all required fields have valid values
     const hydrated: DriverOffer = {
-      id: offer.id || `local-${Date.now()}`,
+      id: offer.id || `local-${Date.now()}`, // This should now be the real MongoDB _id
       from: offer.from || 'Pickup Location',
       to: offer.to || 'Drop Location',
       seats: typeof offer.seats === 'number' ? offer.seats : 1,
@@ -581,6 +724,10 @@ export default function DriverDashboard() {
       createdAt: offer.createdAt || new Date().toISOString(),
       status: offer.status || 'live',
     };
+    
+    console.log('🔧 Hydrated offer with ID:', hydrated.id);
+    console.log('🔄 Is this a real MongoDB ID?', !hydrated.id.startsWith('local-'));
+    
     const updated = [hydrated, ...myOffers].slice(0, 25);
     setMyOffers(updated);
     await persistOffers(updated);
@@ -749,6 +896,7 @@ export default function DriverDashboard() {
                 <TouchableOpacity
                   style={styles.editButton}
                   onPress={() => {
+                    console.log('🔄 Editing offer with ID:', offer.id, 'Type:', typeof offer.id);
                     setEditingOffer(offer);
                     setRideOfferModalVisible(true);
                   }}
@@ -870,6 +1018,12 @@ export default function DriverDashboard() {
           </View>
         </View>
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => setDebugModalVisible(true)}
+            style={[styles.createRideButton, { backgroundColor: Colors.dark.primary }]}
+            activeOpacity={0.7}>
+            <Text style={[styles.debugButtonText, { color: Colors.dark.background }]}>🔔</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setRideOfferModalVisible(true)}
             style={styles.createRideButton}
@@ -1176,6 +1330,86 @@ export default function DriverDashboard() {
 
         {selectedTab === 'offers' && renderMyOffers()}
 
+        {selectedTab === 'messages' && (
+          <View style={styles.messagesContainer}>
+            {conversationsLoading ? (
+              <View style={styles.centerContainer}>
+                <ActivityIndicator size="large" color={Colors.dark.gold} />
+                <Text style={styles.emptyText}>Loading conversations...</Text>
+              </View>
+            ) : conversations.length === 0 ? (
+              <View style={styles.centerContainer}>
+                <MessageSquare size={64} color={Colors.dark.textSecondary} />
+                <Text style={styles.emptyTitle}>No messages yet</Text>
+                <Text style={styles.emptySubtext}>
+                  Your conversations with passengers will appear here
+                </Text>
+              </View>
+            ) : (
+              conversations.map((conversation) => {
+                const timeAgo = getTimeAgo(new Date(conversation.lastMessageAt));
+                return (
+                  <TouchableOpacity
+                    key={conversation._id}
+                    style={styles.conversationItem}
+                    onPress={() => {
+                      setSelectedConversation(conversation);
+                      setChatModalVisible(true);
+                    }}
+                    activeOpacity={0.7}>
+                    <View style={styles.avatar}>
+                      <User size={24} color={Colors.dark.gold} />
+                    </View>
+                    
+                    <View style={styles.conversationContent}>
+                      <View style={styles.conversationHeader}>
+                        <Text style={styles.conversationName} numberOfLines={1}>
+                          {conversation.otherUserName}
+                        </Text>
+                        <View style={styles.timeContainer}>
+                          <Clock size={12} color={Colors.dark.textSecondary} />
+                          <Text style={styles.conversationTime}>{timeAgo}</Text>
+                        </View>
+                      </View>
+                      
+                      {conversation.rideDetails && 
+                       typeof conversation.rideDetails.from === 'string' && 
+                       typeof conversation.rideDetails.to === 'string' ? (
+                        <Text style={styles.rideRoute} numberOfLines={1}>
+                          {conversation.rideDetails.from} → {conversation.rideDetails.to}
+                        </Text>
+                      ) : null}
+                      
+                      <Text style={styles.lastMessage} numberOfLines={2}>
+                        {conversation.lastMessage || 'No messages yet'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.rightActions}>
+                      {conversation.otherUserPhone && (
+                        <TouchableOpacity
+                          style={styles.phoneButton}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleCall(conversation.otherUserPhone);
+                          }}
+                        >
+                          <Phone size={20} color={Colors.dark.gold} />
+                        </TouchableOpacity>
+                      )}
+                      {conversation.unreadCount && conversation.unreadCount > 0 ? (
+                        <View style={styles.unreadBadge}>
+                          <Text style={styles.unreadText}>{conversation.unreadCount}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        )}
+
         {selectedTab === 'insights' && renderInsights()}
       </ScrollView>
 
@@ -1224,21 +1458,34 @@ export default function DriverDashboard() {
           <Text style={[styles.bottomNavText, selectedTab === 'live' && styles.bottomNavTextActive]}>Live</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.bottomNavCreate}
-          onPress={() => {
-            setRideOfferModalVisible(true);
-            setSelectedTab('offers');
-          }}
-          activeOpacity={0.9}>
-          <Plus size={20} color={Colors.dark.background} />
-          <Text style={styles.bottomNavCreateText}>Offer ride</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
           style={[styles.bottomNavItem, selectedTab === 'offers' && styles.bottomNavItemActive]}
           onPress={() => setSelectedTab('offers')}
           activeOpacity={0.85}>
           <List size={18} color={selectedTab === 'offers' ? Colors.dark.background : Colors.dark.text} />
           <Text style={[styles.bottomNavText, selectedTab === 'offers' && styles.bottomNavTextActive]}>My rides</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.bottomNavCreate}
+          onPress={() => {
+            setRideOfferModalVisible(true);
+          }}
+          activeOpacity={0.9}>
+          <Plus size={20} color={Colors.dark.background} />
+          <Text style={styles.bottomNavCreateText}>Offer</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.bottomNavItem, selectedTab === 'messages' && styles.bottomNavItemActive]}
+          onPress={() => setSelectedTab('messages')}
+          activeOpacity={0.85}>
+          <View>
+            <MessageSquare size={18} color={selectedTab === 'messages' ? Colors.dark.background : Colors.dark.text} />
+            {totalUnreadMessages > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{totalUnreadMessages > 99 ? '99+' : totalUnreadMessages}</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.bottomNavText, selectedTab === 'messages' && styles.bottomNavTextActive]}>Messages</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.bottomNavItem, selectedTab === 'insights' && styles.bottomNavItemActive]}
@@ -1257,8 +1504,70 @@ export default function DriverDashboard() {
         buttons={alertConfig?.buttons}
         onClose={hideAlert}
       />
+
+      {selectedConversation && (
+        <ChatModal
+          visible={chatModalVisible}
+          onClose={() => {
+            setChatModalVisible(false);
+            loadConversations();
+          }}
+          rideId={selectedConversation.rideId}
+          driverId={selectedConversation.driverId}
+          driverName={
+            selectedConversation.driverId === user?.id
+              ? user.firstName || 'You'
+              : selectedConversation.otherUserName
+          }
+          driverPhone={
+            selectedConversation.driverId !== user?.id
+              ? selectedConversation.otherUserPhone
+              : undefined
+          }
+          passengerId={selectedConversation.passengerId}
+          passengerName={
+            selectedConversation.passengerId === user?.id
+              ? user.firstName || 'You'
+              : selectedConversation.otherUserName
+          }
+          passengerPhone={
+            selectedConversation.passengerId !== user?.id
+              ? selectedConversation.otherUserPhone
+              : undefined
+          }
+        />
+      )}
+
+      {/* Debug Modal */}
+      {debugModalVisible && (
+        <View style={styles.debugModal}>
+          <View style={styles.debugModalContent}>
+            <View style={styles.debugModalHeader}>
+              <Text style={styles.debugModalTitle}>Push Notification Debug</Text>
+              <TouchableOpacity
+                onPress={() => setDebugModalVisible(false)}
+                style={styles.debugModalClose}>
+                <X size={20} color={Colors.dark.text} />
+              </TouchableOpacity>
+            </View>
+            <PushNotificationDebug />
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
+}
+
+// Helper function to get time ago
+function getTimeAgo(date: Date): string {
+  const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+
+  if (seconds < 60) return 'Just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+  
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 }
 
 const styles = StyleSheet.create({
@@ -1738,6 +2047,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  disabledButton: {
+    backgroundColor: Colors.dark.textSecondary + '10',
+    borderColor: Colors.dark.textSecondary + '30',
+  },
+  disabledText: {
+    color: Colors.dark.textSecondary,
+  },
   cancelButton: {
     backgroundColor: Colors.dark.error + '15',
     borderRadius: 8,
@@ -1893,5 +2209,172 @@ const styles = StyleSheet.create({
     color: Colors.dark.background,
     fontWeight: '800',
     fontSize: 13,
+  },
+  messagesContainer: {
+    padding: 20,
+    paddingTop: 10,
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingVertical: 60,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: Colors.dark.text,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  conversationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  avatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: Colors.dark.backgroundSecondary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  conversationContent: {
+    flex: 1,
+    marginLeft: 12,
+    marginRight: 8,
+  },
+  rightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  phoneButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  conversationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  conversationName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.dark.text,
+    flex: 1,
+    marginRight: 8,
+  },
+  timeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  conversationTime: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+  },
+  rideRoute: {
+    fontSize: 13,
+    color: Colors.dark.gold,
+    marginBottom: 4,
+  },
+  lastMessage: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    lineHeight: 18,
+  },
+  unreadBadge: {
+    backgroundColor: Colors.dark.gold,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    marginLeft: 8,
+  },
+  unreadText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.dark.background,
+  },
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -8,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: Colors.dark.background,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  debugButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  debugModal: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  debugModalContent: {
+    backgroundColor: Colors.dark.card,
+    margin: 20,
+    borderRadius: 12,
+    maxHeight: '80%',
+    width: '90%',
+  },
+  debugModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+  },
+  debugModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.dark.text,
+  },
+  debugModalClose: {
+    padding: 4,
   },
 });

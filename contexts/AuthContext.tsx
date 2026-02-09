@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useAuth as useClerkAuth, useUser } from '@clerk/clerk-expo';
+import { Alert } from 'react-native';
+import { useAuth as useClerkAuth, useUser } from '@/lib/clerkHooks';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearAllClerkSessions } from '@/lib/clerkSessionHelper';
 import { logoutUserFromBackend, fetchRidePartnerProfile, submitRidePartnerApplication, RidePartnerApplicationPayload, setAuthToken } from '@/lib/api';
@@ -160,6 +161,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error('❌ Sync failed with status:', response.status, errorData);
+        
+        // Handle EMAIL_ALREADY_EXISTS error - sign out the user
+        if (response.status === 400 && errorData.code === 'EMAIL_ALREADY_EXISTS') {
+          console.log('❌ Email already exists, signing out user...');
+          try {
+            await signOut();
+            console.log('✅ Signed out successfully');
+            
+            // Show alert to user
+            setTimeout(() => {
+              Alert.alert(
+                'Email Already Registered',
+                'This email is already registered in our system. Please sign in with your existing account instead.',
+                [{ text: 'OK' }]
+              );
+            }, 500);
+          } catch (signOutErr) {
+            console.error('Error signing out:', signOutErr);
+          }
+          throw new Error('EMAIL_ALREADY_EXISTS');
+        }
+        
         throw new Error(`Failed to sync: ${response.status}`);
       }
 
@@ -197,6 +220,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : JSON.stringify(err);
+      
+      // EMAIL_ALREADY_EXISTS is a critical error - user should login instead
+      if (errorMsg.includes('EMAIL_ALREADY_EXISTS')) {
+        console.error('❌ Critical: Email already exists. User has been signed out.');
+        // User is already signed out in the if block above
+        return;
+      }
+      
       console.warn('⚠️ Sync failed (non-critical):', errorMsg);
       // Don't block auth - user is already authenticated via Clerk
     }

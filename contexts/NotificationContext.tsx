@@ -74,10 +74,29 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
             
             // Register token with backend if user is logged in
             if (user?.id) {
-              await NotificationService.registerPushToken(user.id, token);
+              console.log('📤 Registering push token with backend for user:', user.id);
+              const registered = await NotificationService.registerPushToken(user.id, token);
+              if (registered) {
+                console.log('✅ Push token successfully registered with backend');
+              } else {
+                console.log('⚠️ Push token registration with backend failed');
+              }
             }
           } else {
-            console.log('ℹ️ No remote push token (using local notifications only)');
+            console.log('⚠️ No remote push token obtained - Firebase/FCM not configured');
+            console.log('ℹ️ Push notifications will not work - only local notifications');
+            
+            // For testing - send a local notification to verify that notifications work
+            if (user?.id) {
+              console.log('🧪 Sending test local notification...');
+              setTimeout(async () => {
+                await NotificationService.sendLocalNotification(
+                  '🧪 Notification Test',
+                  'Local notifications are working. Push notifications need Firebase setup.',
+                  { type: 'test' }
+                );
+              }, 2000);
+            }
           }
         }
 
@@ -112,6 +131,22 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
                     from: data.from,
                     to: data.to,
                     departureTime: data.departureTime,
+                  }
+                }));
+              });
+            }
+            
+            // Handle departure reminder notifications
+            if (data.type === 'departure_reminder' && data.rideId) {
+              console.log('🔗 Navigate to extend time screen for departure reminder:', data.rideId);
+              import('@react-native-async-storage/async-storage').then(async ({ default: AsyncStorage }) => {
+                await AsyncStorage.setItem('pendingNavigation', JSON.stringify({
+                  screen: 'ExtendTime',
+                  params: {
+                    offerId: data.rideId,
+                    rideId: data.rideId,
+                    action: data.action,
+                    hasBookings: data.hasBookings,
                   }
                 }));
               });

@@ -20,6 +20,7 @@ import {
   ActivityIndicator,
   Keyboard,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { MapView, Marker, PROVIDER_GOOGLE, checkMapAvailability, MapPlaceholder } from './ConditionalMap';
 import type { Region } from 'react-native-maps';
@@ -29,6 +30,7 @@ import { GOOGLE_MAPS_API_KEY, MAP_CONFIG } from '@/config/googleMaps';
 import { calculateDistance, estimateETA } from '@/lib/routeService';
 
 const { width, height } = Dimensions.get('window');
+const IS_WEB = Platform.OS === 'web';
 
 interface PlacePrediction {
   place_id: string;
@@ -91,9 +93,13 @@ export default function LocationPicker({
   const searchPlaces = async (query: string) => {
     try {
       setLoading(true);
-      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
-        query
-      )}&key=${GOOGLE_MAPS_API_KEY}&components=country:in`;
+      
+      // Use backend proxy on web to avoid CORS, direct API on mobile
+      const url = IS_WEB
+        ? `http://localhost:5000/api/maps/autocomplete?input=${encodeURIComponent(query)}`
+        : `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
+            query
+          )}&key=${GOOGLE_MAPS_API_KEY}&components=country:in`;
 
       const response = await fetch(url);
       const data = await response.json();
@@ -117,8 +123,10 @@ export default function LocationPicker({
       setLoading(true);
       setPredictions([]);
 
-      // Get place details for coordinates
-      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=geometry&key=${GOOGLE_MAPS_API_KEY}`;
+      // Get place details for coordinates - use proxy on web
+      const url = IS_WEB
+        ? `http://localhost:5000/api/maps/place-details?place_id=${placeId}`
+        : `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=geometry&key=${GOOGLE_MAPS_API_KEY}`;
 
       const response = await fetch(url);
       const data = await response.json();
@@ -157,8 +165,10 @@ export default function LocationPicker({
     try {
       setLoading(true);
 
-      // Reverse geocode to get address
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`;
+      // Reverse geocode to get address - use proxy on web
+      const url = IS_WEB
+        ? `http://localhost:5000/api/maps/geocode?latlng=${latitude},${longitude}`
+        : `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`;
 
       const response = await fetch(url);
       const data = await response.json();
@@ -470,5 +480,31 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: Colors.dark.background,
+  },  webConfirmContainer: {
+    padding: 16,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
+    margin: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
   },
-});
+  webHint: {
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  webConfirmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.dark.gold,
+    padding: 14,
+    borderRadius: 8,
+  },
+  webConfirmText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.dark.background,
+  },});

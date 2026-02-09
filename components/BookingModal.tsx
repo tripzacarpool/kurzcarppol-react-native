@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,8 @@ import { RazorpayWebView } from './RazorpayWebView';
 import { DRIVER_MODE_META } from '@/constants/driverModes';
 import CustomAlert, { AlertType } from './CustomAlert';
 import RideTrackingMap from './RideTrackingMap';
+import ChatModal from './ChatModal';
+import { getSocket } from '@/lib/locationSocket';
 import {
   processWalletPayment,
   getWalletBalance,
@@ -58,6 +60,50 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   const [pickupActionLoading, setPickupActionLoading] = useState(false);
   const [completionLoading, setCompletionLoading] = useState(false);
   const [showTrackingMap, setShowTrackingMap] = useState(false);
+  const [chatModalVisible, setChatModalVisible] = useState(false);
+  const [liveAvailableSeats, setLiveAvailableSeats] = useState<number[]>([]);
+  const rideRef = useRef(ride);
+
+  // Update ride ref when ride changes
+  useEffect(() => {
+    rideRef.current = ride;
+    if (ride?.availableSeats) {
+      setLiveAvailableSeats(ride.availableSeats);
+    }
+  }, [ride]);
+
+  // Listen for real-time seat booking updates
+  useEffect(() => {
+    if (!visible || !ride?.id) return;
+
+    try {
+      const socket = getSocket();
+      if (!socket) return;
+
+      const handleSeatUpdate = (data: { offerId: string; availableSeats: number[]; status: string }) => {
+        if (data.offerId === ride.id) {
+          console.log(`📡 Real-time seat update for ${ride.id}: [${data.availableSeats.join(', ')}]`);
+          setLiveAvailableSeats(data.availableSeats);
+          
+          // Deselect any seats that are no longer available
+          setSelectedSeats(prev => prev.filter(seat => data.availableSeats.includes(seat)));
+          
+          // Show alert if ride is fully booked
+          if (data.availableSeats.length === 0 && data.status === 'booked') {
+            showAlert('Ride Fully Booked', 'All seats have been booked by other passengers.', 'warning');
+          }
+        }
+      };
+
+      socket.on('ride:offer:booked', handleSeatUpdate);
+
+      return () => {
+        socket.off('ride:offer:booked', handleSeatUpdate);
+      };
+    } catch (error) {
+      console.error('Error setting up socket listener:', error);
+    }
+  }, [visible, ride?.id]);
   
   // Custom alert state
   const [alertVisible, setAlertVisible] = useState(false);
@@ -411,6 +457,218 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   const renderSeatLayout = useMemo(() => {
     if (!ride) return null;
     
+    const totalSeats = ride.totalSeats || 4;
+    const vehicleType = ride.vehicleType || 'four_wheeler';
+    // Use live seat availability for real-time updates
+    const availableSeats = liveAvailableSeats.length > 0 ? liveAvailableSeats : (ride.availableSeats || []);
+    
+    // AUTO RICKSHAW layout (3-wheeler):
+    // Driver (Seat 1) is at front alone
+    // Back: [Pass 1 (Seat 2)] [Pass 2 (Seat 3)] [Pass 3 (Seat 4)]
+    const renderAutoLayout = () => {
+      const backSeats = [2, 3, 4]; // All 3 passengers sit in back
+      
+      return (
+        <View style={styles.seatContainer}>
+          <View style={styles.autoDriverRow}>
+            <Text style={styles.rowLabel}>Front</Text>
+            <View style={styles.autoDriverSeat}>
+              <View style={[styles.seat, styles.seatDriver]}>
+                <Armchair size={28} color={Colors.dark.textSecondary} />
+                <Text style={[styles.seatNumber, styles.seatNumberDisabled]}>1</Text>
+              </View>
+              <Text style={styles.seatLabel}>Driver</Text>
+            </View>
+          </View>
+          
+          <View style={styles.seatRow}>
+            <Text style={styles.rowLabel}>Back</Text>
+            {backSeats.map((seatNumber) => {
+              const isAvailable = availableSeats.includes(seatNumber);
+              const isSelected = selectedSeats.includes(seatNumber);
+              const isBooked = !isAvailable;
+
+              return (
+                <View key={seatNumber} style={styles.seatWrapper}>
+                  <TouchableOpacity
+                    style={[
+                      styles.seat,
+                      isBooked && styles.seatUnavailable,
+                      isSelected && styles.seatSelected,
+                      !isAvailable && !isSelected && styles.seatBooked,
+                    ]}
+                    disabled={!isAvailable}
+                    onPress={() => handleSeatSelect(seatNumber)}>
+                    <Armchair
+                      size={28}
+                      color={
+                        isSelected
+                          ? Colors.dark.background
+                          : isAvailable
+                          ? Colors.dark.gold
+                          : Colors.dark.textSecondary
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.seatNumber,
+                        isSelected && styles.seatNumberSelected,
+                        isBooked && styles.seatNumberDisabled,
+                      ]}>
+                      {seatNumber}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      );
+    };
+    
+    // INDIAN CAR layout (Right-Hand Drive):
+    // Front: [Pass 1 (Seat 2)] [Driver (Seat 1)]
+    // Row 2: [Pass 2 (Seat 3)] [Pass 3 (Seat 4)] [Pass 4 (Seat 5)]
+    // Row 3 (7-seater): [Pass 5 (Seat 6)] [Pass 6 (Seat 7)] [Pass 7 (Seat 8)]
+    
+    const renderIndianCarLayout = () => {
+      const frontSeats = [2, 1]; // LEFT to RIGHT: Front Passenger, Driver
+      
+      // Calculate rows based on total seats
+      // Total seats includes driver, so passenger seats = totalSeats - 1
+      const passengerSeats = totalSeats - 1;
+      
+      // Distribute remaining seats into rows of 3
+      const remainingAfterFront = passengerSeats - 1; // Already have front passenger
+      const rows: number[][] = [];
+      
+      let seatNum = 3; // Start from seat 3
+      let remaining = remainingAfterFront;
+      
+      while (remaining > 0) {
+        const seatsInRow = Math.min(3, remaining);
+        rows.push(Array.from({ length: seatsInRow }, (_, i) => seatNum + i));
+        seatNum += seatsInRow;
+        remaining -= seatsInRow;
+      }
+
+      return (
+        <View style={styles.seatContainer}>
+          {/* Front Row - Indian Layout (RHD) */}
+          <View style={styles.seatRow}>
+            <Text style={styles.rowLabel}>Front</Text>
+            {frontSeats.map((seatNumber) => {
+              const isDriverSeat = seatNumber === 1;
+              const isAvailable = availableSeats.includes(seatNumber);
+              const isSelected = selectedSeats.includes(seatNumber);
+              const isBooked = !isAvailable && !isDriverSeat;
+
+              return (
+                <View key={seatNumber} style={styles.seatWrapper}>
+                  <TouchableOpacity
+                    style={[
+                      styles.seat,
+                      isDriverSeat && styles.seatDriver,
+                      isBooked && styles.seatUnavailable,
+                      isSelected && styles.seatSelected,
+                      !isAvailable && !isDriverSeat && !isSelected && styles.seatBooked,
+                    ]}
+                    disabled={!isAvailable || isDriverSeat}
+                    onPress={() => handleSeatSelect(seatNumber)}>
+                    <Armchair
+                      size={28}
+                      color={
+                        isDriverSeat
+                          ? Colors.dark.textSecondary
+                          : isSelected
+                          ? Colors.dark.background
+                          : isAvailable
+                          ? Colors.dark.gold
+                          : Colors.dark.textSecondary
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.seatNumber,
+                        isDriverSeat && styles.seatNumberDisabled,
+                        isSelected && styles.seatNumberSelected,
+                      ]}>
+                      {seatNumber}
+                    </Text>
+                  </TouchableOpacity>
+                  {isDriverSeat && (
+                    <Text style={styles.seatLabel}>Driver</Text>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Additional Rows */}
+          {rows.map((rowSeats, rowIndex) => (
+            <View key={`row-${rowIndex}`} style={styles.seatRow}>
+              <Text style={styles.rowLabel}>Row {rowIndex + 2}</Text>
+              {rowSeats.map((seatNumber) => {
+                const isAvailable = availableSeats.includes(seatNumber);
+                const isSelected = selectedSeats.includes(seatNumber);
+                const isBooked = !isAvailable;
+
+                return (
+                  <View key={seatNumber} style={styles.seatWrapper}>
+                    <TouchableOpacity
+                      style={[
+                        styles.seat,
+                        isBooked && styles.seatUnavailable,
+                        isSelected && styles.seatSelected,
+                        !isAvailable && !isSelected && styles.seatBooked,
+                      ]}
+                      disabled={!isAvailable}
+                      onPress={() => handleSeatSelect(seatNumber)}>
+                      <Armchair
+                        size={28}
+                        color={
+                          isSelected
+                            ? Colors.dark.background
+                            : isAvailable
+                            ? Colors.dark.gold
+                            : Colors.dark.textSecondary
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.seatNumber,
+                          isSelected && styles.seatNumberSelected,
+                          isBooked && styles.seatNumberDisabled,
+                        ]}>
+                        {seatNumber}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+      );
+    };
+
+    // For two-wheelers (bikes), no seat selection needed - only 1 passenger seat
+    if (totalSeats === 2 || vehicleType === 'two_wheeler') {
+      return null; // Will auto-select seat 2 in payment step
+    }
+    
+    // For auto-rickshaws (3-wheelers), show auto layout
+    if (totalSeats === 4 && vehicleType === 'three_wheeler') {
+      return renderAutoLayout();
+    }
+    
+    return renderIndianCarLayout();
+  }, [liveAvailableSeats, ride?.totalSeats, selectedSeats, handleSeatSelect]);
+
+  // Old code kept for reference
+  const renderSeatLayoutOld = useMemo(() => {
+    if (!ride) return null;
+    
     const rows = 2;
     const seatsPerRow = [2, 2];
     let seatCounter = 1;
@@ -526,7 +784,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             <View style={styles.stepIcon}>
               <MessageSquare size={32} color={Colors.dark.gold} />
             </View>
-            <Text style={styles.stepTitle}>Custom Request (Optional)</Text>
+            <Text style={styles.stepTitle}>Special Requests & Chat</Text>
             <TextInput
               style={styles.textInput}
               placeholder="Any special requests or pickup instructions?"
@@ -543,6 +801,15 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               onChangeText={setCustomFare}
               keyboardType="numeric"
             />
+            
+            {/* Chat with Driver Button */}
+            <TouchableOpacity
+              style={styles.chatButton}
+              onPress={() => setChatModalVisible(true)}>
+              <MessageSquare size={20} color={Colors.dark.gold} />
+              <Text style={styles.chatButtonText}>Chat with Driver</Text>
+            </TouchableOpacity>
+            
             <TouchableOpacity
               style={styles.primaryButton}
               onPress={handleRequestContinue}>
@@ -562,8 +829,16 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             <View style={styles.stepIcon}>
               <Armchair size={32} color={Colors.dark.gold} />
             </View>
-            <Text style={styles.stepTitle}>Select Your Seat</Text>
-            {renderSeatLayout}
+            <Text style={styles.stepTitle}>
+              {ride.totalSeats === 2 ? 'Passenger Seat' : 'Select Your Seat'}
+            </Text>
+            {ride.totalSeats === 2 ? (
+              <View style={styles.bikeNote}>
+                <Text style={styles.bikeNoteText}>
+                  Two-wheeler ride - Only 1 passenger seat available
+                </Text>
+              </View>
+            ) : renderSeatLayout}
             <View style={styles.seatLegend}>
               <View style={styles.legendItem}>
                 <View style={[styles.legendBox, { backgroundColor: Colors.dark.gold + '30' }]} />
@@ -577,6 +852,10 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                 <View style={[styles.legendBox, { backgroundColor: Colors.dark.border }]} />
                 <Text style={styles.legendText}>Booked</Text>
               </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendBox, { backgroundColor: Colors.dark.backgroundSecondary, borderWidth: 1, borderColor: Colors.dark.border }]} />
+                <Text style={styles.legendText}>Driver</Text>
+              </View>
             </View>
             {selectedSeats.length > 0 && (
               <View style={styles.fareBreakdown}>
@@ -587,8 +866,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               </View>
             )}
             <TouchableOpacity
-              style={[styles.primaryButton, selectedSeats.length === 0 && styles.disabledButton]}
-              disabled={selectedSeats.length === 0}
+              style={[
+                styles.primaryButton, 
+                selectedSeats.length === 0 && ride.totalSeats !== 2 && styles.disabledButton
+              ]}
+              disabled={selectedSeats.length === 0 && ride.totalSeats !== 2}
               onPress={handleSeatsContinue}>
               <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
             </TouchableOpacity>
@@ -663,6 +945,17 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                 )}
               </TouchableOpacity>
             </View>
+            
+            {/* Escrow Payment Notice */}
+            <View style={styles.escrowNotice}>
+              <ShieldCheck size={20} color={Colors.dark.gold} />
+              <View style={styles.escrowText}>
+                <Text style={styles.escrowTitle}>Secure Escrow Payment</Text>
+                <Text style={styles.escrowDescription}>
+                  Your payment is held securely and will only be released to the driver after successful ride completion. This protects both you and the driver.
+                </Text>
+              </View>
+            </View>
 
             <TouchableOpacity
               style={[styles.primaryButton, (!paymentMethod || processingPayment) && styles.disabledButton]}
@@ -723,6 +1016,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                 <Text style={styles.primaryButtonText}>Mark myself dropped off</Text>
               )}
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => setChatModalVisible(true)}>
+              <MessageSquare size={20} color={Colors.dark.gold} />
+              <Text style={styles.secondaryButtonText}>Contact Driver</Text>
+            </TouchableOpacity>
             <Text style={styles.escrowNote}>Driver payout releases after every passenger on the route is marked finished.</Text>
           </View>
         );
@@ -774,6 +1073,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                   {pickupConfirmed ? 'Tracking Live' : 'I boarded the car'}
                 </Text>
               )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => setChatModalVisible(true)}>
+              <MessageSquare size={20} color={Colors.dark.gold} />
+              <Text style={styles.secondaryButtonText}>Contact Driver</Text>
             </TouchableOpacity>
             <Text style={styles.escrowNote}>Escrow releases only after the passenger is marked dropped.</Text>
           </View>
@@ -885,6 +1190,30 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         type={alertConfig.type}
         onClose={hideAlert}
       />
+
+      {ride && user && (
+        <ChatModal
+          visible={chatModalVisible}
+          onClose={() => {
+            console.log('🔍 [BOOKING] ChatModal closing');
+            setChatModalVisible(false);
+          }}
+          rideId={ride.id}
+          driverId={(() => {
+            const driverId = ride.driverId || ride.clerkId || ride.driver?.name || 'driver';
+            console.log('🔍 [BOOKING] Passing driverId to ChatModal:', driverId);
+            console.log('🔍 [BOOKING] ride.driverId:', ride.driverId);
+            console.log('🔍 [BOOKING] ride.clerkId:', ride.clerkId);
+            console.log('🔍 [BOOKING] ride.driver?.name:', ride.driver?.name);
+            return driverId;
+          })()}
+          driverName={ride.driver?.name || 'Driver'}
+          driverPhone={ride.vehicle?.number}
+          passengerId={user.id}
+          passengerName={user.firstName || 'Passenger'}
+          passengerPhone={user.email}
+        />
+      )}
 
       {showTrackingMap && pickupLocation && dropoffLocation && (
         <Modal
@@ -1227,6 +1556,16 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.gold,
     borderColor: Colors.dark.gold,
   },
+  seatDriver: {
+    backgroundColor: Colors.dark.backgroundSecondary,
+    borderColor: Colors.dark.border,
+    borderWidth: 1,
+    opacity: 0.6,
+  },
+  seatBooked: {
+    backgroundColor: Colors.dark.border,
+    borderColor: Colors.dark.border,
+  },
   seatNumber: {
     color: Colors.dark.gold,
     fontSize: 12,
@@ -1236,8 +1575,31 @@ const styles = StyleSheet.create({
   seatNumberUnavailable: {
     color: Colors.dark.textSecondary,
   },
+  seatNumberDisabled: {
+    color: Colors.dark.textSecondary,
+    opacity: 0.7,
+  },
   seatNumberSelected: {
     color: Colors.dark.background,
+  },
+  seatWrapper: {
+    alignItems: 'center',
+  },
+  seatLabel: {
+    marginTop: 6,
+    fontSize: 10,
+    color: Colors.dark.textSecondary,
+    textTransform: 'uppercase',
+    fontWeight: '600',
+  },
+  rowLabel: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginRight: 12,
+    alignSelf: 'center',
+    minWidth: 45,
   },
   seatLegend: {
     flexDirection: 'row',
@@ -1258,6 +1620,76 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 12,
     color: Colors.dark.textSecondary,
+  },
+  bikeNote: {
+    width: '100%',
+    backgroundColor: Colors.dark.card,
+    padding: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '30',
+  },
+  bikeNoteText: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  autoDriverRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+  },
+  autoDriverSeat: {
+    alignItems: 'center',
+  },
+  chatButton: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
+    paddingVertical: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '40',
+  },
+  chatButtonText: {
+    color: Colors.dark.gold,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  escrowNotice: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: Colors.dark.gold + '15',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '30',
+  },
+  escrowText: {
+    flex: 1,
+  },
+  escrowTitle: {
+    fontSize: 14,
+    color: Colors.dark.gold,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  escrowDescription: {
+    fontSize: 12,
+    color: Colors.dark.text,
+    lineHeight: 18,
   },
   fareBreakdown: {
     width: '100%',
@@ -1369,14 +1801,19 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     width: '100%',
-    backgroundColor: 'transparent',
-    paddingVertical: 12,
-    borderRadius: 12,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.backgroundSecondary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold,
+    gap: 8,
   },
   secondaryButtonText: {
-    color: Colors.dark.textSecondary,
+    color: Colors.dark.gold,
     fontSize: 16,
     fontWeight: '600',
   },

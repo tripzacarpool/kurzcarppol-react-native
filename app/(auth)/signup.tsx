@@ -32,12 +32,13 @@ import {
   CheckCircle2,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { useSignUp, useAuth } from '@clerk/clerk-expo';
+import { useSignUp, useAuth, useOAuth, useClerk } from '@/lib/clerkHooks';
 import {
   syncUserToDatabase_Safe,
   submitRidePartnerApplication,
   updateRidePartnerStatus,
   RidePartnerApplicationPayload,
+  checkEmailExists,
 } from '@/lib/api';
 import { RIDE_PARTNER_MODES } from '@/constants/ridePartnerModes';
 import {
@@ -72,6 +73,9 @@ export default function SignupScreen() {
   const router = useRouter();
   const { signUp } = useSignUp();
   const { isSignedIn, isLoaded } = useAuth();
+  // OAuth is only available on native platforms
+  const oauth = Platform.OS !== 'web' ? useOAuth({ strategy: 'oauth_google' }) : null;
+  const clerk = useClerk();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -696,6 +700,21 @@ export default function SignupScreen() {
     setError('');
 
     try {
+      // Check if email already exists in database BEFORE creating Clerk account
+      console.log('🔍 Checking if email exists...', email);
+      const emailExists = await checkEmailExists(email);
+      console.log('📊 Email exists result:', emailExists);
+      
+      if (emailExists) {
+        console.log('❌ Email already registered, showing error');
+        setError(
+          'This email is already registered. Please use the Sign In button below to login with your existing account.'
+        );
+        setLoading(false);
+        return;
+      }
+      console.log('✅ Email is available, proceeding with signup');
+      
       // Store role preference before signup
       const roleToSet = isRidePartner ? 'ride_partner' : 'passenger';
       await AsyncStorage.setItem('user_role_preference', roleToSet);
@@ -728,7 +747,35 @@ export default function SignupScreen() {
               lastName: lastName,
             });
             console.log('✅ User synced to database after signup');
-          } catch (syncErr) {
+          } catch (syncErr: any) {
+            const errorCode = syncErr?.response?.data?.code;
+            if (errorCode === 'EMAIL_ALREADY_EXISTS') {
+              // Email conflict - sign out and redirect to login
+              console.log('❌ Email already exists, signing out Clerk session...');
+              setLoading(false);
+              setSuccess(false);
+              setShowVerification(false);
+              
+              try {
+                await clerk.signOut();
+                console.log('✅ Signed out successfully');
+              } catch (signOutErr) {
+                console.error('Error signing out:', signOutErr);
+              }
+              
+              // Redirect to login with error message
+              console.log('🔄 Redirecting to login...');
+              router.replace('/(auth)/login');
+              // Show alert to inform user
+              setTimeout(() => {
+                Alert.alert(
+                  'Email Already Registered',
+                  'This email is already registered. Please sign in with your existing account.',
+                  [{ text: 'OK' }]
+                );
+              }, 500);
+              return;
+            }
             console.warn('⚠️ User sync failed (non-critical):', syncErr);
           }
         }
@@ -828,7 +875,36 @@ export default function SignupScreen() {
               lastName: result?.lastName || lastName,
             });
             console.log('✅ User synced to database after verification');
-          } catch (syncErr) {
+          } catch (syncErr: any) {
+            const errorCode = syncErr?.response?.data?.code;
+            if (errorCode === 'EMAIL_ALREADY_EXISTS') {
+              // Email conflict - sign out and redirect to login
+              console.log('❌ Email already exists during verification, signing out...');
+              setLoading(false);
+              setSuccess(false);
+              setShowVerification(false);
+              setVerificationCode('');
+              
+              try {
+                await clerk.signOut();
+                console.log('✅ Signed out successfully');
+              } catch (signOutErr) {
+                console.error('Error signing out:', signOutErr);
+              }
+              
+              // Redirect to login with error message
+              console.log('🔄 Redirecting to login...');
+              router.replace('/(auth)/login');
+              // Show alert to inform user
+              setTimeout(() => {
+                Alert.alert(
+                  'Email Already Registered',
+                  'This email is already registered. Please sign in with your existing account.',
+                  [{ text: 'OK' }]
+                );
+              }, 500);
+              return;
+            }
             console.warn('⚠️ User sync failed (non-critical):', syncErr);
           }
         }
@@ -882,16 +958,29 @@ export default function SignupScreen() {
   };
 
   const handleGoogleSignIn = async () => {
-    try {
-      console.log('🔐 Initiating Google sign-in...');
-      const result = await signUp?.create({
-        strategy: 'oauth_google',
-        redirectUrl: 'raaheasyapp://oauth-callback',
-      });
+    if (Platform.OS === 'web') {
+      setError('Google sign-up is not available on web. Please use email/password.');
+      return;
+    }
 
-      if (result?.status === 'complete') {
+    if (!oauth?.startOAuthFlow) {
+      setError('OAuth is not available');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError('');
+      console.log('🔐 Initiating Google sign-in...');
+      
+      const { createdSessionId, setActive } = await oauth.startOAuthFlow();
+
+      if (createdSessionId) {
+        await setActive?.({ session: createdSessionId });
         console.log('✅ Google sign-in complete');
         router.replace('/(tabs)');
+      } else {
+        throw new Error('No session created');
       }
     } catch (err: any) {
       console.error('❌ Google sign-up error:', {
@@ -905,6 +994,8 @@ export default function SignupScreen() {
         'Google sign-up failed';
       
       setError(errorMsg);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1102,7 +1193,10 @@ export default function SignupScreen() {
                 placeholder="Email"
                 placeholderTextColor={Colors.dark.textSecondary}
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  if (error) setError('');
+                }}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
@@ -1165,23 +1259,28 @@ export default function SignupScreen() {
               </Text>
             </View>
 
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
+            {/* Google Sign-up - Only available on native platforms */}
+            {Platform.OS !== 'web' && (
+              <>
+                <View style={styles.divider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or</Text>
+                  <View style={styles.dividerLine} />
+                </View>
 
-            <TouchableOpacity
-              style={[styles.googleButton, loading && styles.buttonDisabled]}
-              onPress={handleGoogleSignIn}
-              disabled={loading}
-              activeOpacity={0.8}>
-              {loading ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text style={styles.googleButtonText}>Sign up with Google</Text>
-              )}
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.googleButton, loading && styles.buttonDisabled]}
+                  onPress={handleGoogleSignIn}
+                  disabled={loading}
+                  activeOpacity={0.8}>
+                  {loading ? (
+                    <ActivityIndicator color="white" />
+                  ) : (
+                    <Text style={styles.googleButtonText}>Sign up with Google</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
 
             <View style={styles.loginPrompt}>
               <Text style={styles.loginPromptText}>Already have an account? </Text>

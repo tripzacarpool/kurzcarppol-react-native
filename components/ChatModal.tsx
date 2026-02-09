@@ -16,7 +16,8 @@ import { X, Send, Phone, MessageSquare } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { getOrCreateConversation, sendMessage, getMessages, markMessagesAsRead, setAuthToken } from '@/lib/api';
-import { useAuth as useClerkAuth } from '@clerk/clerk-expo';
+import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
+import { getLocationSocket } from '@/lib/locationSocket';
 
 interface Message {
   _id: string;
@@ -67,10 +68,31 @@ export default function ChatModal({
   useEffect(() => {
     if (visible && user) {
       initializeChat();
-      const interval = setInterval(loadMessages, 3000); // Poll for new messages every 3 seconds
-      return () => clearInterval(interval);
+      // Removed polling - we'll use socket events for real-time updates
     }
   }, [visible, user]);
+
+  // Set up socket listener for real-time messages
+  useEffect(() => {
+    if (!conversationId) return;
+
+    const socket = getLocationSocket();
+    const eventName = `chat:message:${conversationId}`;
+
+    const handleNewMessage = (data: any) => {
+      console.log('📨 Received new message via socket:', data);
+      if (data.senderId !== user?.id) {
+        // Only add message if it's from someone else
+        loadMessages();
+      }
+    };
+
+    socket.on(eventName, handleNewMessage);
+
+    return () => {
+      socket.off(eventName, handleNewMessage);
+    };
+  }, [conversationId, user?.id]);
 
   const initializeChat = async () => {
     if (!user) return;
@@ -84,11 +106,12 @@ export default function ChatModal({
         setAuthToken(token);
       }
 
-      // Get or create conversation
+      // Get or create conversation with passenger name for welcome message
       const { conversation } = await getOrCreateConversation({
         rideId,
         driverId,
         passengerId,
+        passengerName, // Pass passenger name for welcome message
       });
 
       setConversationId(conversation._id);

@@ -1,4 +1,4 @@
-export type RideVehicleType = 'two_wheeler' | 'four_wheeler';
+export type RideVehicleType = 'two_wheeler' | 'three_wheeler' | 'four_wheeler';
 
 export const VEHICLE_TYPE_OPTIONS: Array<{
   value: RideVehicleType;
@@ -11,8 +11,13 @@ export const VEHICLE_TYPE_OPTIONS: Array<{
     subtitle: 'Bike or scooter rides for quick solo trips',
   },
   {
+    value: 'three_wheeler',
+    label: 'Auto Rickshaw',
+    subtitle: 'Auto rides with 3 passenger seats',
+  },
+  {
     value: 'four_wheeler',
-    label: 'Four Wheeler',
+    label: 'Car (4+ Seater)',
     subtitle: 'Car rides with extra seats and comfort',
   },
 ];

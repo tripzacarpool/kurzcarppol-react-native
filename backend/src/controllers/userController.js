@@ -619,6 +619,128 @@ export const updatePushToken = async (req, res, next) => {
       clerkId,
     });
   } catch (error) {
+    console.error('❌ Error updating push token:', error);
+    next(error);
+  }
+};
+
+/**
+ * Test push notification
+ * POST /api/users/test-push
+ */
+export const testPushNotification = async (req, res, next) => {
+  try {
+    const { clerkId } = req.body;
+
+    if (!clerkId) {
+      return res.status(400).json({
+        error: 'Missing clerkId',
+        details: 'clerkId is required to test push notification',
+        code: 'MISSING_CLERK_ID',
+      });
+    }
+
+    console.log(`📱 Testing push notification for user: ${clerkId}`);
+
+    const user = await UserProfile.findOne({ clerkId });
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        details: 'No user profile found for this clerkId',
+        code: 'USER_NOT_FOUND',
+      });
+    }
+
+    if (!user.pushToken) {
+      return res.status(400).json({
+        error: 'No push token',
+        details: 'User does not have a push token registered',
+        code: 'NO_PUSH_TOKEN',
+        debug: {
+          clerkId,
+          hasPushToken: !!user.pushToken,
+          profileExists: true,
+        },
+      });
+    }
+
+    console.log(
+      `📱 Found push token for ${clerkId}: ${user.pushToken.substring(0, 30)}...`,
+    );
+
+    const { Expo } = await import('expo-server-sdk');
+    const expo = new Expo();
+
+    // Validate push token format
+    if (!Expo.isExpoPushToken(user.pushToken)) {
+      return res.status(400).json({
+        error: 'Invalid push token format',
+        details: 'The stored push token is not in the correct format',
+        code: 'INVALID_TOKEN_FORMAT',
+        debug: {
+          tokenPrefix: user.pushToken.substring(0, 20),
+          expectedPrefix: 'ExponentPushToken[',
+        },
+      });
+    }
+
+    const messages = [
+      {
+        to: user.pushToken,
+        sound: 'default',
+        title: '🧪 Test Push Notification',
+        body: 'This is a test notification. If you see this, push notifications are working!',
+        badge: 1,
+        data: {
+          type: 'test',
+          timestamp: new Date().toISOString(),
+        },
+        priority: 'high',
+      },
+    ];
+
+    console.log('📤 Sending test push notification...');
+
+    const chunks = expo.chunkPushNotifications(messages);
+    let notificationResults = [];
+
+    for (const chunk of chunks) {
+      try {
+        const result = await expo.sendPushNotificationsAsync(chunk);
+        console.log('📡 Test push notification result:', result);
+        notificationResults.push(...result);
+
+        // Check for errors
+        result.forEach((receipt, index) => {
+          if (receipt.status === 'error') {
+            console.error('📱 Test push notification error:', receipt.message);
+            console.error('📱 Error details:', receipt.details);
+          } else if (receipt.status === 'ok') {
+            console.log('✅ Test push notification sent successfully');
+          }
+        });
+      } catch (sendError) {
+        console.error('❌ Error sending test push notification:', sendError);
+        return res.status(500).json({
+          error: 'Failed to send push notification',
+          details: sendError.message,
+          code: 'SEND_ERROR',
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Test push notification sent',
+      results: notificationResults,
+      debug: {
+        clerkId,
+        tokenValid: true,
+        messagesSent: messages.length,
+      },
+    });
+  } catch (error) {
     console.error('❌ Error updating push token:', error.message);
     next(error);
   }
@@ -752,6 +874,38 @@ export const updateDriverVerification = async (req, res, next) => {
       error: 'Failed to update driver verification',
       details: error.message,
       code: 'UPDATE_ERROR',
+    });
+  }
+};
+
+// Check if email exists in database
+export const checkEmailExists = async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({
+        error: 'Email is required',
+        code: 'MISSING_EMAIL',
+      });
+    }
+
+    // Sanitize email
+    const sanitizedEmail = email.trim().toLowerCase();
+
+    // Check if email exists in database
+    const existingUser = await UserProfile.findOne({ email: sanitizedEmail });
+
+    res.json({
+      exists: !!existingUser,
+      email: sanitizedEmail,
+    });
+  } catch (error) {
+    console.error('❌ Check email exists error:', error.message);
+    res.status(500).json({
+      error: 'Failed to check email',
+      details: error.message,
+      code: 'CHECK_ERROR',
     });
   }
 };

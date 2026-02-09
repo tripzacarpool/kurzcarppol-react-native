@@ -14,6 +14,7 @@ import { clerkAuth } from './middleware/clerkAuth.js';
 import { setupLocationEvents } from './controllers/locationController.js';
 import { setSocketIO } from './controllers/rideController.js';
 import { setSocketIO as setOfferSocketIO } from './controllers/rideOfferController.js';
+import { setChatSocketIO } from './controllers/chatController.js';
 import healthRoutes from './routes/healthRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
@@ -22,6 +23,8 @@ import rideRoutes from './routes/rideRoutes.js';
 import rideOfferRoutes from './routes/rideOfferRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
+import mapsProxyRoutes from './routes/mapsProxyRoutes.js';
+import { startDepartureNotificationService } from './services/departureNotificationService.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -153,6 +156,7 @@ app.use('/api/rides', rideRoutes);
 app.use('/api/ride-offers', rideOfferRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/maps', mapsProxyRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -195,6 +199,7 @@ io.on('connection', (socket) => {
 // Inject socket.io instance into ride controller
 setSocketIO(io);
 setOfferSocketIO(io);
+setChatSocketIO(io);
 
 // Export io instance for use in controllers
 export { io };
@@ -235,6 +240,12 @@ function startBackgroundTasks() {
 
   // Run immediately on startup
   setTimeout(checkExpiringRidesTask, 5000); // Wait 5 seconds after startup
+
+  // Start departure notification service (checks every minute)
+  startDepartureNotificationService();
+  console.log(
+    '🔔 Background task started: Checking for upcoming departures every minute',
+  );
 }
 
 // Start Server

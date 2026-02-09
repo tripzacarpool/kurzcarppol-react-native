@@ -5,6 +5,7 @@ import {
   getMessages,
   markAsRead,
   getUserConversations,
+  cleanupBrokenConversations,
 } from '../controllers/chatController.js';
 
 const router = express.Router();
@@ -23,5 +24,8 @@ router.post('/read', markAsRead);
 
 // GET /api/chat/conversations/:userId - Get user's conversations
 router.get('/conversations/:userId', getUserConversations);
+
+// DELETE /api/chat/conversations/cleanup - Clean up broken conversations
+router.delete('/conversations/cleanup', cleanupBrokenConversations);
 
 export default router;

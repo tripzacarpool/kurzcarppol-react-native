@@ -1,7 +1,23 @@
 import { io } from 'socket.io-client';
+import { Platform } from 'react-native';
 
-const BACKEND_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+// Automatically detects if running on emulator or physical device
+const getBackendUrl = () => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
+  // Android emulator uses 10.0.2.2 to access host's localhost
+  if (Platform.OS === 'android' && __DEV__) {
+    return 'http://10.0.2.2:5000'; // Android emulator
+  }
+
+  // Physical device or iOS simulator
+  return 'http://192.168.29.161:5000';
+};
+
+const BACKEND_URL = getBackendUrl();
+console.log('🔌 Socket Backend URL:', BACKEND_URL);
 
 let socket: any = null;
 
@@ -178,3 +194,8 @@ export function unsubscribeFromRideEvents() {
   sock.off('ride:accepted');
   sock.off('ride_accepted');
 }
+
+/**
+ * Export socket instance (ensures initialization)
+ */
+export { socket, getLocationSocket as getSocket };

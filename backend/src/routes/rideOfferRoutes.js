@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   createRideOffer,
+  updateRideOffer,
   getAvailableRideOffers,
   getRideOfferById,
   extendRideOfferTime,
@@ -15,6 +16,9 @@ const router = express.Router();
 
 // Create a new ride offer
 router.post('/create', createRideOffer);
+
+// Update an existing ride offer
+router.put('/:id', updateRideOffer);
 
 // Get all available ride offers
 router.get('/available', getAvailableRideOffers);

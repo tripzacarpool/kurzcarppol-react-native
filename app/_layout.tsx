@@ -5,19 +5,26 @@ import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider, useAuthContext } from '@/contexts/AuthContext';
 import { LocationProvider } from '@/contexts/LocationContext';
 import { NotificationProvider } from '@/contexts/NotificationContext';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { MessagesProvider } from '@/contexts/MessagesContext';
+import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { Colors } from '@/constants/Colors';
-import { ClerkProvider } from '@clerk/clerk-expo';
+// Conditional imports for Clerk based on platform
+import { ClerkProvider as ClerkProviderExpo } from '@clerk/clerk-expo';
+import { ClerkProvider as ClerkProviderReact } from '@clerk/clerk-react';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchAndStoreUserIP } from '@/lib/ipService';
 import { testBackendConnectivity } from '@/lib/connectivityHelper';
 import NotificationToast from '@/components/NotificationToast';
 
-const tokenCache = {
+// Use the appropriate ClerkProvider based on platform
+const ClerkProvider = Platform.OS === 'web' ? ClerkProviderReact : ClerkProviderExpo;
+
+// Token cache for native only (web uses cookies/localStorage automatically)
+const tokenCache = Platform.OS === 'web' ? undefined : {
   async getToken(key: string) {
     try {
-      console.log('🔑 Getting token from secure store:', key);
+      console.log('🔑 Getting token from SecureStore:', key);
       const token = await SecureStore.getItemAsync(key);
       console.log('🔑 Token retrieved:', token ? 'exists' : 'null');
       return token;
@@ -28,7 +35,7 @@ const tokenCache = {
   },
   async saveToken(key: string, value: string) {
     try {
-      console.log('💾 Saving token to secure store:', key);
+      console.log('💾 Saving token to SecureStore:', key);
       await SecureStore.setItemAsync(key, value);
       console.log('✅ Token saved');
     } catch (err) {
@@ -177,14 +184,21 @@ export default function RootLayout() {
   }
 
   console.log('🔐 Clerk initialized with key:', publishableKey.substring(0, 20) + '...');
+  console.log('🌐 Platform:', Platform.OS);
+  console.log('📦 Using Clerk Provider:', Platform.OS === 'web' ? 'clerk-react (Web)' : 'clerk-expo (Native)');
 
   return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+    <ClerkProvider 
+      publishableKey={publishableKey} 
+      {...(tokenCache ? { tokenCache } : {})}
+    >
       <AuthProvider>
         <NotificationProvider>
-          <LocationProvider>
-            <RootLayoutNav />
-          </LocationProvider>
+          <MessagesProvider>
+            <LocationProvider>
+              <RootLayoutNav />
+            </LocationProvider>
+          </MessagesProvider>
         </NotificationProvider>
       </AuthProvider>
     </ClerkProvider>

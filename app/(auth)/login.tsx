@@ -14,7 +14,7 @@ import {
 import { useRouter } from 'expo-router';
 import { LogIn, Mail, Lock, ArrowLeft, LogOut } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { useSignIn, useSession, useClerk } from '@clerk/clerk-expo';
+import { useSignIn, useSession, useClerk, useOAuth } from '@/lib/clerkHooks';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { clearAllClerkSessions } from '@/lib/clerkSessionHelper';
 import * as NotificationService from '@/lib/notificationService';
@@ -25,6 +25,8 @@ export default function LoginScreen() {
   const { session } = useSession();
   const clerk = useClerk();
   const { isSignedIn, signOut } = useAuthContext();
+  // OAuth is only available on native platforms
+  const oauth = Platform.OS !== 'web' ? useOAuth({ strategy: 'oauth_google' }) : null;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -143,14 +145,28 @@ export default function LoginScreen() {
   };
 
   const handleGoogleSignIn = async () => {
-    try {
-      const result = await signIn?.create({
-        strategy: 'oauth_google',
-        redirectUrl: 'raaheasyapp://oauth-callback',
-      });
+    if (Platform.OS === 'web') {
+      setError('Google sign-in is not available on web. Please use email/password.');
+      return;
+    }
 
-      if (result?.status === 'complete') {
+    if (!oauth?.startOAuthFlow) {
+      setError('OAuth is not available');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError('');
+      
+      const { createdSessionId, setActive } = await oauth.startOAuthFlow();
+
+      if (createdSessionId) {
+        await setActive?.({ session: createdSessionId });
+        console.log('✅ Google sign-in successful');
         router.replace('/driver/dashboard');
+      } else {
+        throw new Error('No session created');
       }
     } catch (err: any) {
       // Ignore "session_exists" error
@@ -161,6 +177,8 @@ export default function LoginScreen() {
       }
       setError(err?.errors?.[0]?.message || 'Google sign-in failed');
       console.error('Google sign-in error:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -256,23 +274,28 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
+            {/* Google Sign-in - Only available on native platforms */}
+            {Platform.OS !== 'web' && (
+              <>
+                <View style={styles.divider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or</Text>
+                  <View style={styles.dividerLine} />
+                </View>
 
-            <TouchableOpacity
-              style={[styles.googleButton, loading && styles.buttonDisabled]}
-              onPress={handleGoogleSignIn}
-              disabled={loading}
-              activeOpacity={0.8}>
-              {loading ? (
-                <ActivityIndicator color={Colors.dark.background} />
-              ) : (
-                <Text style={styles.googleButtonText}>Sign in with Google</Text>
-              )}
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.googleButton, loading && styles.buttonDisabled]}
+                  onPress={handleGoogleSignIn}
+                  disabled={loading}
+                  activeOpacity={0.8}>
+                  {loading ? (
+                    <ActivityIndicator color={Colors.dark.background} />
+                  ) : (
+                    <Text style={styles.googleButtonText}>Sign in with Google</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
 
             <View style={styles.signupPrompt}>
               <Text style={styles.signupPromptText}>Don't have an account? </Text>

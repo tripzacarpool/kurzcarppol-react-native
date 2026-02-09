@@ -8,13 +8,18 @@ import {
   logoutUser,
   getProfile,
   updatePushToken,
+  testPushNotification,
   updateDriverVerification,
+  checkEmailExists,
 } from '../controllers/userController.js';
 
 const router = express.Router();
 
 // POST /api/users/sync - Sync user from Clerk
 router.post('/sync', syncUser);
+
+// GET /api/users/check-email - Check if email exists
+router.get('/check-email', checkEmailExists);
 
 // GET /api/users/profile - Get current user profile (requires auth)
 router.get('/profile', getProfile);
@@ -36,6 +41,9 @@ router.put('/ip', updateUserIP);
 
 // POST /api/users/push-token - Update push notification token
 router.post('/push-token', updatePushToken);
+
+// POST /api/users/test-push - Test push notification
+router.post('/test-push', testPushNotification);
 
 // POST /api/users/driver-verification - Update driver verification status
 router.post('/driver-verification', updateDriverVerification);

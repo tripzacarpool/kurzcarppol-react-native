@@ -347,6 +347,7 @@ const rideOfferSchema = new Schema(
       completedAt: Date,
       confirmedPassengers: [String], // Array of passenger clerkIds
     },
+    departureNotificationSent: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now, index: true },
     updatedAt: { type: Date, default: Date.now },
     completedAt: Date,

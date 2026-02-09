@@ -1,4 +1,5 @@
-import { UserProfile, RideRequest } from '../config/models.js';
+import mongoose from 'mongoose';
+import { UserProfile, RideRequest, RideOffer } from '../config/models.js';
 import { locationService } from '../services/locationService.js';
 
 // Socket.io instance will be injected
@@ -8,7 +9,7 @@ export function setSocketIO(socketInstance) {
   io = socketInstance;
 }
 
-const VEHICLE_TYPES = ['two_wheeler', 'four_wheeler'];
+const VEHICLE_TYPES = ['two_wheeler', 'three_wheeler', 'four_wheeler'];
 
 const normalizeVehicleType = (value) =>
   VEHICLE_TYPES.includes(value) ? value : 'four_wheeler';
@@ -28,6 +29,34 @@ const getClerkUserId = (req) => {
     console.error('❌ Error getting Clerk userId:', error);
     return null;
   }
+};
+
+/**
+ * Helper to validate ride ID before database queries
+ * Returns an error response object if invalid, null if valid
+ */
+const validateRideId = (rideId, res) => {
+  // Check for local/temporary ride IDs
+  if (rideId && rideId.startsWith('local-')) {
+    console.log('ℹ️ Local ride ID detected:', rideId);
+    return res.status(400).json({
+      error: 'Cannot perform operation on local ride',
+      code: 'LOCAL_RIDE_ID',
+      details: 'This ride has not been synced to the server yet',
+    });
+  }
+
+  // Validate ObjectId format
+  if (!mongoose.Types.ObjectId.isValid(rideId)) {
+    console.error('❌ Invalid ride ID format:', rideId);
+    return res.status(400).json({
+      error: 'Invalid ride ID format',
+      code: 'INVALID_RIDE_ID',
+      details: `Ride ID "${rideId}" is not a valid format`,
+    });
+  }
+
+  return null; // Valid ID
 };
 
 /**
@@ -442,6 +471,7 @@ export const getAvailableRides = async (req, res, next) => {
           return {
             ...base,
             kind: 'offer',
+            driverId: ride.clerkId, // Driver's Clerk user ID for chat functionality
             driverMode: ride.driverMode || 'commuter',
             farePerSeat: ride.farePerSeat || ride.fare || 100,
             departureTime: (
@@ -529,6 +559,10 @@ export const acceptRide = async (req, res, next) => {
       });
     }
 
+    // Validate ride ID
+    const validationError = validateRideId(rideId, res);
+    if (validationError) return validationError;
+
     const driver = await UserProfile.findOne({ clerkId });
     if (!driver) {
       return res.status(404).json({
@@ -610,6 +644,8 @@ export const confirmRideBooking = async (req, res, next) => {
     let clerkId = getClerkUserId(req);
     const { rideId } = req.params;
 
+    console.log('🔍 Booking confirmation request:', { rideId, clerkId });
+
     if (!clerkId) {
       clerkId = req.body.clerkId;
       console.log('⚠️ Using clerkId from request body (auth not available)');
@@ -623,15 +659,21 @@ export const confirmRideBooking = async (req, res, next) => {
       });
     }
 
+    // Validate ride ID
+    const validationError = validateRideId(rideId, res);
+    if (validationError) return validationError;
+
     const ride = await RideRequest.findById(rideId).populate(
       'userId',
       'firstName lastName phone',
     );
 
     if (!ride) {
+      console.error('❌ Ride not found for booking confirmation:', rideId);
       return res.status(404).json({
         error: 'Ride not found',
         code: 'RIDE_NOT_FOUND',
+        details: `No ride found with ID ${rideId}`,
       });
     }
 
@@ -722,6 +764,8 @@ export const driverConfirmPickup = async (req, res, next) => {
     let clerkId = getClerkUserId(req);
     const { rideId } = req.params;
 
+    console.log('🔍 Driver pickup confirmation request:', { rideId, clerkId });
+
     if (!clerkId) {
       clerkId = req.body.clerkId;
       console.log('⚠️ Using clerkId from request body (auth not available)');
@@ -735,12 +779,18 @@ export const driverConfirmPickup = async (req, res, next) => {
       });
     }
 
+    // Validate ride ID
+    const validationError = validateRideId(rideId, res);
+    if (validationError) return validationError;
+
     const ride = await RideRequest.findById(rideId);
 
     if (!ride) {
+      console.error('❌ Ride not found for driver pickup:', rideId);
       return res.status(404).json({
         error: 'Ride not found',
         code: 'RIDE_NOT_FOUND',
+        details: `No ride found with ID ${rideId}`,
       });
     }
 
@@ -799,11 +849,17 @@ export const driverConfirmPickup = async (req, res, next) => {
 /**
  * Passenger confirms they have boarded the vehicle
  * POST /api/rides/:rideId/pickup/passenger
+ * Handles both RideRequest and RideOffer
  */
 export const passengerConfirmPickup = async (req, res, next) => {
   try {
     let clerkId = getClerkUserId(req);
     const { rideId } = req.params;
+
+    console.log('🔍 Passenger pickup confirmation request:', {
+      rideId,
+      clerkId,
+    });
 
     if (!clerkId) {
       clerkId = req.body.clerkId;
@@ -818,53 +874,150 @@ export const passengerConfirmPickup = async (req, res, next) => {
       });
     }
 
-    const ride = await RideRequest.findById(rideId);
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(rideId)) {
+      console.error('❌ Invalid ride ID format:', rideId);
+      return res.status(400).json({
+        error: 'Invalid ride ID format',
+        code: 'INVALID_RIDE_ID',
+        details: `Ride ID "${rideId}" is not a valid MongoDB ObjectId`,
+      });
+    }
+
+    // Try to find in RideRequest collection first
+    let ride = await RideRequest.findById(rideId);
+    let isRideOffer = false;
+
+    // If not found, try RideOffer collection
+    if (!ride) {
+      ride = await RideOffer.findById(rideId);
+      isRideOffer = true;
+      console.log('🔄 Checking RideOffer collection...');
+    }
 
     if (!ride) {
+      console.error('❌ Ride not found in both collections:', rideId);
+      // Log recent rides for debugging
+      const recentRequests = await RideRequest.find({ clerkId })
+        .select('_id status')
+        .limit(3);
+      const recentOffers = await RideOffer.find({
+        'bookings.passengerClerkId': clerkId,
+      })
+        .select('_id status')
+        .limit(3);
+      console.log('📋 Recent requests:', recentRequests);
+      console.log('📋 Recent offer bookings:', recentOffers);
       return res.status(404).json({
         error: 'Ride not found',
         code: 'RIDE_NOT_FOUND',
+        details: `No ride found with ID ${rideId}`,
       });
     }
 
-    if (ride.clerkId !== clerkId) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        details: 'Only the passenger can confirm pickup',
-        code: 'NOT_RIDE_OWNER',
+    if (isRideOffer) {
+      console.log('✅ Found ride offer, confirming passenger pickup');
+
+      // Check if passenger has a booking for this ride
+      const hasBooking = ride.bookings?.some(
+        (booking) => booking.passengerClerkId === clerkId,
+      );
+
+      if (!hasBooking) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          details: 'You do not have a booking for this ride',
+          code: 'NO_BOOKING',
+        });
+      }
+
+      // Add passenger to confirmedPassengers array if not already confirmed
+      if (!ride.pickupStatus) {
+        ride.pickupStatus = { confirmedPassengers: [] };
+      }
+      if (!ride.pickupStatus.confirmedPassengers) {
+        ride.pickupStatus.confirmedPassengers = [];
+      }
+
+      if (!ride.pickupStatus.confirmedPassengers.includes(clerkId)) {
+        ride.pickupStatus.confirmedPassengers.push(clerkId);
+      }
+
+      // Update ride status to 'ongoing' if it's still 'waiting'
+      if (ride.status === 'waiting') {
+        ride.status = 'ongoing';
+      }
+
+      ride.updatedAt = new Date();
+      await ride.save();
+
+      if (io) {
+        io.emit('ride:pickup-passenger', {
+          rideId: ride._id,
+          rideType: 'offer',
+          driverClerkId: ride.clerkId,
+          passengerClerkId: clerkId,
+          status: ride.status,
+          pickupStatus: ride.pickupStatus,
+        });
+        console.log('📡 Broadcasted passenger pickup confirmation (offer)');
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Pickup confirmed by passenger',
+        ride: {
+          id: ride._id,
+          rideType: 'offer',
+          status: ride.status,
+          pickupStatus: ride.pickupStatus,
+        },
+      });
+    } else {
+      console.log('✅ Found ride request, confirming passenger pickup');
+
+      // For ride requests, the passenger is the creator
+      if (ride.clerkId !== clerkId) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          details: 'Only the passenger can confirm pickup',
+          code: 'NOT_RIDE_OWNER',
+        });
+      }
+
+      ride.pickupStatus = {
+        ...ride.pickupStatus,
+        passengerConfirmedAt: new Date(),
+      };
+      if (ride.status !== 'ongoing') {
+        ride.status = 'ongoing';
+      }
+      ride.updatedAt = new Date();
+      await ride.save();
+
+      if (io) {
+        io.emit('ride:pickup-passenger', {
+          rideId: ride._id,
+          rideType: 'request',
+          driverClerkId: ride.acceptedBy?.clerkId,
+          passengerClerkId: ride.clerkId,
+          status: ride.status,
+          pickupStatus: ride.pickupStatus,
+        });
+        console.log('📡 Broadcasted passenger pickup confirmation (request)');
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Pickup confirmed by passenger',
+        ride: {
+          id: ride._id,
+          rideType: 'request',
+          status: ride.status,
+          pickupStatus: ride.pickupStatus,
+        },
       });
     }
-
-    ride.pickupStatus = {
-      ...ride.pickupStatus,
-      passengerConfirmedAt: new Date(),
-    };
-    if (ride.status !== 'ongoing') {
-      ride.status = 'ongoing';
-    }
-    ride.updatedAt = new Date();
-    await ride.save();
-
-    if (io) {
-      io.emit('ride:pickup-passenger', {
-        rideId: ride._id,
-        driverClerkId: ride.acceptedBy?.clerkId,
-        passengerClerkId: ride.clerkId,
-        status: ride.status,
-        pickupStatus: ride.pickupStatus,
-      });
-      console.log('📡 Broadcasted passenger pickup confirmation');
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Pickup confirmed by passenger',
-      ride: {
-        id: ride._id,
-        status: ride.status,
-        pickupStatus: ride.pickupStatus,
-      },
-    });
   } catch (error) {
     console.error('❌ Passenger pickup confirmation error:', error.message);
     next(error);
@@ -874,11 +1027,14 @@ export const passengerConfirmPickup = async (req, res, next) => {
 /**
  * Passenger confirms drop-off and completes the ride
  * POST /api/rides/:rideId/complete
+ * Handles both RideRequest and RideOffer
  */
 export const completeRide = async (req, res, next) => {
   try {
     let clerkId = getClerkUserId(req);
     const { rideId } = req.params;
+
+    console.log('🔍 Ride completion request:', { rideId, clerkId });
 
     if (!clerkId) {
       clerkId = req.body.clerkId;
@@ -893,99 +1049,252 @@ export const completeRide = async (req, res, next) => {
       });
     }
 
-    const ride = await RideRequest.findById(rideId);
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(rideId)) {
+      console.error('❌ Invalid ride ID format:', rideId);
+      return res.status(400).json({
+        error: 'Invalid ride ID format',
+        code: 'INVALID_RIDE_ID',
+        details: `Ride ID "${rideId}" is not a valid MongoDB ObjectId`,
+      });
+    }
+
+    // Try to find in RideRequest collection first
+    let ride = await RideRequest.findById(rideId);
+    let isRideOffer = false;
+
+    // If not found, try RideOffer collection
+    if (!ride) {
+      ride = await RideOffer.findById(rideId);
+      isRideOffer = true;
+      console.log('🔄 Checking RideOffer collection for completion...');
+    }
 
     if (!ride) {
+      console.error('❌ Ride not found in both collections:', rideId);
       return res.status(404).json({
         error: 'Ride not found',
         code: 'RIDE_NOT_FOUND',
+        details: `No ride found with ID ${rideId}`,
       });
     }
 
-    if (ride.clerkId !== clerkId) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        details: 'Only the passenger can complete the ride',
-        code: 'NOT_RIDE_OWNER',
-      });
-    }
+    if (isRideOffer) {
+      console.log('✅ Completing ride offer');
 
-    // Calculate and transfer payment to driver (93% after platform fee)
-    if (ride.fare && ride.acceptedBy?.clerkId) {
-      const platformFee = ride.fare * 0.07; // 7% platform fee
-      const driverEarnings = ride.fare - platformFee;
+      // Check if passenger has a booking for this ride
+      const hasBooking = ride.bookings?.some(
+        (booking) => booking.passengerClerkId === clerkId,
+      );
 
-      try {
-        const driver = await UserProfile.findOne({
-          clerkId: ride.acceptedBy.clerkId,
+      if (!hasBooking) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          details: 'You do not have a booking for this ride',
+          code: 'NO_BOOKING',
         });
-        if (driver) {
-          driver.walletBalance = (driver.walletBalance || 0) + driverEarnings;
-
-          if (!driver.walletTransactions) {
-            driver.walletTransactions = [];
-          }
-
-          driver.walletTransactions.push({
-            type: 'credit',
-            amount: driverEarnings,
-            balance: driver.walletBalance,
-            description: `Ride earnings (₹${ride.fare} - 7% fee)`,
-            rideDetails: {
-              rideId: ride._id,
-              from: ride.from,
-              to: ride.to,
-              platformFee,
-            },
-            timestamp: new Date(),
-            transactionId: `txn_${Date.now()}`,
-          });
-
-          await driver.save();
-          console.log(
-            `✅ Transferred ₹${driverEarnings} to driver (fee: ₹${platformFee})`,
-          );
-        }
-      } catch (paymentError) {
-        console.error('❌ Error transferring payment to driver:', paymentError);
-        // Continue with ride completion even if payment fails
       }
-    }
 
-    ride.dropoffStatus = {
-      ...ride.dropoffStatus,
-      passengerConfirmedAt: new Date(),
-      completedAt: new Date(),
-    };
-    ride.status = 'completed';
-    ride.completedAt = new Date();
-    ride.updatedAt = new Date();
-    await ride.save();
+      // Add passenger to confirmedPassengers in dropoffStatus
+      if (!ride.dropoffStatus) {
+        ride.dropoffStatus = { confirmedPassengers: [] };
+      }
+      if (!ride.dropoffStatus.confirmedPassengers) {
+        ride.dropoffStatus.confirmedPassengers = [];
+      }
 
-    if (ride.acceptedBy?.clerkId) {
-      locationService.endRide(ride._id.toString(), ride.acceptedBy.clerkId);
-    }
+      if (!ride.dropoffStatus.confirmedPassengers.includes(clerkId)) {
+        ride.dropoffStatus.confirmedPassengers.push(clerkId);
+      }
 
-    if (io) {
-      io.emit('ride:completed', {
-        rideId: ride._id,
-        driverClerkId: ride.acceptedBy?.clerkId,
-        passengerClerkId: ride.clerkId,
-        status: ride.status,
-        dropoffStatus: ride.dropoffStatus,
+      ride.dropoffStatus.completedAt = new Date();
+
+      // Check if all passengers have confirmed dropoff
+      const allPassengersConfirmed = ride.bookings.every((booking) =>
+        ride.dropoffStatus.confirmedPassengers.includes(
+          booking.passengerClerkId,
+        ),
+      );
+
+      if (allPassengersConfirmed) {
+        ride.status = 'completed';
+        ride.completedAt = new Date();
+        console.log('✅ All passengers confirmed, ride completed');
+
+        // Process payment to driver
+        const totalEarnings = ride.bookings.reduce(
+          (sum, booking) => sum + (booking.totalAmount || 0),
+          0,
+        );
+        if (totalEarnings > 0 && ride.clerkId) {
+          const platformFee = totalEarnings * 0.07; // 7% platform fee
+          const driverEarnings = totalEarnings - platformFee;
+
+          try {
+            const driver = await UserProfile.findOne({ clerkId: ride.clerkId });
+            if (driver) {
+              driver.walletBalance =
+                (driver.walletBalance || 0) + driverEarnings;
+
+              if (!driver.walletTransactions) {
+                driver.walletTransactions = [];
+              }
+
+              driver.walletTransactions.push({
+                type: 'credit',
+                amount: driverEarnings,
+                balance: driver.walletBalance,
+                description: `Ride earnings (₹${totalEarnings} - 7% fee)`,
+                rideDetails: {
+                  rideId: ride._id,
+                  from: ride.from,
+                  to: ride.to,
+                  platformFee,
+                },
+                timestamp: new Date(),
+                transactionId: `txn_${Date.now()}`,
+              });
+
+              await driver.save();
+              console.log(
+                `✅ Transferred ₹${driverEarnings} to driver (fee: ₹${platformFee})`,
+              );
+            }
+          } catch (paymentError) {
+            console.error(
+              '❌ Error transferring payment to driver:',
+              paymentError,
+            );
+          }
+        }
+
+        // End ride tracking
+        if (ride.clerkId) {
+          locationService.endRide(ride._id.toString(), ride.clerkId);
+        }
+      }
+
+      ride.updatedAt = new Date();
+      await ride.save();
+
+      if (io) {
+        io.emit('ride:completed', {
+          rideId: ride._id,
+          rideType: 'offer',
+          driverClerkId: ride.clerkId,
+          passengerClerkId: clerkId,
+          status: ride.status,
+          dropoffStatus: ride.dropoffStatus,
+        });
+        console.log('📡 Broadcasted ride completion (offer)');
+      }
+
+      res.status(200).json({
+        success: true,
+        message: allPassengersConfirmed
+          ? 'Ride completed and payment processed'
+          : 'Drop-off confirmed',
+        ride: {
+          id: ride._id,
+          rideType: 'offer',
+          status: ride.status,
+          dropoffStatus: ride.dropoffStatus,
+        },
       });
-      console.log('📡 Broadcasted ride completion');
-    }
+    } else {
+      console.log('✅ Completing ride request');
 
-    res.status(200).json({
-      success: true,
-      message: 'Ride marked as completed and payment processed',
-      ride: {
-        id: ride._id,
-        status: ride.status,
-        dropoffStatus: ride.dropoffStatus,
-      },
-    });
+      // For ride requests, the passenger is the creator
+      if (ride.clerkId !== clerkId) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          details: 'Only the passenger can complete the ride',
+          code: 'NOT_RIDE_OWNER',
+        });
+      }
+
+      // Calculate and transfer payment to driver (93% after platform fee)
+      if (ride.fare && ride.acceptedBy?.clerkId) {
+        const platformFee = ride.fare * 0.07; // 7% platform fee
+        const driverEarnings = ride.fare - platformFee;
+
+        try {
+          const driver = await UserProfile.findOne({
+            clerkId: ride.acceptedBy.clerkId,
+          });
+          if (driver) {
+            driver.walletBalance = (driver.walletBalance || 0) + driverEarnings;
+
+            if (!driver.walletTransactions) {
+              driver.walletTransactions = [];
+            }
+
+            driver.walletTransactions.push({
+              type: 'credit',
+              amount: driverEarnings,
+              balance: driver.walletBalance,
+              description: `Ride earnings (₹${ride.fare} - 7% fee)`,
+              rideDetails: {
+                rideId: ride._id,
+                from: ride.from,
+                to: ride.to,
+                platformFee,
+              },
+              timestamp: new Date(),
+              transactionId: `txn_${Date.now()}`,
+            });
+
+            await driver.save();
+            console.log(
+              `✅ Transferred ₹${driverEarnings} to driver (fee: ₹${platformFee})`,
+            );
+          }
+        } catch (paymentError) {
+          console.error(
+            '❌ Error transferring payment to driver:',
+            paymentError,
+          );
+          // Continue with ride completion even if payment fails
+        }
+      }
+
+      ride.dropoffStatus = {
+        ...ride.dropoffStatus,
+        passengerConfirmedAt: new Date(),
+        completedAt: new Date(),
+      };
+      ride.status = 'completed';
+      ride.completedAt = new Date();
+      ride.updatedAt = new Date();
+      await ride.save();
+
+      if (ride.acceptedBy?.clerkId) {
+        locationService.endRide(ride._id.toString(), ride.acceptedBy.clerkId);
+      }
+
+      if (io) {
+        io.emit('ride:completed', {
+          rideId: ride._id,
+          rideType: 'request',
+          driverClerkId: ride.acceptedBy?.clerkId,
+          passengerClerkId: ride.clerkId,
+          status: ride.status,
+          dropoffStatus: ride.dropoffStatus,
+        });
+        console.log('📡 Broadcasted ride completion (request)');
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Ride marked as completed and payment processed',
+        ride: {
+          id: ride._id,
+          rideType: 'request',
+          status: ride.status,
+          dropoffStatus: ride.dropoffStatus,
+        },
+      });
+    }
   } catch (error) {
     console.error('❌ Complete ride error:', error.message);
     next(error);
@@ -1360,6 +1669,12 @@ export const cancelRide = async (req, res, next) => {
     let clerkId = getClerkUserId(req);
     const { rideId } = req.params;
 
+    console.log('🔍 Cancel ride request:', {
+      rideId,
+      clerkId,
+      type: typeof rideId,
+    });
+
     if (!clerkId) {
       clerkId = req.body.clerkId;
       console.log('⚠️ Using clerkId from request body (auth not available)');
@@ -1373,6 +1688,33 @@ export const cancelRide = async (req, res, next) => {
       });
     }
 
+    // Check for local/temporary ride IDs (created on frontend before server sync)
+    if (rideId && rideId.startsWith('local-')) {
+      console.log(
+        '✅ Local ride ID detected, returning success without DB operation',
+      );
+      return res.status(200).json({
+        success: true,
+        message: 'Local ride cancelled (no server action needed)',
+        ride: {
+          id: rideId,
+          status: 'cancelled',
+          isLocal: true,
+        },
+      });
+    }
+
+    // Validate ObjectId format for database queries
+    if (!mongoose.Types.ObjectId.isValid(rideId)) {
+      console.error('❌ Invalid ride ID format:', rideId);
+      return res.status(400).json({
+        error: 'Invalid ride ID format',
+        code: 'INVALID_RIDE_ID',
+        details: `Ride ID "${rideId}" is not a valid format`,
+      });
+    }
+
+    console.log('🔍 Valid ObjectId, proceeding with DB query');
     const ride = await RideRequest.findById(rideId);
     if (!ride) {
       return res.status(404).json({

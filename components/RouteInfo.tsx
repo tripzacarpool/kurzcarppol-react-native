@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { Navigation, Clock, DollarSign } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { fetchRouteFromGoogle, type RouteCoordinate } from '@/lib/routeService';
@@ -29,10 +29,13 @@ export default function RouteInfo({
   const [fare, setFare] = useState<number>(0);
   const [originalFare, setOriginalFare] = useState<number>(0);
   const [loading, setLoading] = useState(false);
+  const [calculated, setCalculated] = useState(false);
 
+  // Reset when locations change
   useEffect(() => {
     if (pickupLocation && dropoffLocation) {
-      fetchRoute();
+      // Don't auto-calculate, just reset
+      resetInfo();
     } else {
       resetInfo();
     }
@@ -43,6 +46,7 @@ export default function RouteInfo({
 
     try {
       setLoading(true);
+      setCalculated(false);
       
       // Notify parent that calculation has started
       if (onCalculationStart) {
@@ -62,6 +66,7 @@ export default function RouteInfo({
         const discountedFare = Math.round(baseFare * 0.9); // 10% discount
         setOriginalFare(baseFare);
         setFare(discountedFare);
+        setCalculated(true);
         
         console.log(`📊 Google Maps Data: ${result.distance} (${result.distanceValue}m), ${result.duration} (${result.durationValue}s)`);
         console.log(`💰 Calculated: ₹${baseFare} → ₹${discountedFare} (10% off)`);
@@ -86,6 +91,7 @@ export default function RouteInfo({
     setDuration('--');
     setFare(0);
     setOriginalFare(0);
+    setCalculated(false);
   };
 
   if (!pickupLocation || !dropoffLocation) {
@@ -96,10 +102,22 @@ export default function RouteInfo({
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Route Information</Text>
-        <Text style={styles.googleBadge}>🗺️ Google Maps</Text>
+        {calculated && <Text style={styles.googleBadge}>🗺️ Google Maps</Text>}
       </View>
       
-      {loading ? (
+      {!calculated && !loading ? (
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity 
+            style={styles.calculateButton}
+            onPress={fetchRoute}
+          >
+            <Text style={styles.calculateButtonText}>📍 Calculate Market Rate (Optional)</Text>
+          </TouchableOpacity>
+          <Text style={styles.optionalHint}>
+            You can proceed without calculating, or tap above to see suggested pricing
+          </Text>
+        </View>
+      ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="small" color={Colors.dark.gold} />
           <Text style={styles.loadingText}>Calculating route...</Text>
@@ -153,6 +171,28 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 15,
+  buttonContainer: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  calculateButton: {
+    backgroundColor: Colors.dark.gold,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  calculateButtonText: {
+    color: Colors.dark.background,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  optionalHint: {
+    fontSize: 11,
+    color: Colors.dark.textSecondary,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+  },
     fontWeight: '600',
     color: Colors.dark.text,
   },

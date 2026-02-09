@@ -7,6 +7,10 @@
  */
 
 import { GOOGLE_MAPS_API_KEY } from '@/config/googleMaps';
+import { Platform } from 'react-native';
+
+const IS_WEB = Platform.OS === 'web';
+const API_BASE_URL = 'http://localhost:5000';
 
 export interface RouteCoordinate {
   latitude: number;
@@ -41,10 +45,20 @@ export async function fetchRouteFromGoogle(
     const originStr = `${origin.latitude},${origin.longitude}`;
     const destStr = `${destination.latitude},${destination.longitude}`;
 
-    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&key=${GOOGLE_MAPS_API_KEY}`;
+    // Use backend proxy on web to avoid CORS, direct API on mobile
+    const url = IS_WEB
+      ? `${API_BASE_URL}/api/maps/directions?origin=${originStr}&destination=${destStr}`
+      : `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&key=${GOOGLE_MAPS_API_KEY}`;
 
     const response = await fetch(url);
     const data = await response.json();
+
+    console.log(
+      '🔍 Directions API response:',
+      JSON.stringify(data).substring(0, 500),
+    );
+    console.log('📊 Response status:', data.status);
+    console.log('📍 Routes length:', data.routes?.length);
 
     if (data.status !== 'OK' || !data.routes || data.routes.length === 0) {
       console.error('❌ Google Directions API error:', data.status);

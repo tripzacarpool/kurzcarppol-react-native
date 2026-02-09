@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { UserProfile, RideOffer } from '../config/models.js';
 import { locationService } from '../services/locationService.js';
 import { Expo } from 'expo-server-sdk';
@@ -12,7 +13,7 @@ export function setSocketIO(socketInstance) {
   io = socketInstance;
 }
 
-const VEHICLE_TYPES = ['two_wheeler', 'four_wheeler'];
+const VEHICLE_TYPES = ['two_wheeler', 'three_wheeler', 'four_wheeler'];
 const normalizeVehicleType = (value) =>
   VEHICLE_TYPES.includes(value) ? value : 'four_wheeler';
 
@@ -56,6 +57,7 @@ export const createRideOffer = async (req, res, next) => {
       from,
       to,
       totalSeats = 4,
+      availableSeats: requestAvailableSeats, // Seats selected by driver
       farePerSeat = 0,
       vehicleType,
       driverMode = 'commuter',
@@ -103,7 +105,33 @@ export const createRideOffer = async (req, res, next) => {
     }
 
     // Generate available seats array
-    const availableSeats = Array.from({ length: totalSeats }, (_, i) => i + 1);
+    // Use driver's selection if provided, otherwise auto-generate excluding driver seat (Seat 1)
+    let availableSeats;
+    if (
+      requestAvailableSeats &&
+      Array.isArray(requestAvailableSeats) &&
+      requestAvailableSeats.length > 0
+    ) {
+      // Filter out Seat 1 (driver) if it was somehow included
+      availableSeats = requestAvailableSeats.filter((seat) => seat !== 1);
+      console.log(
+        `✅ Using driver-selected seats: [${availableSeats.join(', ')}]`,
+      );
+    } else {
+      // Auto-generate: Seats 2, 3, 4, ... (never include Seat 1 - driver seat)
+      availableSeats = Array.from({ length: totalSeats - 1 }, (_, i) => i + 2);
+      console.log(
+        `⚠️ No seats selected, auto-generating: [${availableSeats.join(', ')}]`,
+      );
+    }
+
+    // Validate that Seat 1 is not in availableSeats (double-check)
+    if (availableSeats.includes(1)) {
+      console.error(
+        '❌ ERROR: Driver seat (Seat 1) found in availableSeats! Removing it.',
+      );
+      availableSeats = availableSeats.filter((seat) => seat !== 1);
+    }
 
     // Create ride offer
     const rideOffer = new RideOffer({
@@ -169,8 +197,150 @@ export const createRideOffer = async (req, res, next) => {
   }
 };
 
-/**
- * Get all available ride offers
+/** * Update an existing ride offer
+ * PUT /api/ride-offers/:id
+ */
+export const updateRideOffer = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    let clerkId = getClerkUserId(req);
+
+    if (!clerkId) {
+      clerkId = req.body.clerkId;
+      console.log('⚠️ Using clerkId from request body (auth not available)');
+    }
+
+    if (!clerkId) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        details: 'clerkId is required',
+        code: 'NO_AUTH_USER',
+      });
+    }
+
+    // Validate if the ID is a proper MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        error: 'Invalid ride offer ID',
+        details: 'The provided ID is not a valid MongoDB ObjectId',
+        code: 'INVALID_OBJECT_ID',
+      });
+    }
+
+    // Find the existing ride offer
+    const existingOffer = await RideOffer.findById(id);
+    if (!existingOffer) {
+      return res.status(404).json({
+        error: 'Ride offer not found',
+        code: 'OFFER_NOT_FOUND',
+      });
+    }
+
+    // Check if the user is the owner of this ride offer
+    if (existingOffer.driver.clerkId !== clerkId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details: 'You can only update your own ride offers',
+        code: 'NOT_OWNER',
+      });
+    }
+
+    const {
+      from,
+      to,
+      totalSeats,
+      availableSeats,
+      farePerSeat,
+      vehicleType,
+      driverMode,
+      notes,
+      womenOnly,
+      pickupLatitude,
+      pickupLongitude,
+      pickupCity,
+      pickupCountry,
+      dropoffLatitude,
+      dropoffLongitude,
+      dropoffCity,
+      dropoffCountry,
+      departureTime,
+      scheduledDeparture,
+      timeFlexibilityMinutes,
+      vehicle,
+    } = req.body || {};
+
+    // Prepare update data
+    const updateData = {};
+    if (from !== undefined) updateData.from = from;
+    if (to !== undefined) updateData.to = to;
+    if (totalSeats !== undefined) updateData.totalSeats = totalSeats;
+    if (availableSeats !== undefined)
+      updateData.availableSeats = availableSeats;
+    if (farePerSeat !== undefined) updateData.farePerSeat = farePerSeat;
+    if (vehicleType !== undefined)
+      updateData.vehicleType = normalizeVehicleType(vehicleType);
+    if (driverMode !== undefined) updateData.driverMode = driverMode;
+    if (notes !== undefined) updateData.notes = notes;
+    if (womenOnly !== undefined) updateData.womenOnly = womenOnly;
+    if (departureTime !== undefined)
+      updateData.departureTime = new Date(departureTime);
+    if (scheduledDeparture !== undefined)
+      updateData.scheduledDeparture = scheduledDeparture;
+    if (timeFlexibilityMinutes !== undefined)
+      updateData.timeFlexibilityMinutes = timeFlexibilityMinutes;
+
+    // Update location data if provided
+    if (pickupLatitude !== undefined && pickupLongitude !== undefined) {
+      updateData.pickupLocation = {
+        type: 'Point',
+        coordinates: [pickupLongitude, pickupLatitude],
+      };
+      if (pickupCity) updateData.pickupCity = pickupCity;
+      if (pickupCountry) updateData.pickupCountry = pickupCountry;
+    }
+
+    if (dropoffLatitude !== undefined && dropoffLongitude !== undefined) {
+      updateData.dropoffLocation = {
+        type: 'Point',
+        coordinates: [dropoffLongitude, dropoffLatitude],
+      };
+      if (dropoffCity) updateData.dropoffCity = dropoffCity;
+      if (dropoffCountry) updateData.dropoffCountry = dropoffCountry;
+    }
+
+    if (vehicle !== undefined) updateData.vehicle = vehicle;
+
+    // Update the ride offer
+    const updatedOffer = await RideOffer.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      { new: true, runValidators: true },
+    );
+
+    console.log('✅ Ride offer updated:', updatedOffer._id);
+
+    // Emit socket event for real-time updates to passengers
+    if (io && existingOffer.bookings && existingOffer.bookings.length > 0) {
+      io.emit('rideOfferUpdated', {
+        rideOfferId: updatedOffer._id,
+        updatedData: updateData,
+        timestamp: new Date(),
+      });
+      console.log('📡 Socket event emitted for ride offer update');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Ride offer updated successfully',
+      rideOffer: updatedOffer,
+    });
+  } catch (error) {
+    console.error('❌ Update ride offer error:', error);
+    next(error);
+  }
+};
+
+/** * Get all available ride offers
  * GET /api/ride-offers/available
  */
 export const getAvailableRideOffers = async (req, res, next) => {
@@ -247,6 +417,24 @@ export const getRideOfferById = async (req, res, next) => {
   try {
     const { id } = req.params;
 
+    // Handle local/temporary IDs
+    if (id.startsWith('local-')) {
+      return res.status(404).json({
+        error: 'Local ride offer not found on server',
+        code: 'LOCAL_OFFER_NOT_SYNCED',
+        details: 'This ride offer only exists on your device',
+      });
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        error: 'Invalid ride offer ID format',
+        code: 'INVALID_OFFER_ID',
+        details: `Ride offer ID "${id}" is not a valid format`,
+      });
+    }
+
     const rideOffer = await RideOffer.findById(id);
 
     if (!rideOffer) {
@@ -261,6 +449,7 @@ export const getRideOfferById = async (req, res, next) => {
       rideOffer: {
         ...rideOffer.toObject(),
         id: rideOffer._id.toString(),
+        driverId: rideOffer.clerkId, // Driver's Clerk user ID
         kind: 'offer',
       },
     });
@@ -340,6 +529,26 @@ export const bookRideOffer = async (req, res, next) => {
     const { id } = req.params;
     const { seatNumbers, paymentMethod = 'unknown', customRequest } = req.body;
 
+    console.log('🔍 Book ride offer request:', { id, clerkId, seatNumbers });
+
+    // Handle local/temporary IDs
+    if (id.startsWith('local-')) {
+      return res.status(400).json({
+        error: 'Cannot book local ride offer',
+        code: 'LOCAL_OFFER_NOT_BOOKABLE',
+        details: 'This ride offer has not been synced to the server yet',
+      });
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        error: 'Invalid ride offer ID format',
+        code: 'INVALID_OFFER_ID',
+        details: `Ride offer ID "${id}" is not a valid format`,
+      });
+    }
+
     if (
       !seatNumbers ||
       !Array.isArray(seatNumbers) ||
@@ -409,14 +618,17 @@ export const bookRideOffer = async (req, res, next) => {
 
     await rideOffer.save();
 
-    // Broadcast update
+    // Broadcast seat availability update to all connected clients
     if (io) {
-      io.emit('rideOfferBooked', {
+      io.emit('ride:offer:booked', {
         offerId: id,
         booking,
         availableSeats: rideOffer.availableSeats,
         status: rideOffer.status,
       });
+      console.log(
+        `📡 Emitted ride:offer:booked for ${id}, remaining seats: [${rideOffer.availableSeats.join(', ')}]`,
+      );
     }
 
     return res.status(200).json({
@@ -441,6 +653,34 @@ export const cancelRideOffer = async (req, res, next) => {
     if (!clerkId) clerkId = req.body.clerkId;
 
     const { id } = req.params;
+
+    console.log('🔍 Cancel ride offer request:', { id, clerkId });
+
+    // Check for local/temporary ride offer IDs
+    if (id.startsWith('local-')) {
+      console.log(
+        'ℹ️ Attempting to cancel local ride offer (not yet synced to server)',
+      );
+      return res.status(200).json({
+        success: true,
+        message: 'Local ride offer cancelled (no server action needed)',
+        rideOffer: {
+          id,
+          status: 'cancelled',
+          isLocal: true,
+        },
+      });
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      console.error('❌ Invalid ride offer ID format:', id);
+      return res.status(400).json({
+        error: 'Invalid ride offer ID format',
+        code: 'INVALID_OFFER_ID',
+        details: `Ride offer ID "${id}" is not a valid format`,
+      });
+    }
 
     const rideOffer = await RideOffer.findById(id);
 

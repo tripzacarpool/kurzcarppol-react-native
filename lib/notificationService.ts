@@ -275,6 +275,17 @@ export async function setupAndroidChannel(): Promise<void> {
       sound: 'default',
     });
 
+    await Notifications.setNotificationChannelAsync('chat-messages', {
+      name: 'Chat Messages',
+      description: 'Notifications for new chat messages',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FFD700',
+      sound: 'default',
+      enableLights: true,
+      enableVibrate: true,
+    });
+
     await Notifications.setNotificationChannelAsync('ride-updates', {
       name: 'Ride Updates',
       importance: Notifications.AndroidImportance.HIGH,

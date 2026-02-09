@@ -1,9 +1,10 @@
 import { Tabs } from 'expo-router';
-import { Home, MapPin, Bell, Wallet, User } from 'lucide-react-native';
+import { Home, MapPin, Bell, Wallet, User, MessageSquare } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { Platform, Animated } from 'react-native';
 import { useEffect, useRef } from 'react';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { useMessages } from '@/contexts/MessagesContext';
 
 function AnimatedTabIcon({ Icon, color, focused }: { Icon: any; color: string; focused: boolean }) {
   const scaleAnim = useRef(new Animated.Value(focused ? 1.1 : 1)).current;
@@ -32,6 +33,7 @@ function AnimatedTabIcon({ Icon, color, focused }: { Icon: any; color: string; f
 
 export default function TabLayout() {
   const { unreadCount } = useNotifications();
+  const { totalUnreadMessages } = useMessages();
 
   return (
     <Tabs
@@ -70,6 +72,14 @@ export default function TabLayout() {
         options={{
           title: 'Trips',
           tabBarIcon: ({ color, focused }) => <AnimatedTabIcon Icon={MapPin} color={color} focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="messages"
+        options={{
+          title: 'Messages',
+          tabBarIcon: ({ color, focused }) => <AnimatedTabIcon Icon={MessageSquare} color={color} focused={focused} />,
+          tabBarBadge: totalUnreadMessages > 0 ? totalUnreadMessages : undefined,
         }}
       />
       <Tabs.Screen

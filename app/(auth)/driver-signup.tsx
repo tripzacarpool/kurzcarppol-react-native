@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { useSignUp } from '@clerk/clerk-expo';
+import { useSignUp } from '@/lib/clerkHooks';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import {

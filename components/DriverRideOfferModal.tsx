@@ -10,13 +10,16 @@ import {
   Switch,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
 } from 'react-native';
 import { X, MapPin, Users, DollarSign, FileText, Navigation, Clock } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useAuth } from '@clerk/clerk-expo';
+import { useAuth, useUser } from '@/lib/clerkHooks';
 import { Colors } from '@/constants/Colors';
-import { createDriverRideOffer, setAuthToken } from '@/lib/api';
+import { GOOGLE_MAPS_API_KEY } from '@/config/googleMaps';
+import { VEHICLE_TYPE_OPTIONS } from '@/constants/vehicleTypes';
+import { createDriverRideOffer, updateRideOffer, setAuthToken } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
@@ -51,6 +54,7 @@ export default function DriverRideOfferModal({
   onSuccess,
 }: DriverRideOfferModalProps) {
   const { getToken } = useAuth();
+  const { user } = useUser();
   const isEditMode = !!editingOffer;
   
   const [from, setFrom] = useState('');
@@ -75,6 +79,7 @@ export default function DriverRideOfferModal({
   const [toFocused, setToFocused] = useState(false);
   const [suggestedFare, setSuggestedFare] = useState<number>(0);
   const [isRouteCalculated, setIsRouteCalculated] = useState(false);
+  const [vehicleType, setVehicleType] = useState<'two_wheeler' | 'three_wheeler' | 'four_wheeler'>('four_wheeler');
   
   // Custom alert state
   const [alertVisible, setAlertVisible] = useState(false);
@@ -97,6 +102,11 @@ export default function DriverRideOfferModal({
       setMaxPassengers(editingOffer.seats?.toString() || '3');
       setFare(editingOffer.fare?.toString() || '');
       setWomenOnly(editingOffer.womenOnly || false);
+      
+      // In edit mode, create placeholder location objects since we already have the location names
+      // These will be used if user doesn't change locations
+      setFromLocation({ latitude: 0, longitude: 0 });
+      setToLocation({ latitude: 0, longitude: 0 });
     } else if (!visible) {
       // Reset when modal closes
       setFrom('');
@@ -203,6 +213,53 @@ export default function DriverRideOfferModal({
     }
   };
 
+  // Geocode address to get coordinates
+  const geocodeAddress = async (address: string) => {
+    try {
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_MAPS_API_KEY}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.status === 'OK' && data.results.length > 0) {
+        const location = data.results[0].geometry.location;
+        return {
+          latitude: location.lat,
+          longitude: location.lng,
+          address: data.results[0].formatted_address
+        };
+      }
+      return null;
+    } catch (error) {
+      console.error('Geocoding error:', error);
+      return null;
+    }
+  };
+
+  // Handle recent search selection with proper geocoding
+  const handleRecentSearchSelect = async (search: string, mode: 'from' | 'to') => {
+    Keyboard.dismiss();
+    
+    // Set text immediately for better UX
+    if (mode === 'from') {
+      setFrom(search);
+      setFromFocused(false);
+    } else {
+      setTo(search);
+      setToFocused(false);
+    }
+
+    // Geocode the address in background
+    const location = await geocodeAddress(search);
+    if (location) {
+      if (mode === 'from') {
+        setFromLocation({ latitude: location.latitude, longitude: location.longitude });
+      } else {
+        setToLocation({ latitude: location.latitude, longitude: location.longitude });
+      }
+      console.log(`📍 Geocoded ${mode} location:`, location);
+    }
+  };
+
   const showAlert = (title: string, message: string, type: AlertType = 'info') => {
     setAlertConfig({ title, message, type });
     setAlertVisible(true);
@@ -267,18 +324,27 @@ export default function DriverRideOfferModal({
       return null; // Don't show seat selection if no passengers
     }
 
-    // Create seat layout based on total seats
-    // For cars: Seat 1 (Driver) and Seat 2 (Front), then Seats 3,4,5+ (Back)
-    const renderCarLayout = () => {
-      const frontSeats = [1, 2]; // Driver and front passenger
-      const backSeats = Array.from({ length: totalSeats - 2 }, (_, i) => i + 3); // Remaining seats
-
+    // AUTO RICKSHAW layout (3-wheeler):
+    // Driver (Seat 1) is at front alone
+    // Back: [Pass 1 (Seat 2)] [Pass 2 (Seat 3)] [Pass 3 (Seat 4)]
+    const renderAutoLayout = () => {
+      const backSeats = [2, 3, 4];
+      
       return (
         <View style={styles.carLayoutContainer}>
-          {/* Front Row */}
+          <View style={styles.autoDriverRow}>
+            <Text style={styles.rowLabel}>Front</Text>
+            <View style={styles.autoDriverSeat}>
+              <View style={[styles.seatBtn, styles.seatUnavailable]}>
+                <Text style={[styles.seatText, styles.seatTextUnavailable]}>1</Text>
+              </View>
+              <Text style={styles.driverLabel}>Driver</Text>
+            </View>
+          </View>
+          
           <View style={styles.seatRow}>
-            {frontSeats.map((seatNum) => {
-              const isDriverSeat = seatNum === 1;
+            <Text style={styles.rowLabel}>Back</Text>
+            {backSeats.map((seatNum) => {
               const isSelected = selectedSeats.includes(seatNum);
               
               return (
@@ -286,31 +352,87 @@ export default function DriverRideOfferModal({
                   key={seatNum}
                   style={[
                     styles.seatBtn,
-                    isDriverSeat && styles.seatUnavailable,
                     isSelected && styles.seatSelected,
                   ]}
-                  onPress={() => !isDriverSeat && toggleSeatSelection(seatNum)}
-                  disabled={isDriverSeat}
+                  onPress={() => toggleSeatSelection(seatNum)}
                 >
                   <Text style={[
                     styles.seatText,
-                    isDriverSeat && styles.seatTextUnavailable,
                     isSelected && styles.seatTextSelected,
                   ]}>
                     {seatNum}
                   </Text>
-                  {isDriverSeat && (
-                    <Text style={styles.driverLabel}>Driver</Text>
-                  )}
                 </TouchableOpacity>
               );
             })}
           </View>
+        </View>
+      );
+    };
+    
+    // INDIAN CAR layout (Right-Hand Drive):
+    // Front: [Pass 1 (Seat 2)] [Driver (Seat 1)]
+    // Row 2: [Pass 2 (Seat 3)] [Pass 3 (Seat 4)] [Pass 4 (Seat 5)]
+    // Row 3 (7-seater): [Pass 5 (Seat 6)] [Pass 6 (Seat 7)] [Pass 7 (Seat 8)]
+    const renderIndianCarLayout = () => {
+      const frontSeats = [2, 1]; // LEFT to RIGHT: Front Passenger, Driver
+      
+      // Calculate rows based on total seats
+      const passengerSeats = totalSeats - 1;
+      const remainingAfterFront = passengerSeats - 1;
+      
+      const rows: number[][] = [];
+      let seatNum = 3;
+      let remaining = remainingAfterFront;
+      
+      while (remaining > 0) {
+        const seatsInRow = Math.min(3, remaining);
+        rows.push(Array.from({ length: seatsInRow }, (_, i) => seatNum + i));
+        seatNum += seatsInRow;
+        remaining -= seatsInRow;
+      }
 
-          {/* Back Row */}
-          {backSeats.length > 0 && (
-            <View style={styles.seatRow}>
-              {backSeats.map((seatNum) => {
+      return (
+        <View style={styles.carLayoutContainer}>
+          {/* Front Row - Indian Right-Hand Drive */}
+          <View style={styles.seatRow}>
+            <Text style={styles.rowLabel}>Front</Text>
+            {frontSeats.map((seatNum) => {
+              const isDriverSeat = seatNum === 1;
+              const isSelected = selectedSeats.includes(seatNum);
+              
+              return (
+                <View key={seatNum} style={styles.seatWrapper}>
+                  <TouchableOpacity
+                    style={[
+                      styles.seatBtn,
+                      isDriverSeat && styles.seatUnavailable,
+                      isSelected && styles.seatSelected,
+                    ]}
+                    onPress={() => !isDriverSeat && toggleSeatSelection(seatNum)}
+                    disabled={isDriverSeat}
+                  >
+                    <Text style={[
+                      styles.seatText,
+                      isDriverSeat && styles.seatTextUnavailable,
+                      isSelected && styles.seatTextSelected,
+                    ]}>
+                      {seatNum}
+                    </Text>
+                  </TouchableOpacity>
+                  {isDriverSeat && (
+                    <Text style={styles.driverLabel}>Driver</Text>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Additional Rows */}
+          {rows.map((rowSeats, rowIndex) => (
+            <View key={`row-${rowIndex}`} style={styles.seatRow}>
+              <Text style={styles.rowLabel}>Row {rowIndex + 2}</Text>
+              {rowSeats.map((seatNum) => {
                 const isSelected = selectedSeats.includes(seatNum);
                 
                 return (
@@ -332,7 +454,7 @@ export default function DriverRideOfferModal({
                 );
               })}
             </View>
-          )}
+          ))}
         </View>
       );
     };
@@ -341,44 +463,24 @@ export default function DriverRideOfferModal({
       <View style={styles.seatsSection}>
         <Text style={styles.sectionTitle}>Select Passenger Seats</Text>
         <Text style={styles.seatHint}>
-          Tap seats that passengers can book. Seat 1 is reserved for driver.
+          {totalSeats <= 2 
+            ? 'Two-wheeler: Only 1 passenger seat (auto-selected)'
+            : totalSeats === 4 && vehicleType === 'three_wheeler'
+            ? 'Auto Rickshaw: 3 passengers sit in back, driver at front'
+            : 'Tap seats that passengers can book. Seat 1 (driver) is fixed on right side (Indian RHD).'}
         </Text>
         <View style={styles.seatsGrid}>
           {totalSeats <= 2 ? (
-            // For 2-seater (bike/scooter), show simple layout
-            <View style={styles.seatRow}>
-              {[1, 2].map((seatNum) => {
-                const isDriverSeat = seatNum === 1;
-                const isSelected = selectedSeats.includes(seatNum);
-                
-                return (
-                  <TouchableOpacity
-                    key={seatNum}
-                    style={[
-                      styles.seatBtn,
-                      isDriverSeat && styles.seatUnavailable,
-                      isSelected && styles.seatSelected,
-                    ]}
-                    onPress={() => !isDriverSeat && toggleSeatSelection(seatNum)}
-                    disabled={isDriverSeat}
-                  >
-                    <Text style={[
-                      styles.seatText,
-                      isDriverSeat && styles.seatTextUnavailable,
-                      isSelected && styles.seatTextSelected,
-                    ]}>
-                      {seatNum}
-                    </Text>
-                    {isDriverSeat && (
-                      <Text style={styles.driverLabel}>Driver</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+            // For 2-seater (bike/scooter), no selection needed
+            <View style={styles.bikeInfo}>
+              <Text style={styles.bikeInfoText}>✓ 1 passenger seat available (Seat 2)</Text>
             </View>
+          ) : totalSeats === 4 && vehicleType === 'three_wheeler' ? (
+            // For auto-rickshaws, show auto layout
+            renderAutoLayout()
           ) : (
-            // For 3+ seats (cars, vans, etc.), show front/back layout
-            renderCarLayout()
+            // For 4+ seats (cars, vans, etc.), show Indian RHD layout
+            renderIndianCarLayout()
           )}
         </View>
         {selectedSeats.length > 0 && (
@@ -396,13 +498,11 @@ export default function DriverRideOfferModal({
       return;
     }
 
-    if (!fromLocation || !toLocation) {
-      showAlert('Error', 'Please select valid locations from the map', 'error');
-      return;
-    }
+    console.log('📤 Submit - Edit mode:', isEditMode, 'Editing offer ID:', editingOffer?.id);
 
-    if (!isRouteCalculated || suggestedFare === 0) {
-      showAlert('Calculating Route', 'Please wait while we calculate the route and fare...', 'info');
+    // In edit mode, skip location validation since we already have the location strings
+    if (!isEditMode && (!fromLocation || !toLocation)) {
+      showAlert('Error', 'Please select valid locations from the map', 'error');
       return;
     }
 
@@ -412,7 +512,10 @@ export default function DriverRideOfferModal({
       return;
     }
 
-    if (selectedSeats.length === 0) {
+    const totalSeats = getTotalSeats();
+    
+    // Skip seat selection validation for bikes (auto-selected)
+    if (totalSeats > 2 && selectedSeats.length === 0) {
       showAlert('Info', 'No specific seats selected - all passenger seats will be available for booking', 'info');
     }
 
@@ -448,16 +551,27 @@ export default function DriverRideOfferModal({
       }
 
       const totalSeats = getTotalSeats();
-      const availableSeats = selectedSeats.length > 0 
-        ? selectedSeats 
-        : Array.from({ length: passengerCount }, (_, i) => i + 2); // Seats 2, 3, 4, etc.
+      
+      // For bikes (2 seats), only seat 2 is available
+      // For cars, use selected seats or auto-generate
+      let availableSeats: number[];
+      if (totalSeats === 2) {
+        availableSeats = [2]; // Only 1 passenger seat for bikes
+      } else if (selectedSeats.length > 0) {
+        availableSeats = selectedSeats;
+      } else {
+        // Auto-generate if none selected: Seats 2, 3, 4, etc.
+        availableSeats = Array.from({ length: passengerCount }, (_, i) => i + 2);
+      }
 
       const payload = {
+        clerkId: user?.id, // Include clerkId as fallback for auth
         from: from.trim(),
         to: to.trim(),
         totalSeats,
         availableSeats,
         farePerSeat: fareAmount,
+        vehicleType,
         notes: notes.trim(),
         womenOnly,
         departureTime: departureTime.toISOString(),
@@ -467,27 +581,43 @@ export default function DriverRideOfferModal({
         dropoffLongitude: toLocation?.longitude,
       };
 
-      // Use the new createRideOffer API
-      const { createRideOffer } = await import('@/lib/api');
-      const response = await createRideOffer(payload);
+      console.log('📤 Payload:', JSON.stringify(payload, null, 2));
 
-      console.log('✅ Ride offer created:', response);
-      showAlert('Success', 'Your ride offer has been created! Passengers can now see and book it.', 'success');
+      let response;
+      if (isEditMode && editingOffer?.id) {
+        // Update existing ride offer
+        console.log('🔄 Updating existing ride offer:', editingOffer.id);
+        response = await updateRideOffer(editingOffer.id, payload);
+        console.log('✅ Ride offer updated:', response);
+        showAlert('Success', 'Your ride offer has been updated!', 'success');
+      } else {
+        // Create new ride offer
+        console.log('✨ Creating new ride offer');
+        const { createRideOffer } = await import('@/lib/api');
+        response = await createRideOffer(payload);
+        console.log('✅ Ride offer created:', response);
+        console.log('🔍 Response structure:', JSON.stringify(response, null, 2));
+        showAlert('Success', 'Your ride offer has been created! Passengers can now see and book it.', 'success');
+      }
       setTimeout(() => {
         handleClose();
-        onSuccess?.({
-          id: response?.rideOffer?.id,
+        const realId = response?.rideOffer?._id || response?.rideOffer?.id || editingOffer?.id;
+        const successPayload = {
+          id: realId,
           from: from.trim(),
           to: to.trim(),
           passengers: passengerCount,
           fare: fareAmount,
           womenOnly,
-          createdAt: new Date().toISOString(),
-        });
+          createdAt: response?.rideOffer?.createdAt || editingOffer?.createdAt || new Date().toISOString(),
+        };
+        console.log('🖭 Real ID extracted:', realId);
+        console.log('📤 Calling onSuccess with payload:', JSON.stringify(successPayload, null, 2));
+        onSuccess?.(successPayload);
       }, 1500);
     } catch (error) {
-      console.error('❌ Error creating ride offer:', error);
-      showAlert('Error', 'Failed to create ride offer. Please try again.', 'error');
+      console.error(`❌ Error ${isEditMode ? 'updating' : 'creating'} ride offer:`, error);
+      showAlert('Error', `Failed to ${isEditMode ? 'update' : 'create'} ride offer. Please try again.`, 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -566,13 +696,16 @@ export default function DriverRideOfferModal({
                         key={index}
                         style={styles.recentDropdownItem}
                         activeOpacity={0.7}
-                        onPressIn={() => {
-                          setFrom(search);
-                          setFromFocused(false);
-                        }}
+                        onPress={() => handleRecentSearchSelect(search, 'from')}
                       >
-                        <MapPin size={16} color={Colors.dark.textSecondary} />
+                        <MapPin size={16} color={Colors.dark.primary} />
                         <Text style={styles.recentDropdownText}>{search}</Text>
+                        <TouchableOpacity
+                          style={styles.recentLocationIcon}
+                          onPress={() => handleRecentSearchSelect(search, 'from')}
+                        >
+                          <Navigation size={14} color={Colors.dark.gold} />
+                        </TouchableOpacity>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -610,13 +743,16 @@ export default function DriverRideOfferModal({
                         key={index}
                         style={styles.recentDropdownItem}
                         activeOpacity={0.7}
-                        onPressIn={() => {
-                          setTo(search);
-                          setToFocused(false);
-                        }}
+                        onPress={() => handleRecentSearchSelect(search, 'to')}
                       >
-                        <MapPin size={16} color={Colors.dark.textSecondary} />
+                        <MapPin size={16} color={Colors.dark.primary} />
                         <Text style={styles.recentDropdownText}>{search}</Text>
+                        <TouchableOpacity
+                          style={styles.recentLocationIcon}
+                          onPress={() => handleRecentSearchSelect(search, 'to')}
+                        >
+                          <Navigation size={14} color={Colors.dark.gold} />
+                        </TouchableOpacity>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -624,23 +760,24 @@ export default function DriverRideOfferModal({
               </View>
 
               {/* Recent Searches */}
-              {recentSearches.length > 0 && !from && !to && (
+              {recentSearches.length > 0 && (!from || !to) && (
                 <View style={styles.recentSearches}>
-                  <Text style={styles.recentTitle}>Recent Searches</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    {recentSearches.slice(0, 5).map((search, index) => (
+                  <Text style={styles.recentTitle}>📍 Recent Searches</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recentScrollView}>
+                    {recentSearches.slice(0, 8).map((search, index) => (
                       <TouchableOpacity
                         key={index}
                         style={styles.recentChip}
                         onPress={() => {
+                          Keyboard.dismiss();
                           if (!from) {
-                            setFrom(search);
+                            handleRecentSearchSelect(search, 'from');
                           } else if (!to) {
-                            setTo(search);
+                            handleRecentSearchSelect(search, 'to');
                           }
                         }}
                       >
-                        <MapPin size={12} color={Colors.dark.textSecondary} />
+                        <Navigation size={14} color={Colors.dark.gold} />
                         <Text style={styles.recentText} numberOfLines={1}>
                           {search}
                         </Text>
@@ -652,7 +789,7 @@ export default function DriverRideOfferModal({
 
             </View>
 
-            {/* Route Information - Inline */}
+            {/* Route Information - Optional */}
             {fromLocation && toLocation && (
               <View style={styles.section}>
                 <RouteInfo
@@ -662,16 +799,6 @@ export default function DriverRideOfferModal({
                   onFareCalculated={handleFareCalculated}
                   onCalculationStart={handleCalculationStart}
                 />
-                {!isRouteCalculated && (
-                  <Text style={styles.calculatingHint}>
-                    ⏳ Calculating route and suggested fare...
-                  </Text>
-                )}
-                {isRouteCalculated && suggestedFare > 0 && (
-                  <Text style={styles.fareHint}>
-                    ✅ Suggested fare: ₹{suggestedFare}
-                  </Text>
-                )}
               </View>
             )}
 
@@ -716,6 +843,43 @@ export default function DriverRideOfferModal({
               </View>
             </View>
 
+            {/* Vehicle Type Selection */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Vehicle Type</Text>
+              <View style={styles.vehicleTypeList}>
+                {VEHICLE_TYPE_OPTIONS.map((option) => (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.vehicleTypeButton,
+                      vehicleType === option.value && styles.vehicleTypeButtonActive,
+                    ]}
+                    onPress={() => {
+                      setVehicleType(option.value);
+                      // Auto-set max passengers based on vehicle type
+                      if (option.value === 'two_wheeler') {
+                        setMaxPassengers('1');
+                      } else if (option.value === 'three_wheeler') {
+                        setMaxPassengers('3');
+                      } else {
+                        setMaxPassengers('3'); // Default for cars
+                      }
+                    }}>
+                    <Text
+                      style={[
+                        styles.vehicleTypeText,
+                        vehicleType === option.value && styles.vehicleTypeTextActive,
+                      ]}>
+                      {option.label}
+                    </Text>
+                    {option.subtitle && (
+                      <Text style={styles.vehicleTypeSubtitle}>{option.subtitle}</Text>
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
             {/* Max Passengers */}
             <View style={styles.section}>
               <View style={styles.inputGroup}>
@@ -746,7 +910,7 @@ export default function DriverRideOfferModal({
                 </View>
                 <TextInput
                   style={styles.input}
-                  placeholder={suggestedFare > 0 ? `Suggested: ₹${suggestedFare} (10% off map estimate)` : "Will be suggested after route calculation"}
+                  placeholder={suggestedFare > 0 ? `Suggested: ₹${suggestedFare} (10% off map estimate)` : "Enter your fare per seat"}
                   placeholderTextColor={suggestedFare > 0 ? Colors.dark.gold : Colors.dark.textSecondary}
                   value={fare}
                   onChangeText={setFare}
@@ -809,13 +973,16 @@ export default function DriverRideOfferModal({
             <TouchableOpacity
               style={[
                 styles.submitButton,
-                (isSubmitting || !isRouteCalculated) && styles.submitButtonDisabled,
+                isSubmitting && styles.submitButtonDisabled,
               ]}
               onPress={handleSubmit}
-              disabled={isSubmitting || !isRouteCalculated}
+              disabled={isSubmitting}
               activeOpacity={0.7}>
               <Text style={styles.submitButtonText}>
-                {isSubmitting ? 'Creating...' : !isRouteCalculated ? 'Calculating Route...' : 'Offer Ride'}
+                {isSubmitting 
+                  ? (isEditMode ? 'Updating...' : 'Creating...') 
+                  : (isEditMode ? 'Update Offer' : 'Offer Ride')
+                }
               </Text>
             </TouchableOpacity>
           </View>
@@ -957,7 +1124,10 @@ const styles = StyleSheet.create({
     marginRight: 8,
     borderWidth: 1,
     borderColor: Colors.dark.border,
-    maxWidth: 150,
+    maxWidth: 180,
+  },
+  recentScrollView: {
+    paddingVertical: 4,
   },
   recentText: {
     fontSize: 13,
@@ -1075,6 +1245,42 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.dark.textSecondary,
     marginTop: 2,
+    fontWeight: '600',
+  },
+  seatWrapper: {
+    alignItems: 'center',
+  },
+  rowLabel: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginRight: 12,
+    alignSelf: 'center',
+    minWidth: 45,
+  },
+  autoDriverRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+  },
+  autoDriverSeat: {
+    alignItems: 'center',
+  },
+  bikeInfo: {
+    width: '100%',
+    backgroundColor: Colors.dark.gold + '15',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '30',
+  },
+  bikeInfoText: {
+    fontSize: 14,
+    color: Colors.dark.gold,
     fontWeight: '600',
   },
   selectedSeatsText: {
@@ -1252,6 +1458,11 @@ const styles = StyleSheet.create({
     gap: 12,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
+  },
+  recentLocationIcon: {
+    padding: 4,
+    borderRadius: 4,
+    backgroundColor: Colors.dark.background,
   },
   recentDropdownText: {
     fontSize: 15,

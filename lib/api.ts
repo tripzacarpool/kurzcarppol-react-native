@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { Platform } from 'react-native';
 import type { RideVehicleType } from '@/types';
 import {
   RidePartnerMode,
@@ -8,9 +9,24 @@ import {
 } from '@/types';
 
 // Create axios instance with proper base URL
-// For development, this should point to your backend server
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+// Automatically detects if running on emulator or physical device
+const getApiBaseUrl = () => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
+  // Android emulator uses 10.0.2.2 to access host's localhost
+  if (Platform.OS === 'android' && __DEV__) {
+    // Check if running on emulator by trying to detect common emulator IPs
+    return 'http://10.0.2.2:5000'; // Android emulator
+  }
+
+  // Physical device or iOS simulator - use your PC's local IP
+  return 'http://192.168.29.161:5000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+console.log('🌐 API Base URL:', API_BASE_URL);
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -110,13 +126,26 @@ export async function syncUserToDatabase_Safe(userData: {
   try {
     return await syncUserToDatabase(userData);
   } catch (error: any) {
-    // In development, just log the error and return mock response
     const errorCode = error.response?.data?.code;
+    const status = error.response?.status;
+
+    // Re-throw critical errors that need user action
+    if (errorCode === 'EMAIL_ALREADY_EXISTS' || status === 400) {
+      console.error(
+        '❌ Sync failed with status:',
+        status,
+        error.response?.data,
+      );
+      throw error;
+    }
+
+    // For non-critical errors, log and return mock response
     if (errorCode === 'NO_AUTH_USER') {
       console.log('⏳ User sync skipped - not authenticated yet');
     } else {
       console.warn(
-        '⚠️ User sync failed (development mode), using mock response',
+        '⚠️ Sync failed (non-critical):',
+        error.response?.data?.error || error.message,
       );
     }
     return {
@@ -125,6 +154,27 @@ export async function syncUserToDatabase_Safe(userData: {
       firstName: userData.firstName,
       lastName: userData.lastName,
     };
+  }
+}
+
+// Check if email already exists in database
+export async function checkEmailExists(email: string): Promise<boolean> {
+  const API_URL =
+    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+  try {
+    console.log('📡 Checking email in database:', email);
+    const response = await axios.get(`${API_URL}/api/users/check-email`, {
+      params: { email: email.trim().toLowerCase() },
+      timeout: 5000,
+    });
+    console.log('✅ Email check response:', response.data);
+    return response.data.exists;
+  } catch (error: any) {
+    console.error('❌ Error checking email:', error.message);
+    console.error('❌ Error details:', error.response?.data);
+    // If there's an error checking, return false to allow signup attempt
+    // This prevents blocking signup if backend is down
+    return false;
   }
 }
 
@@ -610,6 +660,56 @@ export async function createRideOffer(offerData: {
 }
 
 /**
+ * Update an existing ride offer
+ */
+export async function updateRideOffer(
+  rideOfferId: string,
+  updateData: {
+    from?: string;
+    to?: string;
+    totalSeats?: number;
+    availableSeats?: number;
+    farePerSeat?: number;
+    vehicleType?: RideVehicleType;
+    driverMode?: string;
+    notes?: string;
+    womenOnly?: boolean;
+    pickupLatitude?: number;
+    pickupLongitude?: number;
+    pickupCity?: string;
+    pickupCountry?: string;
+    dropoffLatitude?: number;
+    dropoffLongitude?: number;
+    dropoffCity?: string;
+    dropoffCountry?: string;
+    departureTime?: string;
+    scheduledDeparture?: string;
+    timeFlexibilityMinutes?: number;
+    vehicle?: {
+      model: string;
+      color: string;
+      number: string;
+    };
+  },
+): Promise<any> {
+  try {
+    console.log('📤 Updating ride offer:', rideOfferId);
+    const response = await apiClient.put(
+      `/api/ride-offers/${rideOfferId}`,
+      updateData,
+    );
+    console.log('✅ Ride offer updated:', response.data);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error updating ride offer:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
  * Get available ride offers
  */
 export async function getAvailableRideOffers(params?: {
@@ -898,6 +998,7 @@ export async function getOrCreateConversation(data: {
   rideId: string;
   driverId: string;
   passengerId: string;
+  passengerName?: string;
 }): Promise<any> {
   try {
     const response = await apiClient.post('/api/chat/conversation', data);
