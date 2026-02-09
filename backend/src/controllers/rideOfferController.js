@@ -218,8 +218,22 @@ export const updateRideOffer = async (req, res, next) => {
       });
     }
 
+    console.log('🔍 Update request for ID:', id, 'by user:', clerkId);
+
+    // Handle local/temporary IDs (from frontend before sync with backend)
+    if (id.startsWith('local-') || id.length !== 24) {
+      console.log('❌ Cannot update local/temporary ride offer:', id);
+      return res.status(400).json({
+        error: 'Invalid ride offer ID',
+        details:
+          'Cannot update local/temporary ride offers. Please create a new offer instead.',
+        code: 'INVALID_TEMP_ID',
+      });
+    }
+
     // Validate if the ID is a proper MongoDB ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
+      console.log('❌ Invalid MongoDB ObjectId format:', id);
       return res.status(400).json({
         error: 'Invalid ride offer ID',
         details: 'The provided ID is not a valid MongoDB ObjectId',
@@ -237,7 +251,12 @@ export const updateRideOffer = async (req, res, next) => {
     }
 
     // Check if the user is the owner of this ride offer
-    if (existingOffer.driver.clerkId !== clerkId) {
+    if (existingOffer.clerkId !== clerkId) {
+      console.log('❌ Ownership check failed:', {
+        offerClerkId: existingOffer.clerkId,
+        requestClerkId: clerkId,
+        offerId: id,
+      });
       return res.status(403).json({
         error: 'Forbidden',
         details: 'You can only update your own ride offers',

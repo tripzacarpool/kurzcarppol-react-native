@@ -43,7 +43,7 @@ import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
 import type { DriverVerificationResult, DriverVerificationStatus } from '@/types';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
-import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, getRideOfferById, setAuthToken } from '@/lib/api';
+import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, getRideOfferById, setAuthToken, getMyRideOffers } from '@/lib/api';
 import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
 import VerificationBadge from '@/components/VerificationBadge';
@@ -79,6 +79,7 @@ interface DriverOffer {
   fare?: number;
   womenOnly?: boolean;
   createdAt?: string;
+  departureTime?: string;
   status?: 'live' | 'completed' | 'draft';
 }
 
@@ -193,46 +194,87 @@ export default function DriverDashboard() {
   };
 
   const loadSavedOffers = async () => {
-    if (!offersKey) return;
+    if (!user?.id) return;
     try {
       setOffersLoading(true);
-      const stored = await AsyncStorage.getItem(offersKey);
-      if (stored) {
-        const parsed: DriverOffer[] = JSON.parse(stored);
-        console.log('📋 Raw parsed offers:', parsed);
-        // Filter out invalid offers with missing critical fields
-        const validOffers = parsed.filter(offer => {
-          const isValid = offer && 
-            offer.id && 
-            typeof offer.from === 'string' && 
-            offer.from.trim().length > 0 &&
-            typeof offer.to === 'string' && 
-            offer.to.trim().length > 0 &&
-            typeof offer.seats === 'number' &&
-            offer.seats > 0;
-          
-          if (!isValid) {
-            console.warn('⚠️ Filtering out invalid offer:', JSON.stringify(offer));
-          }
-          return isValid;
-        });
-        setMyOffers(validOffers);
-        console.log('✅ Loaded valid offers:', validOffers.length);
-        
-        // Debug: Check what IDs look like  
-        validOffers.forEach(offer => {
-          console.log('📋 Offer ID:', offer.id, 'Type:', typeof offer.id, 'Is Local:', offer.id?.startsWith('local-'));
-        });
-        
-        // Clean up any offers with local IDs (they're stale)
-        const realOffers = validOffers.filter(offer => !offer.id?.startsWith('local-'));
-        if (realOffers.length !== validOffers.length) {
-          console.log('🧹 Cleaning up', validOffers.length - realOffers.length, 'stale local offers');
-          setMyOffers(realOffers);
-          persistOffers(realOffers);
+      
+      // First try to fetch from backend API to get complete data with departure times
+      try {
+        const token = await getToken();
+        if (token) {
+          setAuthToken(token);
         }
-      } else {
-        console.log('📋 No saved offers found');
+        
+        const response = await getMyRideOffers(user.id);
+        if (response.success && response.rideOffers && Array.isArray(response.rideOffers)) {
+          // Transform backend data to match DriverOffer interface
+          const backendOffers: DriverOffer[] = response.rideOffers.map((offer: any) => ({
+            id: offer._id || offer.id,
+            from: offer.from,
+            to: offer.to,
+            seats: offer.totalSeats - 1, // Subtract 1 for driver seat
+            fare: offer.farePerSeat,
+            womenOnly: offer.womenOnly,
+            createdAt: offer.createdAt,
+            departureTime: offer.departureTime,
+            status: offer.status === 'waiting' ? 'live' : offer.status,
+          }));
+          
+          console.log('✅ Loaded offers from backend:', backendOffers.length);
+          setMyOffers(backendOffers);
+          
+          // Update local storage with fresh data
+          if (offersKey) {
+            persistOffers(backendOffers);
+          }
+          
+          setOffersLoading(false);
+          return;
+        }
+      } catch (apiError) {
+        console.warn('⚠️ API fetch failed, falling back to local storage:', apiError);
+      }
+      
+      // Fallback to local storage if API fails
+      if (offersKey) {
+        const stored = await AsyncStorage.getItem(offersKey);
+        if (stored) {
+          const parsed: DriverOffer[] = JSON.parse(stored);
+          console.log('📋 Raw parsed offers:', parsed);
+          // Filter out invalid offers with missing critical fields
+          const validOffers = parsed.filter(offer => {
+            const isValid = offer && 
+              offer.id && 
+              typeof offer.from === 'string' && 
+              offer.from.trim().length > 0 &&
+              typeof offer.to === 'string' && 
+              offer.to.trim().length > 0 &&
+              typeof offer.seats === 'number' &&
+              offer.seats > 0;
+            
+            if (!isValid) {
+              console.warn('⚠️ Filtering out invalid offer:', JSON.stringify(offer));
+            }
+            return isValid;
+          });
+          setMyOffers(validOffers);
+          console.log('✅ Loaded valid offers from local storage:', validOffers.length);
+          
+          // Debug: Check what IDs look like  
+          validOffers.forEach(offer => {
+            console.log('📋 Offer ID:', offer.id, 'Type:', typeof offer.id, 'Is Local:', offer.id?.startsWith('local-'));
+          });
+          
+          // Clean up any offers with local IDs (they're stale)
+          const realOffers = validOffers.filter(offer => !offer.id?.startsWith('local-'));
+          if (realOffers.length !== validOffers.length) {
+            console.log('🧹 Cleaning up', validOffers.length - realOffers.length, 'stale local offers');
+            setMyOffers(realOffers);
+            persistOffers(realOffers);
+          }
+        } else {
+          console.log('📋 No saved offers found');
+        }
       }
     } catch (error) {
       console.warn('⚠️ Unable to load saved offers:', error);
@@ -722,6 +764,7 @@ export default function DriverDashboard() {
       fare: offer.fare,
       womenOnly: offer.womenOnly,
       createdAt: offer.createdAt || new Date().toISOString(),
+      departureTime: offer.departureTime || new Date(Date.now() + 30 * 60000).toISOString(), // Default: 30 mins from now
       status: offer.status || 'live',
     };
     
@@ -834,9 +877,19 @@ export default function DriverDashboard() {
             <View style={styles.requestHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.passengerName} numberOfLines={1}>{truncateAddr(offer.from, 20)} → {truncateAddr(offer.to, 20)}</Text>
-                {offer.createdAt && typeof offer.createdAt === 'string' && (
+                {offer.departureTime && typeof offer.departureTime === 'string' && (
                   <Text style={styles.offerTime}>
-                    {new Date(offer.createdAt).toLocaleString('en-IN', {
+                    🚗 Departure: {new Date(offer.departureTime).toLocaleString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </Text>
+                )}
+                {!offer.departureTime && offer.createdAt && typeof offer.createdAt === 'string' && (
+                  <Text style={styles.offerTime}>
+                    Created: {new Date(offer.createdAt).toLocaleString('en-IN', {
                       day: 'numeric',
                       month: 'short',
                       hour: '2-digit',
@@ -880,7 +933,18 @@ export default function DriverDashboard() {
                   <Text style={styles.detailText}>Women only</Text>
                 </View>
               )}
-              {offer.createdAt && typeof offer.createdAt === 'string' && (
+              {offer.departureTime && typeof offer.departureTime === 'string' && (
+                <View style={styles.detailRow}>
+                  <Clock size={14} color={Colors.dark.gold} />
+                  <Text style={styles.detailText}>Departing {new Date(offer.departureTime).toLocaleString('en-IN', {
+                    day: 'numeric',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}</Text>
+                </View>
+              )}
+              {!offer.departureTime && offer.createdAt && typeof offer.createdAt === 'string' && (
                 <View style={styles.detailRow}>
                   <Clock size={14} color={Colors.dark.textSecondary} />
                   <Text style={styles.detailText}>Created {new Date(offer.createdAt).toLocaleString()}</Text>
@@ -897,6 +961,17 @@ export default function DriverDashboard() {
                   style={styles.editButton}
                   onPress={() => {
                     console.log('🔄 Editing offer with ID:', offer.id, 'Type:', typeof offer.id);
+                    
+                    // Check if it's a valid MongoDB ID (not a local temporary ID)
+                    const isValidMongoId = (id: string) => {
+                      return id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id) && !id.startsWith('local-');
+                    };
+
+                    if (!isValidMongoId(offer.id)) {
+                      showAlert('Cannot Edit', 'This ride offer cannot be edited. Please create a new one instead.', 'warning');
+                      return;
+                    }
+
                     setEditingOffer(offer);
                     setRideOfferModalVisible(true);
                   }}
@@ -1444,6 +1519,7 @@ export default function DriverDashboard() {
             fare: offer.fare,
             womenOnly: offer.womenOnly,
             createdAt: offer.createdAt || new Date().toISOString(),
+            departureTime: offer.departureTime,
           });
           fetchLiveRides();
         }}

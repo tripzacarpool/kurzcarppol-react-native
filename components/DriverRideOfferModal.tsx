@@ -12,9 +12,9 @@ import {
   Platform,
   Keyboard,
 } from 'react-native';
-import { X, MapPin, Users, DollarSign, FileText, Navigation, Clock } from 'lucide-react-native';
+import { X, MapPin, Users, DollarSign, FileText, Navigation } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimeSelector from './DateTimeSelector';
 import { useAuth, useUser } from '@/lib/clerkHooks';
 import { Colors } from '@/constants/Colors';
 import { GOOGLE_MAPS_API_KEY } from '@/config/googleMaps';
@@ -44,6 +44,7 @@ interface DriverRideOfferModalProps {
     fare?: number;
     womenOnly?: boolean;
     createdAt?: string;
+    departureTime?: string;
   }) => void;
 }
 
@@ -67,9 +68,6 @@ export default function DriverRideOfferModal({
   const [womenOnly, setWomenOnly] = useState(false);
   const [maxPassengers, setMaxPassengers] = useState('3'); // Max passengers driver can accommodate
   const [departureTime, setDepartureTime] = useState<Date>(new Date(Date.now() + 30 * 60000)); // Default: 30 mins from now
-  const [showTimePicker, setShowTimePicker] = useState(false);
-  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
-  const [tempDate, setTempDate] = useState<Date | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [locationPickerMode, setLocationPickerMode] = useState<'from' | 'to'>('from');
@@ -148,48 +146,6 @@ export default function DriverRideOfferModal({
 
   const getPassengerSeats = (): number => {
     return parseInt(maxPassengers) || 0;
-  };
-
-  const showDateTimePicker = () => {
-    setPickerMode('date');
-    setShowTimePicker(true);
-  };
-
-  const handleDateTimeChange = (event: any, selectedDate?: Date) => {
-    if (Platform.OS === 'android') {
-      if (event.type === 'dismissed') {
-        setShowTimePicker(false);
-        setPickerMode('date');
-        setTempDate(null);
-        return;
-      }
-      
-      if (pickerMode === 'date' && selectedDate) {
-        // Date selected, store it temporarily and switch to time picker
-        setTempDate(selectedDate);
-        setShowTimePicker(false);
-        // Small delay to allow re-render with time picker
-        setTimeout(() => {
-          setPickerMode('time');
-          setShowTimePicker(true);
-        }, 100);
-      } else if (pickerMode === 'time' && selectedDate && tempDate) {
-        // Time selected, combine with stored date
-        const combined = new Date(tempDate);
-        combined.setHours(selectedDate.getHours());
-        combined.setMinutes(selectedDate.getMinutes());
-        setDepartureTime(combined);
-        setShowTimePicker(false);
-        setPickerMode('date');
-        setTempDate(null);
-      }
-    } else {
-      // iOS: single step
-      setShowTimePicker(false);
-      if (selectedDate) {
-        setDepartureTime(selectedDate);
-      }
-    }
   };
 
   const loadRecentSearches = async () => {
@@ -585,6 +541,17 @@ export default function DriverRideOfferModal({
 
       let response;
       if (isEditMode && editingOffer?.id) {
+        // Check if it's a valid MongoDB ID (not a local temporary ID)
+        const isValidMongoId = (id: string) => {
+          return id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id) && !id.startsWith('local-');
+        };
+
+        if (!isValidMongoId(editingOffer.id)) {
+          console.log('❌ Cannot edit temporary/local ride offer:', editingOffer.id);
+          showAlert('Error', 'Cannot edit this ride offer. Please create a new one instead.', 'error');
+          return;
+        }
+
         // Update existing ride offer
         console.log('🔄 Updating existing ride offer:', editingOffer.id);
         response = await updateRideOffer(editingOffer.id, payload);
@@ -610,6 +577,7 @@ export default function DriverRideOfferModal({
           fare: fareAmount,
           womenOnly,
           createdAt: response?.rideOffer?.createdAt || editingOffer?.createdAt || new Date().toISOString(),
+          departureTime: departureTime.toISOString(),
         };
         console.log('🖭 Real ID extracted:', realId);
         console.log('📤 Calling onSuccess with payload:', JSON.stringify(successPayload, null, 2));
@@ -812,36 +780,12 @@ export default function DriverRideOfferModal({
             )}
 
             {/* Departure Time */}
-            <View style={styles.section}>
-              <View style={styles.inputGroup}>
-                <View style={styles.inputLabel}>
-                  <Clock size={16} color={Colors.dark.gold} />
-                  <Text style={styles.label}>Departure Time</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.timePickerButton}
-                  onPress={showDateTimePicker}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.timePickerText}>
-                    {departureTime.toLocaleString('en-IN', {
-                      dateStyle: 'medium',
-                      timeStyle: 'short',
-                    })}
-                  </Text>
-                  <Clock size={20} color={Colors.dark.gold} />
-                </TouchableOpacity>
-                {showTimePicker && (
-                  <DateTimePicker
-                    value={Platform.OS === 'android' && pickerMode === 'time' && tempDate ? tempDate : departureTime}
-                    mode={Platform.OS === 'android' ? pickerMode : 'datetime'}
-                    display="default"
-                    minimumDate={pickerMode === 'date' ? new Date() : undefined}
-                    onChange={handleDateTimeChange}
-                  />
-                )}
-              </View>
-            </View>
+            <DateTimeSelector
+              value={departureTime}
+              onChange={setDepartureTime}
+              minimumDate={new Date(Date.now() + 5 * 60 * 1000)} // 5 minutes from now
+              label="When do you want to depart?"
+            />
 
             {/* Vehicle Type Selection */}
             <View style={styles.section}>

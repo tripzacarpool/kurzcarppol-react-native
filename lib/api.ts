@@ -15,14 +15,8 @@ const getApiBaseUrl = () => {
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
-  // Android emulator uses 10.0.2.2 to access host's localhost
-  if (Platform.OS === 'android' && __DEV__) {
-    // Check if running on emulator by trying to detect common emulator IPs
-    return 'http://10.0.2.2:5000'; // Android emulator
-  }
-
-  // Physical device or iOS simulator - use your PC's local IP
-  return 'http://192.168.29.161:5000';
+  // Fallback to hosted backend during development
+  return 'https://kurzcarppol-react-native.onrender.com';
 };
 
 const API_BASE_URL = getApiBaseUrl();
