@@ -2,7 +2,11 @@ import { Alert } from 'react-native';
 
 const RAZORPAY_KEY_ID =
   process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_7kAotmP1o8JR8V';
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+if (!process.env.EXPO_PUBLIC_API_URL) {
+  throw new Error('EXPO_PUBLIC_API_URL environment variable is required');
+}
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
+// const API_URL = 'http://localhost:5000'; // Local development URL
 
 export interface PaymentOptions {
   amount: number; // in rupees

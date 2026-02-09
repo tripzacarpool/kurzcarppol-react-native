@@ -10,7 +10,11 @@ import { GOOGLE_MAPS_API_KEY } from '@/config/googleMaps';
 import { Platform } from 'react-native';
 
 const IS_WEB = Platform.OS === 'web';
-const API_BASE_URL = 'http://localhost:5000';
+if (!process.env.EXPO_PUBLIC_API_URL) {
+  throw new Error('EXPO_PUBLIC_API_URL environment variable is required');
+}
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+// const API_BASE_URL = 'http://localhost:5000'; // Local development URL
 
 export interface RouteCoordinate {
   latitude: number;

@@ -1,3 +1,5 @@
+import Constants from 'expo-constants';
+
 export async function fetchAndStoreUserIP(
   userId: string,
 ): Promise<string | null> {
@@ -10,7 +12,10 @@ export async function fetchAndStoreUserIP(
 
     if (ipAddress) {
       const API_URL =
-        process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+        process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
+      if (!API_URL) {
+        throw new Error('API URL not configured');
+      }
       const ipUrl = `${API_URL}/api/users/ip`;
       console.log('💾 Storing IP to:', ipUrl);
 
@@ -51,7 +56,10 @@ export async function fetchAndStoreUserIP(
 export async function getUserProfile(userId: string) {
   try {
     const API_URL =
-      process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+      process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
+    if (!API_URL) {
+      throw new Error('API URL not configured');
+    }
     console.log('👤 Fetching profile from:', `${API_URL}/api/users/${userId}`);
     const response = await fetch(`${API_URL}/api/users/${userId}`, {
       method: 'GET',

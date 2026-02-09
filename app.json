@@ -20,7 +20,8 @@
       "icon": "./assets/icon.png",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to your location to show you nearby rides and track your trip.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to your location to show you nearby rides and track your trip."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to your location to show you nearby rides and track your trip.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "config": {
         "googleMapsApiKey": "AIzaSyAWpVF1UfbtUsUbdv7SM8jautI7Y0QWx0U"
@@ -76,7 +77,11 @@
       "router": {},
       "eas": {
         "projectId": "536fdb51-b385-47a4-a44d-52216a6aea36"
-      }
+      },
+      "apiUrl": "http://192.168.1.25:5000",
+      "googleMapsApiKey": "AIzaSyAWpVF1UfbtUsUbdv7SM8jautI7Y0QWx0U",
+      "clerkPublishableKey": "pk_test_dGVuZGVyLWVlbC0xNS5jbGVyay5hY2NvdW50cy5kZXYk",
+      "razorpayKeyId": "rzp_test_7kAotmP1o8JR8V"
     }
   }
 }

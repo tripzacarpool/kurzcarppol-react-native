@@ -161,7 +161,12 @@ export default function RootLayout() {
   // Test backend connectivity on startup (non-blocking)
   useEffect(() => {
     const checkConnectivity = async () => {
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+      if (!process.env.EXPO_PUBLIC_API_URL) {
+        console.error('❌ EXPO_PUBLIC_API_URL environment variable is required');
+        return;
+      }
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL;
+      // const apiUrl = 'http://10.238.194.123:5000'; // Local development URL
       console.log('🔗 Backend URL configured as:', apiUrl);
       const isReachable = await testBackendConnectivity(apiUrl);
       if (isReachable) {

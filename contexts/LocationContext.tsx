@@ -117,7 +117,11 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         // Live ride tracking uses WebSocket (see lib/locationSocket.ts)
         // NO Google Maps API calls here - just backend storage
         try {
-          const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+          if (!process.env.EXPO_PUBLIC_API_URL) {
+            throw new Error('EXPO_PUBLIC_API_URL environment variable is required');
+          }
+          const API_URL = process.env.EXPO_PUBLIC_API_URL;
+          // const API_URL = 'http://localhost:5000'; // Local development URL
           const locationUrl = `${API_URL}/api/users/location`;
           
           const locationPayload = {

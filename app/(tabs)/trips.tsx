@@ -125,7 +125,7 @@ export default function TripsScreen() {
   const performCancelRide = async (rideId: string) => {
     setCancellingRideId(rideId);
     try {
-      await cancelRide(rideId);
+      await cancelRide(rideId, 'request'); // Specify it's a request
       
       // Remove from local state
       const updated = userRides.filter(ride => ride.id !== rideId);

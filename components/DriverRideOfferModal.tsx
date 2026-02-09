@@ -541,22 +541,31 @@ export default function DriverRideOfferModal({
 
       let response;
       if (isEditMode && editingOffer?.id) {
-        // Check if it's a valid MongoDB ID (not a local temporary ID)
-        const isValidMongoId = (id: string) => {
-          return id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id) && !id.startsWith('local-');
+        // Check if it's a local/temporary ID (should not be edited)
+        const isLocalId = (id: string) => {
+          return id.startsWith('local-') || id.startsWith('temp-');
         };
 
-        if (!isValidMongoId(editingOffer.id)) {
+        if (isLocalId(editingOffer.id)) {
           console.log('❌ Cannot edit temporary/local ride offer:', editingOffer.id);
           showAlert('Error', 'Cannot edit this ride offer. Please create a new one instead.', 'error');
           return;
         }
 
-        // Update existing ride offer
+        // Update existing ride offer (accept any non-local ID)
         console.log('🔄 Updating existing ride offer:', editingOffer.id);
-        response = await updateRideOffer(editingOffer.id, payload);
-        console.log('✅ Ride offer updated:', response);
-        showAlert('Success', 'Your ride offer has been updated!', 'success');
+        try {
+          response = await updateRideOffer(editingOffer.id, payload);
+          console.log('✅ Ride offer updated:', response);
+          showAlert('Success', 'Your ride offer has been updated!', 'success');
+        } catch (error: any) {
+          console.error('❌ Update failed, will create new:', error);
+          // If update fails (e.g., ID not found), create new instead
+          console.log('🔄 Fallback: Creating new ride offer');
+          response = await createRideOffer(payload);
+          console.log('✅ New ride offer created:', response);
+          showAlert('Success', 'Your ride offer has been created!', 'success');
+        }
       } else {
         // Create new ride offer
         console.log('✨ Creating new ride offer');

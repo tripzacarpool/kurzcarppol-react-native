@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Alert } from 'react-native';
+import Constants from 'expo-constants';
 import { useAuth as useClerkAuth, useUser } from '@/lib/clerkHooks';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearAllClerkSessions } from '@/lib/clerkSessionHelper';
@@ -120,7 +121,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const syncUserWithDatabase = async (authUser: AuthUser) => {
     try {
-      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+      const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
+      if (!API_URL) {
+        throw new Error('API URL not configured');
+      }
       const syncUrl = `${API_URL}/api/users/sync`;
       console.log('🔗 Syncing to:', syncUrl);
       

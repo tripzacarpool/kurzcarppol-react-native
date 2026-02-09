@@ -803,10 +803,10 @@ export default function DriverDashboard() {
   const performCancelOffer = async (offerId: string) => {
     setCancellingOfferId(offerId);
     try {
-      // Attempt to cancel via backend if available
+      // Attempt to cancel via backend with correct type
       try {
-        await cancelRide(offerId);
-        console.log('✅ Ride cancelled on backend');
+        await cancelRide(offerId, 'offer'); // Specify it's an offer
+        console.log('✅ Ride offer cancelled on backend');
       } catch (backendError) {
         console.log('⚠️ Backend cancel failed, removing from local storage:', backendError);
       }

@@ -19,10 +19,6 @@
         "buildType": "apk"
       },
       "autoIncrement": true
-    },
-    "web": {
-      "platform": "web",
-      "output": "dist"
     }
   },
   "submit": {

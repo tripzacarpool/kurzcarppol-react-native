@@ -1,19 +1,28 @@
 import { io } from 'socket.io-client';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 // Automatically detects if running on emulator or physical device
 const getBackendUrl = () => {
+  // Try environment variable first (for development)
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
-  // Android emulator uses 10.0.2.2 to access host's localhost
-  if (Platform.OS === 'android' && __DEV__) {
-    return 'http://10.0.2.2:5000'; // Android emulator
+  // Fallback to app.json extra config (for production builds)
+  const apiUrl = Constants.expoConfig?.extra?.apiUrl;
+  if (apiUrl) {
+    return apiUrl;
   }
 
-  // Physical device or iOS simulator
-  return 'http://192.168.29.161:5000';
+  throw new Error(
+    'API URL not configured. Set EXPO_PUBLIC_API_URL environment variable or configure extra.apiUrl in app.json',
+  );
+  // Android emulator uses 10.0.2.2 to access host's localhost
+  // if (Platform.OS === 'android' && __DEV__) {
+  //   return 'http://10.0.2.2:5000'; // Android emulator
+  // }
+  // return 'http://10.238.194.123:5000'; // Local development
 };
 
 const BACKEND_URL = getBackendUrl();

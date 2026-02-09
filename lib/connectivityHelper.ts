@@ -30,10 +30,15 @@ export async function testBackendConnectivity(
 }
 
 export async function getAvailableBackendUrl(): Promise<string> {
+  if (!process.env.EXPO_PUBLIC_API_URL) {
+    throw new Error('EXPO_PUBLIC_API_URL environment variable is required');
+  }
+
   const urls = [
-    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000',
-    'http://10.0.2.2:5000', // Android emulator default
-    'http://localhost:5000', // iOS simulator
+    process.env.EXPO_PUBLIC_API_URL,
+    // Local development URLs (uncomment to use):
+    // 'http://10.0.2.2:5000', // Android emulator default
+    // 'http://10.238.194.123:5000', // Local development
   ];
 
   for (const url of urls) {
@@ -45,5 +50,6 @@ export async function getAvailableBackendUrl(): Promise<string> {
   }
 
   console.warn('⚠️ No backend URL worked, using default');
-  return process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+  return process.env.EXPO_PUBLIC_API_URL;
+  // return 'http://10.238.194.123:5000'; // Local development URL
 }

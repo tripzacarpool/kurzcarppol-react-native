@@ -46,8 +46,9 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : [
       'http://localhost:5000',
       'http://127.0.0.1:5000',
-      'http://192.168.29.161:5000',
-      'http://10.0.2.2:5000',
+      // Local development IPs (uncomment as needed):
+      // 'http://192.168.29.161:5000',
+      // 'http://10.0.2.2:5000',
     ];
 
 const corsOptions = {
@@ -206,6 +207,8 @@ export { io };
 
 // Background task to check for expiring rides every 5 minutes
 let expiringRidesInterval;
+let cleanupInterval;
+
 async function checkExpiringRidesTask() {
   try {
     const { checkExpiringRides } =
@@ -230,6 +233,52 @@ async function checkExpiringRidesTask() {
   }
 }
 
+// Background task to cleanup expired rides
+async function cleanupExpiredRidesTask() {
+  try {
+    console.log('🧹 Running automatic cleanup of expired rides...');
+
+    // Cleanup expired ride requests
+    const { cleanupExpiredRides } =
+      await import('./controllers/rideController.js');
+    const mockReq1 = {};
+    const mockRes1 = {
+      status: () => mockRes1,
+      json: (data) => {
+        if (data.count > 0) {
+          console.log(`🗑️ Cleaned up ${data.count} expired ride requests`);
+        }
+        return mockRes1;
+      },
+    };
+    const mockNext1 = (error) => {
+      if (error)
+        console.error('❌ Error cleaning expired ride requests:', error);
+    };
+    await cleanupExpiredRides(mockReq1, mockRes1, mockNext1);
+
+    // Cleanup expired ride offers
+    const { cleanupExpiredRideOffers } =
+      await import('./controllers/rideOfferController.js');
+    const mockReq2 = {};
+    const mockRes2 = {
+      status: () => mockRes2,
+      json: (data) => {
+        if (data.expiredCount > 0) {
+          console.log(`🗑️ Cleaned up ${data.expiredCount} expired ride offers`);
+        }
+        return mockRes2;
+      },
+    };
+    const mockNext2 = (error) => {
+      if (error) console.error('❌ Error cleaning expired ride offers:', error);
+    };
+    await cleanupExpiredRideOffers(mockReq2, mockRes2, mockNext2);
+  } catch (error) {
+    console.error('❌ Cleanup task failed:', error);
+  }
+}
+
 // Start the background task when database is ready
 function startBackgroundTasks() {
   // Check for expiring rides every 5 minutes
@@ -238,8 +287,15 @@ function startBackgroundTasks() {
     '⏰ Background task started: Checking for expiring rides every 5 minutes',
   );
 
+  // Cleanup expired rides every 10 minutes
+  cleanupInterval = setInterval(cleanupExpiredRidesTask, 10 * 60 * 1000);
+  console.log(
+    '🧹 Background task started: Cleaning up expired rides every 10 minutes',
+  );
+
   // Run immediately on startup
   setTimeout(checkExpiringRidesTask, 5000); // Wait 5 seconds after startup
+  setTimeout(cleanupExpiredRidesTask, 8000); // Wait 8 seconds after startup
 
   // Start departure notification service (checks every minute)
   startDepartureNotificationService();
@@ -247,6 +303,20 @@ function startBackgroundTasks() {
     '🔔 Background task started: Checking for upcoming departures every minute',
   );
 }
+
+// Clean shutdown
+process.on('SIGTERM', () => {
+  console.log('🛑 Shutting down background tasks...');
+  if (expiringRidesInterval) clearInterval(expiringRidesInterval);
+  if (cleanupInterval) clearInterval(cleanupInterval);
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 Shutting down background tasks...');
+  if (expiringRidesInterval) clearInterval(expiringRidesInterval);
+  if (cleanupInterval) clearInterval(cleanupInterval);
+  process.exit(0);
+});
 
 // Start Server
 httpServer.listen(PORT, '0.0.0.0', () => {
@@ -256,7 +326,7 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`📍 Environment: ${NODE_ENV}`);
   console.log(`🌐 Server: http://0.0.0.0:${PORT}`);
   console.log(`🌐 Local: http://localhost:${PORT}`);
-  console.log(`🌐 Network: http://192.168.29.161:${PORT}`);
+  // console.log(`🌐 Network: http://192.168.29.161:${PORT}`); // Add your local IP here
   console.log(`💾 Database: ${dbReady ? '✅ Connected' : '⚠️  Disconnected'}`);
   console.log(`🔌 WebSocket: ✅ Ready (real-time location tracking)`);
   console.log(`${'='.repeat(60)}`);

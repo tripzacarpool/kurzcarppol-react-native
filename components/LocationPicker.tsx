@@ -95,8 +95,12 @@ export default function LocationPicker({
       setLoading(true);
       
       // Use backend proxy on web to avoid CORS, direct API on mobile
+      if (!process.env.EXPO_PUBLIC_API_URL && IS_WEB) {
+        throw new Error('EXPO_PUBLIC_API_URL environment variable is required for web');
+      }
       const url = IS_WEB
-        ? `http://localhost:5000/api/maps/autocomplete?input=${encodeURIComponent(query)}`
+        ? `${process.env.EXPO_PUBLIC_API_URL}/api/maps/autocomplete?input=${encodeURIComponent(query)}`
+        // ? `http://10.238.194.123:5000/api/maps/autocomplete?input=${encodeURIComponent(query)}` // Local development
         : `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
             query
           )}&key=${GOOGLE_MAPS_API_KEY}&components=country:in`;
@@ -124,8 +128,12 @@ export default function LocationPicker({
       setPredictions([]);
 
       // Get place details for coordinates - use proxy on web
+      if (!process.env.EXPO_PUBLIC_API_URL && IS_WEB) {
+        throw new Error('EXPO_PUBLIC_API_URL environment variable is required for web');
+      }
       const url = IS_WEB
-        ? `http://localhost:5000/api/maps/place-details?place_id=${placeId}`
+        ? `${process.env.EXPO_PUBLIC_API_URL}/api/maps/place-details?place_id=${placeId}`
+        // ? `http://10.238.194.123:5000/api/maps/place-details?place_id=${placeId}` // Local development
         : `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=geometry&key=${GOOGLE_MAPS_API_KEY}`;
 
       const response = await fetch(url);
@@ -166,8 +174,12 @@ export default function LocationPicker({
       setLoading(true);
 
       // Reverse geocode to get address - use proxy on web
+      if (!process.env.EXPO_PUBLIC_API_URL && IS_WEB) {
+        throw new Error('EXPO_PUBLIC_API_URL environment variable is required for web');
+      }
       const url = IS_WEB
-        ? `http://localhost:5000/api/maps/geocode?latlng=${latitude},${longitude}`
+        ? `${process.env.EXPO_PUBLIC_API_URL}/api/maps/geocode?latlng=${latitude},${longitude}`
+        // ? `http://10.238.194.123:5000/api/maps/geocode?latlng=${latitude},${longitude}` // Local development
         : `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`;
 
       const response = await fetch(url);

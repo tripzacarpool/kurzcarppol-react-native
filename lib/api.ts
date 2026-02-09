@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import type { RideVehicleType } from '@/types';
 import {
   RidePartnerMode,
@@ -11,12 +12,20 @@ import {
 // Create axios instance with proper base URL
 // Automatically detects if running on emulator or physical device
 const getApiBaseUrl = () => {
+  // Try environment variable first (for development)
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
-  // Fallback to hosted backend during development
-  return 'https://kurzcarppol-react-native.onrender.com';
+  // Fallback to app.json extra config (for production builds)
+  const apiUrl = Constants.expoConfig?.extra?.apiUrl;
+  if (apiUrl) {
+    return apiUrl;
+  }
+
+  throw new Error(
+    'API URL not configured. Set EXPO_PUBLIC_API_URL environment variable or configure extra.apiUrl in app.json',
+  );
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -154,7 +163,10 @@ export async function syncUserToDatabase_Safe(userData: {
 // Check if email already exists in database
 export async function checkEmailExists(email: string): Promise<boolean> {
   const API_URL =
-    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+    process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
   try {
     console.log('📡 Checking email in database:', email);
     const response = await axios.get(`${API_URL}/api/users/check-email`, {
@@ -175,7 +187,10 @@ export async function checkEmailExists(email: string): Promise<boolean> {
 // Backend logout - invalidate session on server
 export async function logoutUserFromBackend(clerkId: string) {
   const API_URL =
-    process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.161:5000';
+    process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
   try {
     console.log('🔗 Calling backend logout for:', clerkId);
     console.log('📍 Backend URL:', `${API_URL}/api/users/logout`);
@@ -436,12 +451,49 @@ export async function createDriverRideOffer(rideData: {
 }
 
 // Cancel a ride request or driver offer
-export async function cancelRide(rideId: string) {
+export async function cancelRide(
+  rideId: string,
+  rideType?: 'request' | 'offer',
+) {
   try {
-    console.log('🗑️ Cancelling ride:', rideId);
-    const response = await apiClient.delete(`/api/rides/${rideId}/cancel`);
-    console.log('✅ Ride cancelled:', response.data);
-    return response.data;
+    console.log('🗑️ Cancelling ride:', rideId, 'type:', rideType);
+
+    // Try to determine the type if not provided
+    if (!rideType) {
+      // First try as ride offer
+      try {
+        console.log('🔄 Attempting to cancel as ride offer...');
+        const response = await apiClient.post(
+          `/api/ride-offers/${rideId}/cancel`,
+        );
+        console.log('✅ Ride offer cancelled:', response.data);
+        return response.data;
+      } catch (offerError: any) {
+        console.log('⚠️ Not a ride offer, trying as ride request...');
+
+        // If that fails, try as ride request
+        try {
+          const response = await apiClient.delete(
+            `/api/rides/${rideId}/cancel`,
+          );
+          console.log('✅ Ride request cancelled:', response.data);
+          return response.data;
+        } catch (requestError: any) {
+          console.error('❌ Failed to cancel as both offer and request');
+          throw requestError;
+        }
+      }
+    } else if (rideType === 'offer') {
+      const response = await apiClient.post(
+        `/api/ride-offers/${rideId}/cancel`,
+      );
+      console.log('✅ Ride offer cancelled:', response.data);
+      return response.data;
+    } else {
+      const response = await apiClient.delete(`/api/rides/${rideId}/cancel`);
+      console.log('✅ Ride request cancelled:', response.data);
+      return response.data;
+    }
   } catch (error: any) {
     console.error(
       '❌ Error cancelling ride:',
