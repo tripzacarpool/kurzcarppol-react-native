@@ -32,7 +32,8 @@ export default function PushNotificationDebug() {
         }
       }
     } catch (error) {
-      setResult(`❌ Error: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setResult(`❌ Error: ${errorMessage}`);
     }
   };
 
@@ -94,7 +95,7 @@ export default function PushNotificationDebug() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>🔔 Push Notification Debug</Text>
-      <Text style={styles.subtitle}>User: {user.firstName || user.emailAddresses?.[0]?.emailAddress}</Text>
+      <Text style={styles.subtitle}>User: {user.firstName || user.email}</Text>
       
       <TouchableOpacity style={styles.button} onPress={testPushToken}>
         <Text style={styles.buttonText}>1️⃣ Get & Register Push Token</Text>

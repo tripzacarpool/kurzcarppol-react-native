@@ -14,7 +14,9 @@ import { clerkAuth } from './middleware/clerkAuth.js';
 import { setupLocationEvents } from './controllers/locationController.js';
 import { setSocketIO } from './controllers/rideController.js';
 import { setSocketIO as setOfferSocketIO } from './controllers/rideOfferController.js';
+import { setSocketIO as setPickupSocketIO } from './controllers/rideOfferPickupController.js';
 import { setChatSocketIO } from './controllers/chatController.js';
+import { setApprovalSocketIO } from './controllers/approvalController.js';
 import healthRoutes from './routes/healthRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
@@ -24,7 +26,10 @@ import rideOfferRoutes from './routes/rideOfferRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import mapsProxyRoutes from './routes/mapsProxyRoutes.js';
+import approvalRoutes from './routes/approvalRoutes.js';
+import ratingRoutes from './routes/ratingRoutes.js';
 import { startDepartureNotificationService } from './services/departureNotificationService.js';
+import { startApprovalBackgroundTasks } from './services/approvalService.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -158,6 +163,8 @@ app.use('/api/ride-offers', rideOfferRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/maps', mapsProxyRoutes);
+app.use('/api/ratings', ratingRoutes);
+app.use('/api', approvalRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -200,7 +207,9 @@ io.on('connection', (socket) => {
 // Inject socket.io instance into ride controller
 setSocketIO(io);
 setOfferSocketIO(io);
+setPickupSocketIO(io);
 setChatSocketIO(io);
+setApprovalSocketIO(io);
 
 // Export io instance for use in controllers
 export { io };
@@ -245,8 +254,10 @@ async function cleanupExpiredRidesTask() {
     const mockRes1 = {
       status: () => mockRes1,
       json: (data) => {
-        if (data.count > 0) {
-          console.log(`🗑️ Cleaned up ${data.count} expired ride requests`);
+        if (data.cancelledCount > 0 || data.completedCount > 0) {
+          console.log(
+            `🗑️ Ride Requests: ${data.cancelledCount} cancelled, ${data.completedCount} auto-completed`,
+          );
         }
         return mockRes1;
       },
@@ -264,8 +275,10 @@ async function cleanupExpiredRidesTask() {
     const mockRes2 = {
       status: () => mockRes2,
       json: (data) => {
-        if (data.expiredCount > 0) {
-          console.log(`🗑️ Cleaned up ${data.expiredCount} expired ride offers`);
+        if (data.cancelledCount > 0 || data.completedCount > 0) {
+          console.log(
+            `🗑️ Ride Offers: ${data.cancelledCount} cancelled, ${data.completedCount} auto-completed`,
+          );
         }
         return mockRes2;
       },
@@ -293,18 +306,19 @@ function startBackgroundTasks() {
     '🧹 Background task started: Cleaning up expired rides every 10 minutes',
   );
 
-  // Run immediately on startup
-  setTimeout(checkExpiringRidesTask, 5000); // Wait 5 seconds after startup
-  setTimeout(cleanupExpiredRidesTask, 8000); // Wait 8 seconds after startup
-
   // Start departure notification service (checks every minute)
   startDepartureNotificationService();
   console.log(
     '🔔 Background task started: Checking for upcoming departures every minute',
   );
-}
 
-// Clean shutdown
+  // Start approval system background tasks
+  startApprovalBackgroundTasks();
+
+  // Run immediately on startup
+  setTimeout(checkExpiringRidesTask, 5000); // Wait 5 seconds after startup
+  setTimeout(cleanupExpiredRidesTask, 8000); // Wait 8 seconds after startup
+}
 process.on('SIGTERM', () => {
   console.log('🛑 Shutting down background tasks...');
   if (expiringRidesInterval) clearInterval(expiringRidesInterval);

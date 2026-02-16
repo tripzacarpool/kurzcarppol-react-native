@@ -35,9 +35,7 @@ const scoreWeights = {
 };
 
 function deriveStatus(score: number): DriverVerificationStatus {
-  if (score >= 85) {
-    return 'auto_approved';
-  }
+  // All verifications require manual review (no auto-approval)
   if (score >= 60) {
     return 'manual_review';
   }

@@ -1,8 +1,7 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Switch, Image } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, Star, MapPin, Shield, Bell, HelpCircle, LogOut, ChevronRight, Users, Car, UserCog, Check, Globe, Navigation } from 'lucide-react-native';
+import { User, Star, MapPin, Shield, Bell, HelpCircle, LogOut, ChevronRight, Car, Globe, Navigation, Wallet, MessageCircle } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { UserRole } from '@/types';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
@@ -16,8 +15,8 @@ export default function ProfileScreen() {
   const { location, hasPermission, requestPermission, updateLocation } = useLocation();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [locationEnabled, setLocationEnabled] = useState(hasPermission);
-  const [currentRole, setCurrentRole] = useState<UserRole>('passenger');
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   
   // Custom alert state
   const [alertVisible, setAlertVisible] = useState(false);
@@ -47,19 +46,22 @@ export default function ProfileScreen() {
   }, [user]);
 
   useEffect(() => {
-    if (user?.role) {
-      setCurrentRole(user.role);
-    }
-  }, [user?.role]);
-
-  useEffect(() => {
     setLocationEnabled(hasPermission);
   }, [hasPermission]);
 
   const loadUserProfile = async () => {
-    if (user) {
+    if (!user) return;
+    
+    try {
+      setLoading(true);
       const profile = await getUserProfile(user.id);
       setUserProfile(profile);
+      console.log('✅ Profile loaded:', profile);
+    } catch (error) {
+      console.error('❌ Error loading profile:', error);
+      showAlert('Error', 'Failed to load profile data', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -111,8 +113,18 @@ export default function ProfileScreen() {
 
   const userDisplayName = userProfile?.full_name || (user?.firstName + ' ' + (user?.lastName || '')) || 'User';
   const userEmail = user?.email || 'user@example.com';
-  const userRating = userProfile?.rating || 4.5;
+  const userRating = userProfile?.rating || 4.8;
   const totalTrips = userProfile?.total_trips || 0;
+
+  if (loading && !userProfile) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading profile...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -170,79 +182,34 @@ export default function ProfileScreen() {
         )}
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Switch Mode</Text>
-          <View style={styles.roleSwitcher}>
-            <TouchableOpacity
-              style={[styles.roleCard, currentRole === 'passenger' && styles.roleCardActive]}
-              onPress={() => setCurrentRole('passenger')}
-              activeOpacity={0.7}>
-              <View style={[styles.roleIcon, currentRole === 'passenger' && styles.roleIconActive]}>
-                <User size={24} color={currentRole === 'passenger' ? Colors.dark.background : Colors.dark.gold} />
-              </View>
-              <Text style={[styles.roleTitle, currentRole === 'passenger' && styles.roleTitleActive]}>
-                Traveler
-              </Text>
-              {currentRole === 'passenger' && (
-                <View style={styles.activeIndicator}>
-                  <Check size={16} color={Colors.dark.background} />
-                </View>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.roleCard, currentRole === 'ride_partner' && styles.roleCardActive]}
-              onPress={() => setCurrentRole('ride_partner')}
-              activeOpacity={0.7}>
-              <View style={[styles.roleIcon, currentRole === 'ride_partner' && styles.roleIconActive]}>
-                <Car size={24} color={currentRole === 'ride_partner' ? Colors.dark.background : Colors.dark.gold} />
-              </View>
-              <Text style={[styles.roleTitle, currentRole === 'ride_partner' && styles.roleTitleActive]}>
-                Ride Partner
-              </Text>
-              {currentRole === 'ride_partner' && (
-                <View style={styles.activeIndicator}>
-                  <Check size={16} color={Colors.dark.background} />
-                </View>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.roleCard, currentRole === 'admin' && styles.roleCardActive]}
-              onPress={() => setCurrentRole('admin')}
-              activeOpacity={0.7}>
-              <View style={[styles.roleIcon, currentRole === 'admin' && styles.roleIconActive]}>
-                <UserCog size={24} color={currentRole === 'admin' ? Colors.dark.background : Colors.dark.gold} />
-              </View>
-              <Text style={[styles.roleTitle, currentRole === 'admin' && styles.roleTitleActive]}>
-                Admin
-              </Text>
-              {currentRole === 'admin' && (
-                <View style={styles.activeIndicator}>
-                  <Check size={16} color={Colors.dark.background} />
-                </View>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {currentRole === 'ride_partner' && (
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push('/driver/dashboard')}
-              activeOpacity={0.7}>
-              <Car size={20} color={Colors.dark.background} />
-              <Text style={styles.actionButtonText}>Go to Ride Partner Dashboard</Text>
-            </TouchableOpacity>
-          )}
-
-          {currentRole === 'admin' && (
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push('/admin/dashboard')}
-              activeOpacity={0.7}>
-              <UserCog size={20} color={Colors.dark.background} />
-              <Text style={styles.actionButtonText}>Go to Admin Panel</Text>
-            </TouchableOpacity>
-          )}
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => router.push('/(tabs)/wallet')}>
+            <View style={styles.menuIcon}>
+              <Wallet size={20} color={Colors.dark.gold} />
+            </View>
+            <Text style={styles.menuText}>My Wallet</Text>
+            <ChevronRight size={20} color={Colors.dark.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => router.push('/(tabs)/trips')}>
+            <View style={styles.menuIcon}>
+              <Car size={20} color={Colors.dark.gold} />
+            </View>
+            <Text style={styles.menuText}>My Trips</Text>
+            <ChevronRight size={20} color={Colors.dark.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => router.push('/driver/onboarding')}>
+            <View style={styles.menuIcon}>
+              <Car size={20} color={Colors.dark.gold} />
+            </View>
+            <Text style={styles.menuText}>Become a Ride Partner</Text>
+            <ChevronRight size={20} color={Colors.dark.textSecondary} />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
@@ -261,17 +228,6 @@ export default function ProfileScreen() {
             <Text style={styles.menuText}>Saved Addresses</Text>
             <ChevronRight size={20} color={Colors.dark.textSecondary} />
           </TouchableOpacity>
-          {currentRole === 'passenger' && (
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => router.push('/driver/onboarding')}>
-              <View style={styles.menuIcon}>
-                <Car size={20} color={Colors.dark.gold} />
-              </View>
-              <Text style={styles.menuText}>Become a Ride Partner</Text>
-              <ChevronRight size={20} color={Colors.dark.textSecondary} />
-            </TouchableOpacity>
-          )}
         </View>
 
         <View style={styles.section}>
@@ -348,6 +304,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.dark.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: Colors.dark.text,
+    fontSize: 16,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
@@ -519,71 +485,5 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
     fontSize: 12,
     marginBottom: 40,
-  },
-  roleSwitcher: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-  },
-  roleCard: {
-    flex: 1,
-    backgroundColor: Colors.dark.card,
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: Colors.dark.border,
-    position: 'relative',
-  },
-  roleCardActive: {
-    borderColor: Colors.dark.gold,
-    backgroundColor: Colors.dark.gold + '20',
-  },
-  roleIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: Colors.dark.gold + '20',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  roleIconActive: {
-    backgroundColor: Colors.dark.gold,
-  },
-  roleTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.dark.textSecondary,
-  },
-  roleTitleActive: {
-    color: Colors.dark.gold,
-    fontWeight: '700',
-  },
-  activeIndicator: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: Colors.dark.gold,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.dark.gold,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    gap: 8,
-  },
-  actionButtonText: {
-    color: Colors.dark.background,
-    fontSize: 15,
-    fontWeight: '700',
   },
 });

@@ -83,11 +83,33 @@ export default function HomeScreen() {
       setLoadingRides(true);
       // Use the new getAllRides API that fetches both offers and requests
       const response = await getAvailableRideOffers();
+      console.log('📥 API Response:', { 
+        success: response.success, 
+        count: response.count,
+        ridesReceived: response.rideOffers?.length 
+      });
+      
       if (response.rideOffers && Array.isArray(response.rideOffers)) {
+        console.log('👤 Current user ID:', user.id);
+        console.log('🔍 Filtering rides - Before filter:', response.rideOffers.length);
+        
         // Filter out self-authored rides and mark as offers
         const filtered = response.rideOffers
-          .filter((ride: any) => ride.clerkId !== user.id)
+          .filter((ride: any) => {
+            const isOwnRide = ride.clerkId === user.id;
+            if (isOwnRide) {
+              console.log('🚫 Filtered out own ride:', {
+                from: ride.from,
+                to: ride.to,
+                rideClerkId: ride.clerkId,
+                userClerkId: user.id
+              });
+            }
+            return !isOwnRide;
+          })
           .map((ride: any) => ({ ...ride, rideType: 'offer' as const }));
+        
+        console.log('✅ After filter:', filtered.length);
         setAvailableRides(filtered);
         console.log('✅ Available ride offers fetched:', filtered.length);
         console.log('📦 Rides data:', filtered);
@@ -381,6 +403,15 @@ export default function HomeScreen() {
                   key={ride.id || `ride-${index}`}
                   ride={ride}
                   onPress={() => {
+                    // Prevent booking completed or cancelled rides
+                    if (ride.status === 'completed' || ride.status === 'cancelled') {
+                      showAlert(
+                        'Ride Unavailable',
+                        `This ride has been ${ride.status}. You cannot book rides that have ended.`,
+                        'error'
+                      );
+                      return;
+                    }
                     setSelectedRide(ride);
                     setBookingModalVisible(true);
                   }}

@@ -76,6 +76,9 @@ export const createRideOffer = async (req, res, next) => {
       timeFlexibilityMinutes,
       vehicle,
       driver,
+      // Festival Special Pool fields
+      festivalType = null,
+      festivalConfig = {},
     } = req.body || {};
 
     if (!from || !to) {
@@ -101,6 +104,30 @@ export const createRideOffer = async (req, res, next) => {
         error: 'User not found',
         details: 'No user profile found for this clerkId',
         code: 'USER_NOT_FOUND',
+      });
+    }
+
+    // Check for potential duplicate rides (same route, similar time, active status)
+    const departureDate = new Date(departureTime);
+    const timeWindow = 15 * 60 * 1000; // 15 minutes window
+    const existingRide = await RideOffer.findOne({
+      clerkId,
+      from: from.trim(),
+      to: to.trim(),
+      status: { $in: ['waiting', 'accepted', 'booked'] },
+      departureTime: {
+        $gte: new Date(departureDate.getTime() - timeWindow),
+        $lte: new Date(departureDate.getTime() + timeWindow),
+      },
+    });
+
+    if (existingRide) {
+      console.log(`⚠️ Potential duplicate ride detected for user ${clerkId}`);
+      return res.status(409).json({
+        error: 'Duplicate ride detected',
+        details: `You already have an active ride from ${from} to ${to} at a similar time. Please edit that ride or cancel it first.`,
+        code: 'DUPLICATE_RIDE',
+        existingRideId: existingRide._id,
       });
     }
 
@@ -133,10 +160,19 @@ export const createRideOffer = async (req, res, next) => {
       availableSeats = availableSeats.filter((seat) => seat !== 1);
     }
 
+    // Sanitize festival fields - convert empty strings to null
+    const sanitizedFestivalType =
+      festivalType && festivalType.trim() !== '' ? festivalType : null;
+    const sanitizedFestivalConfig = festivalConfig || {};
+    if (sanitizedFestivalConfig.tier === '') {
+      sanitizedFestivalConfig.tier = null;
+    }
+
     // Create ride offer
     const rideOffer = new RideOffer({
       userId: userProfile._id,
       clerkId,
+      driverId: clerkId, // Driver's clerkId for approval system
       from,
       to,
       totalSeats,
@@ -160,6 +196,13 @@ export const createRideOffer = async (req, res, next) => {
         : null,
       timeFlexibilityMinutes: timeFlexibilityMinutes || 60,
       status: 'waiting',
+      // Approval system fields - ALL rides require driver approval
+      approvalMode: 'manual',
+      requiresManualApproval: true,
+      seatLocks: [],
+      // Festival Special Pool fields (optional - only set by admin)
+      festivalType: sanitizedFestivalType,
+      festivalConfig: sanitizedFestivalConfig,
       vehicle: vehicle || {
         model: userProfile.vehicleInfo?.model || 'Vehicle',
         color: userProfile.vehicleInfo?.color || 'Unknown',
@@ -173,12 +216,21 @@ export const createRideOffer = async (req, res, next) => {
           userProfile.profileImage || 'https://www.gravatar.com/avatar?d=mp',
         rating: userProfile.rating || 5,
         ridesCompleted: userProfile.totalTrips || 0,
-        gender: 'other',
+        gender: userProfile.gender || 'other',
       },
       bookings: [],
     });
 
     await rideOffer.save();
+
+    console.log('✅ Ride offer created with manual approval:', {
+      rideId: rideOffer._id,
+      from: rideOffer.from,
+      to: rideOffer.to,
+      approvalMode: rideOffer.approvalMode,
+      requiresManualApproval: rideOffer.requiresManualApproval,
+      driverId: rideOffer.driverId,
+    });
 
     // Broadcast new offer via Socket.IO
     if (io) {
@@ -329,6 +381,12 @@ export const updateRideOffer = async (req, res, next) => {
 
     if (vehicle !== undefined) updateData.vehicle = vehicle;
 
+    // Ensure driverId is populated (for backward compatibility with old rides)
+    if (!existingOffer.driverId && existingOffer.clerkId) {
+      updateData.driverId = existingOffer.clerkId;
+      console.log('✅ Adding driverId to update for backward compatibility');
+    }
+
     // Update the ride offer
     const updatedOffer = await RideOffer.findByIdAndUpdate(
       id,
@@ -364,13 +422,36 @@ export const updateRideOffer = async (req, res, next) => {
  */
 export const getAvailableRideOffers = async (req, res, next) => {
   try {
-    const { from, to, minSeats = 1 } = req.query;
+    const { from, to, minSeats = 1, includeOwn } = req.query;
+    const now = new Date();
+
+    // Extract clerkId from auth (preferred) or query params (fallback)
+    let clerkId = getClerkUserId(req);
+    if (!clerkId) {
+      clerkId = req.query.clerkId;
+      console.log('⚠️ Using clerkId from query params (auth not available)');
+    }
+
+    console.log('🔍 Fetching available ride offers:', {
+      from,
+      to,
+      minSeats,
+      includeOwn,
+      clerkId,
+      currentTime: now,
+    });
 
     const query = {
-      status: 'waiting',
-      availableSeats: { $exists: true, $ne: [] },
-      departureTime: { $gte: new Date() }, // Only future rides
+      status: 'waiting', // Only waiting rides (available for new bookings)
+      availableSeats: { $exists: true, $ne: [] }, // Must have available seats
+      departureTime: { $gte: now }, // Only future rides
     };
+
+    // Filter out user's own rides unless explicitly requested
+    if (clerkId && includeOwn !== 'true') {
+      query.clerkId = { $ne: clerkId };
+      console.log(`🚫 Excluding rides from user: ${clerkId}`);
+    }
 
     if (from) query.from = new RegExp(from, 'i');
     if (to) query.to = new RegExp(to, 'i');
@@ -380,9 +461,45 @@ export const getAvailableRideOffers = async (req, res, next) => {
       };
     }
 
+    console.log('📋 Query filters:', JSON.stringify(query, null, 2));
+
     const rideOffers = await RideOffer.find(query)
       .sort({ departureTime: 1, createdAt: -1 })
       .limit(50);
+
+    console.log(
+      `✅ Found ${rideOffers.length} available ride offers before any filtering`,
+    );
+
+    // Log all rides for debugging
+    console.log('📦 All rides found:');
+    rideOffers.forEach((ride, index) => {
+      console.log(`   ${index + 1}. ${ride.from} → ${ride.to}`);
+      console.log(`      ID: ${ride._id}`);
+      console.log(`      ClerkId: ${ride.clerkId}`);
+      console.log(`      Status: ${ride.status}`);
+      console.log(`      Departure: ${ride.departureTime}`);
+      console.log(`      Available Seats: [${ride.availableSeats.join(', ')}]`);
+      console.log(
+        `      Matches requesting user: ${ride.clerkId === clerkId ? '❌ YES (filtered out)' : '✅ NO (included)'}`,
+      );
+    });
+
+    console.log(
+      `✅ Returning ${rideOffers.length} available ride offers to client`,
+    );
+
+    // Log sample of rides for debugging
+    if (rideOffers.length > 0) {
+      console.log('📦 Sample ride:', {
+        id: rideOffers[0]._id,
+        from: rideOffers[0].from,
+        to: rideOffers[0].to,
+        departureTime: rideOffers[0].departureTime,
+        availableSeats: rideOffers[0].availableSeats,
+        status: rideOffers[0].status,
+      });
+    }
 
     // Transform to match frontend expectations
     const formattedOffers = rideOffers.map((offer) => ({
@@ -506,16 +623,46 @@ export const extendRideOfferTime = async (req, res, next) => {
       currentDeparture.getTime() + additionalMinutes * 60000,
     );
 
+    // Update departure time and reset notification flag
     rideOffer.departureTime = newDeparture;
+    rideOffer.departureNotificationSent = false; // Reset so driver gets notifications again
+
+    // Ensure status remains 'waiting' if it was cancelled by cleanup
+    if (
+      rideOffer.status === 'cancelled' &&
+      rideOffer.availableSeats.length > 0
+    ) {
+      rideOffer.status = 'waiting';
+      console.log(
+        `✅ Restored ride ${id} status to 'waiting' after time extension`,
+      );
+    }
+
+    // Ensure driverId is populated (for backward compatibility with old rides)
+    if (!rideOffer.driverId && rideOffer.clerkId) {
+      rideOffer.driverId = rideOffer.clerkId;
+    }
+
+    // Sanitize festivalConfig.tier (for backward compatibility)
+    if (rideOffer.festivalConfig && rideOffer.festivalConfig.tier === '') {
+      rideOffer.festivalConfig.tier = null;
+    }
+
     await rideOffer.save();
 
-    // Broadcast update
+    console.log(
+      `⏰ Extended ride ${id} by ${additionalMinutes} minutes. New departure: ${newDeparture}`,
+    );
+
+    // Broadcast update to all connected clients
     if (io) {
       io.emit('rideOfferTimeExtended', {
         offerId: id,
         newDepartureTime: newDeparture,
         additionalMinutes,
+        status: rideOffer.status,
       });
+      io.emit('rideOfferUpdated', rideOffer); // Also broadcast general update
     }
 
     return res.status(200).json({
@@ -635,6 +782,16 @@ export const bookRideOffer = async (req, res, next) => {
       rideOffer.status = 'booked';
     }
 
+    // Ensure driverId is populated (for backward compatibility with old rides)
+    if (!rideOffer.driverId && rideOffer.clerkId) {
+      rideOffer.driverId = rideOffer.clerkId;
+    }
+
+    // Sanitize festivalConfig.tier (for backward compatibility)
+    if (rideOffer.festivalConfig && rideOffer.festivalConfig.tier === '') {
+      rideOffer.festivalConfig.tier = null;
+    }
+
     await rideOffer.save();
 
     // Broadcast seat availability update to all connected clients
@@ -715,6 +872,16 @@ export const cancelRideOffer = async (req, res, next) => {
       });
     }
 
+    // Ensure driverId is populated (for backward compatibility with old rides)
+    if (!rideOffer.driverId && rideOffer.clerkId) {
+      rideOffer.driverId = rideOffer.clerkId;
+    }
+
+    // Sanitize festivalConfig.tier (for backward compatibility)
+    if (rideOffer.festivalConfig && rideOffer.festivalConfig.tier === '') {
+      rideOffer.festivalConfig.tier = null;
+    }
+
     rideOffer.status = 'cancelled';
     await rideOffer.save();
 
@@ -741,23 +908,90 @@ export const cleanupExpiredRideOffers = async (req, res, next) => {
   try {
     const now = new Date();
     const expirationBuffer = 5 * 60 * 1000; // 5 minutes
+    const recentUpdateThreshold = 2 * 60 * 1000; // Don't cleanup rides updated in last 2 minutes
+    const estimatedTripDuration = 3 * 60 * 60 * 1000; // 3 hours estimated trip duration
 
-    const result = await RideOffer.updateMany(
-      {
-        departureTime: { $lt: new Date(now - expirationBuffer) },
-        status: { $in: ['waiting', 'accepted'] },
-      },
-      {
-        $set: { status: 'cancelled' },
-      },
+    // 1. AUTO-COMPLETE: Find ongoing/booked rides that should be completed
+    // (departureTime + 3 hours has passed)
+    const ridesForCompletion = await RideOffer.find({
+      departureTime: { $lt: new Date(now - estimatedTripDuration) },
+      status: { $in: ['ongoing', 'booked'] },
+    });
+
+    let completedCount = 0;
+    for (const ride of ridesForCompletion) {
+      try {
+        // Ensure driverId is populated (for backward compatibility with old rides)
+        if (!ride.driverId && ride.clerkId) {
+          ride.driverId = ride.clerkId;
+        }
+
+        // Sanitize festivalConfig.tier (for backward compatibility with old rides)
+        if (ride.festivalConfig && ride.festivalConfig.tier === '') {
+          ride.festivalConfig.tier = null;
+        }
+
+        ride.status = 'completed';
+        ride.completedAt = now;
+        await ride.save();
+        completedCount++;
+        console.log(
+          `✅ Auto-completed ride: ${ride._id} (departed: ${ride.departureTime})`,
+        );
+      } catch (error) {
+        console.error(`❌ Error completing ride ${ride._id}:`, error.message);
+        // Continue with next ride instead of breaking the entire cleanup
+      }
+    }
+
+    // 2. AUTO-CANCEL: Find expired rides that never got bookings
+    const expiredRides = await RideOffer.find({
+      departureTime: { $lt: new Date(now - expirationBuffer) },
+      status: { $in: ['waiting', 'accepted'] },
+      updatedAt: { $lt: new Date(now - recentUpdateThreshold) }, // Skip recently updated rides
+    });
+
+    let cancelledCount = 0;
+    for (const ride of expiredRides) {
+      try {
+        // Don't cancel if ride has confirmed bookings
+        const hasActiveBookings = ride.bookings?.some(
+          (b) => b.status === 'confirmed',
+        );
+
+        if (!hasActiveBookings) {
+          // Ensure driverId is populated (for backward compatibility with old rides)
+          if (!ride.driverId && ride.clerkId) {
+            ride.driverId = ride.clerkId;
+          }
+
+          // Sanitize festivalConfig.tier (for backward compatibility with old rides)
+          if (ride.festivalConfig && ride.festivalConfig.tier === '') {
+            ride.festivalConfig.tier = null;
+          }
+
+          ride.status = 'cancelled';
+          await ride.save();
+          cancelledCount++;
+          console.log(`🗑️ Auto-cancelled expired ride: ${ride._id}`);
+        } else {
+          console.log(`⏭️ Skipped ride ${ride._id} - has active bookings`);
+        }
+      } catch (error) {
+        console.error(`❌ Error cancelling ride ${ride._id}:`, error.message);
+        // Continue with next ride instead of breaking the entire cleanup
+      }
+    }
+
+    console.log(
+      `🧹 Cleanup complete: ${cancelledCount} cancelled, ${completedCount} auto-completed`,
     );
-
-    console.log(`🧹 Cleaned up ${result.modifiedCount} expired ride offers`);
 
     return res.status(200).json({
       success: true,
-      expiredCount: result.modifiedCount,
-      message: 'Expired ride offers cleaned up',
+      cancelledCount,
+      completedCount,
+      message: 'Expired ride offers cleaned up and ongoing rides completed',
     });
   } catch (error) {
     console.error('❌ Error cleaning up expired ride offers:', error);
@@ -779,8 +1013,31 @@ export const getMyRideOffers = async (req, res, next) => {
     }
 
     const rideOffers = await RideOffer.find({ clerkId })
-      .sort({ createdAt: -1 })
+      .sort({ departureTime: -1, createdAt: -1 }) // Sort by departure time first, then creation time
       .limit(50);
+
+    console.log(
+      `📋 Found ${rideOffers.length} ride offers for driver ${clerkId}`,
+    );
+
+    // Check for potential duplicates and log them
+    const rideGroupsMap = new Map();
+    rideOffers.forEach((offer) => {
+      const key = `${offer.from}_${offer.to}_${new Date(offer.departureTime).toISOString().split('T')[0]}`;
+      if (!rideGroupsMap.has(key)) {
+        rideGroupsMap.set(key, []);
+      }
+      rideGroupsMap.get(key).push(offer._id);
+    });
+
+    // Log potential duplicates
+    rideGroupsMap.forEach((ids, key) => {
+      if (ids.length > 1) {
+        console.log(
+          `⚠️ Potential duplicate rides detected: ${key} - IDs: ${ids.join(', ')}`,
+        );
+      }
+    });
 
     const formattedOffers = rideOffers.map((offer) => ({
       ...offer.toObject(),

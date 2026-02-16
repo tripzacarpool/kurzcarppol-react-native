@@ -10,6 +10,20 @@ export function setChatSocketIO(socketInstance) {
 }
 
 /**
+ * Sanitize user name by removing special characters and limiting length
+ * Allows: letters, numbers, spaces, hyphens, apostrophes, periods
+ */
+function sanitizeUserName(name) {
+  if (!name || typeof name !== 'string') return null;
+
+  return name
+    .replace(/[^a-zA-Z0-9\s\-'.]/g, '') // Remove special chars except space, hyphen, apostrophe, period
+    .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
+    .trim()
+    .substring(0, 50); // Limit to 50 characters
+}
+
+/**
  * Get or create conversation between driver and passenger
  * POST /api/chat/conversation
  */
@@ -59,11 +73,12 @@ export const getOrCreateConversation = async (req, res, next) => {
         const rideOffer = await RideOffer.findById(rideId);
 
         let welcomeMessage = `New conversation started`;
+        const sanitizedPassengerName = sanitizeUserName(passengerName);
 
-        if (rideOffer && passengerName) {
-          welcomeMessage = `${passengerName} wants to connect about the ride from ${rideOffer.from} to ${rideOffer.to}`;
-        } else if (passengerName) {
-          welcomeMessage = `${passengerName} started a conversation`;
+        if (rideOffer && sanitizedPassengerName) {
+          welcomeMessage = `${sanitizedPassengerName} wants to connect about the ride from ${rideOffer.from} to ${rideOffer.to}`;
+        } else if (sanitizedPassengerName) {
+          welcomeMessage = `${sanitizedPassengerName} started a conversation`;
         } else if (rideOffer) {
           welcomeMessage = `Conversation started about ride from ${rideOffer.from} to ${rideOffer.to}`;
         }
@@ -153,11 +168,14 @@ export const sendMessage = async (req, res, next) => {
 
     console.log('📨 [BACKEND] Recipient ID:', recipientId);
 
+    // Sanitize sender name
+    const sanitizedSenderName = sanitizeUserName(senderName) || 'User';
+
     // Create message
     const message = await Message.create({
       conversationId,
       senderId,
-      senderName,
+      senderName: sanitizedSenderName,
       messageText,
       messageType,
       readBy: [senderId], // Sender has read their own message
@@ -441,11 +459,23 @@ export const getUserConversations = async (req, res, next) => {
           if (otherUserProfile) {
             // Use firstName and lastName if available, otherwise fall back to email
             if (otherUserProfile.firstName || otherUserProfile.lastName) {
-              otherUserName =
-                `${otherUserProfile.firstName || ''} ${otherUserProfile.lastName || ''}`.trim();
+              const firstName =
+                sanitizeUserName(otherUserProfile.firstName) || '';
+              const lastName =
+                sanitizeUserName(otherUserProfile.lastName) || '';
+              const fullName = `${firstName} ${lastName}`.trim();
+
+              if (fullName) {
+                otherUserName = fullName;
+              }
             } else if (otherUserProfile.email) {
               // Extract name from email if no firstName/lastName
-              otherUserName = otherUserProfile.email.split('@')[0];
+              const emailName = sanitizeUserName(
+                otherUserProfile.email.split('@')[0],
+              );
+              if (emailName) {
+                otherUserName = emailName;
+              }
             }
             otherUserPhone = otherUserProfile.phone;
           }
@@ -478,7 +508,10 @@ export const getUserConversations = async (req, res, next) => {
               if (booking) {
                 // Use booking name if available and not already set from UserProfile
                 if (booking.passengerName && otherUserName === 'Passenger') {
-                  otherUserName = booking.passengerName;
+                  const sanitizedName = sanitizeUserName(booking.passengerName);
+                  if (sanitizedName) {
+                    otherUserName = sanitizedName;
+                  }
                 }
                 // Use booking phone if not already set from UserProfile
                 if (booking.passengerPhone && !otherUserPhone) {
@@ -488,7 +521,8 @@ export const getUserConversations = async (req, res, next) => {
             } else {
               // Passenger viewing driver details
               if (rideOffer.driver && otherUserName === 'Driver') {
-                otherUserName = rideOffer.driver.name || 'Driver';
+                const sanitizedName = sanitizeUserName(rideOffer.driver.name);
+                otherUserName = sanitizedName || 'Driver';
               }
             }
           }

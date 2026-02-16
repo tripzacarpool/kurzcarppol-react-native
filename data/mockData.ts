@@ -48,6 +48,10 @@ export const mockRides: Ride[] = [
     distance: '28 km',
     duration: '45 mins',
     driverMode: 'all_access',
+    approvalMode: 'auto',
+    requiresManualApproval: false,
+    isFestivalRide: false,
+    seatLocks: [],
   },
   {
     id: '2',
@@ -85,6 +89,10 @@ export const mockRides: Ride[] = [
     distance: '22 km',
     duration: '35 mins',
     driverMode: 'community',
+    approvalMode: 'manual',
+    requiresManualApproval: true,
+    isFestivalRide: false,
+    seatLocks: [],
   },
   {
     id: '3',
@@ -122,6 +130,10 @@ export const mockRides: Ride[] = [
     distance: '25 km',
     duration: '40 mins',
     driverMode: 'commuter',
+    approvalMode: 'auto',
+    requiresManualApproval: false,
+    isFestivalRide: false,
+    seatLocks: [],
   },
   {
     id: '4',
@@ -159,6 +171,10 @@ export const mockRides: Ride[] = [
     distance: '30 km',
     duration: '50 mins',
     driverMode: 'all_access',
+    approvalMode: 'auto',
+    requiresManualApproval: false,
+    isFestivalRide: false,
+    seatLocks: [],
   },
   {
     id: '5',
@@ -196,6 +212,10 @@ export const mockRides: Ride[] = [
     distance: '12 km',
     duration: '25 mins',
     driverMode: 'community',
+    approvalMode: 'manual',
+    requiresManualApproval: true,
+    isFestivalRide: false,
+    seatLocks: [],
   },
   {
     id: '6',
@@ -233,6 +253,10 @@ export const mockRides: Ride[] = [
     distance: '32 km',
     duration: '55 mins',
     driverMode: 'commuter',
+    approvalMode: 'auto',
+    requiresManualApproval: false,
+    isFestivalRide: false,
+    seatLocks: [],
   },
   {
     id: '7',
@@ -270,6 +294,10 @@ export const mockRides: Ride[] = [
     distance: '20 km',
     duration: '32 mins',
     driverMode: 'community',
+    approvalMode: 'manual',
+    requiresManualApproval: true,
+    isFestivalRide: false,
+    seatLocks: [],
   },
   {
     id: '8',
@@ -307,6 +335,10 @@ export const mockRides: Ride[] = [
     distance: '18 km',
     duration: '30 mins',
     driverMode: 'all_access',
+    approvalMode: 'auto',
+    requiresManualApproval: false,
+    isFestivalRide: false,
+    seatLocks: [],
   },
   {
     id: '9',
@@ -344,6 +376,10 @@ export const mockRides: Ride[] = [
     distance: '14 km',
     duration: '28 mins',
     driverMode: 'commuter',
+    approvalMode: 'auto',
+    requiresManualApproval: false,
+    isFestivalRide: false,
+    seatLocks: [],
   },
 ];
 

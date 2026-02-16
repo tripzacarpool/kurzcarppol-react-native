@@ -1,22 +1,37 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator } from 'react-native';
-import { MapPin, Star, Calendar, User as UserIcon, Plus, X } from 'lucide-react-native';
+import { MapPin, Star, Calendar, User as UserIcon, Plus, X, Check, Clock, Phone, DollarSign, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
-import { getUserRides, cancelRide } from '@/lib/api';
+import { getUserRides, cancelRide, getPassengerBookings, passengerConfirmRideOfferPickup, setAuthToken, submitRating, getPendingRatings } from '@/lib/api';  
+import { getToken } from '@/lib/clerkSessionHelper';
 import RideRequestModal from '@/components/RideRequestModal';
-import { subscribeToRideAcceptance, unsubscribeFromRideEvents, initializeLocationSocket } from '@/lib/locationSocket';
+import RatingModal from '@/components/RatingModal';
+import { 
+  subscribeToRideAcceptance, 
+  unsubscribeFromRideEvents, 
+  initializeLocationSocket,
+  subscribeToPickupInitiated,
+  unsubscribeFromPickupEvents,
+} from '@/lib/locationSocket';
 import CustomAlert, { AlertButton, AlertType } from '@/components/CustomAlert';
 
 export default function TripsScreen() {
   const { user } = useAuth();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [userRides, setUserRides] = useState<any[]>([]);
+  const [rideOfferBookings, setRideOfferBookings] = useState<any[]>([]);
   const [loadingRides, setLoadingRides] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [rideRequestModalVisible, setRideRequestModalVisible] = useState(false);
   const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
+  const [confirmingPickupFor, setConfirmingPickupFor] = useState<string | null>(null);
+  
+  // Rating modal state
+  const [ratingModalVisible, setRatingModalVisible] = useState(false);
+  const [selectedRideForRating, setSelectedRideForRating] = useState<any>(null);
+  const [pendingRatings, setPendingRatings] = useState<any[]>([]);
   
   // Custom alert state
   const [alertVisible, setAlertVisible] = useState(false);
@@ -43,6 +58,8 @@ export default function TripsScreen() {
     if (user) {
       loadUserProfile();
       fetchUserRides();
+      fetchPassengerBookings();
+      fetchPendingRatings();
       
       // Initialize socket connection
       initializeLocationSocket();
@@ -53,13 +70,35 @@ export default function TripsScreen() {
         // Refresh user rides to show updated status
         fetchUserRides();
       });
+
+      // Subscribe to pickup initiation (when driver starts pickup process)
+      if (user.id) {
+        subscribeToPickupInitiated(user.id, (data) => {
+          console.log('🚗 Driver initiated pickup:', data);
+          // Show alert to passenger
+          showAlert(
+            '🚗 Driver is Here!',
+            'Your driver has initiated pickup. Please confirm once you board the car.',
+            'info'
+          );
+          // Refresh bookings to show pickup confirmation UI
+          fetchPassengerBookings();
+        });
+      }
       
       // Poll for updates every 30 seconds as fallback
-      const interval = setInterval(fetchUserRides, 30000);
+      const interval = setInterval(() => {
+        fetchUserRides();
+        fetchPassengerBookings();
+        fetchPendingRatings();
+      }, 30000);
       
       return () => {
         clearInterval(interval);
         unsubscribeFromRideEvents();
+        if (user?.id) {
+          unsubscribeFromPickupEvents(user.id, false);
+        }
       };
     }
   }, [user]);
@@ -89,10 +128,57 @@ export default function TripsScreen() {
     }
   };
 
+  const fetchPassengerBookings = async () => {
+    if (!user?.id) return;
+    try {
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+      
+      const response = await getPassengerBookings();
+      if (response.success && response.bookings && Array.isArray(response.bookings)) {
+        setRideOfferBookings(response.bookings);
+        console.log('✅ Ride offer bookings fetched:', response.bookings.length);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching ride offer bookings:', error);
+      setRideOfferBookings([]);
+    }
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchUserRides();
+    await Promise.all([fetchUserRides(), fetchPassengerBookings()]);
     setRefreshing(false);
+  };
+
+  const handleConfirmPickup = async (bookingId: string, rideId: string) => {
+    try {
+      setConfirmingPickupFor(bookingId);
+      console.log('🚗 [PICKUP] Confirming pickup for booking:', bookingId);
+      
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      await passengerConfirmRideOfferPickup(rideId, bookingId);
+      
+      showAlert(
+        '✅ Pickup Confirmed',
+        'You have confirmed boarding. Ride tracking started!',
+        'success'
+      );
+      
+      // Refresh bookings
+      await fetchPassengerBookings();
+    } catch (error) {
+      console.error('❌ Error confirming pickup:', error);
+      showAlert('Error', 'Failed to confirm pickup. Try again.', 'error');
+    } finally {
+      setConfirmingPickupFor(null);
+    }
   };
 
   const handleCancelRide = (rideId: string, rideStatus: string) => {
@@ -141,9 +227,111 @@ export default function TripsScreen() {
     }
   };
 
+  // Fetch pending ratings
+  const fetchPendingRatings = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const response = await getPendingRatings(user.id);
+      if (response.success) {
+        setPendingRatings(response.pendingRatings || []);
+        console.log(`📊 Found ${response.count} pending ratings`);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching pending ratings:', error);
+    }
+  };
+
+  // Handle opening rating modal
+  const handleRateRide = (ride: any, booking?: any) => {
+    const rideData = {
+      rideId: ride.id || ride._id,
+      bookingId: booking?._id,
+      from: ride.from,
+      to: ride.to,
+      ratedId: booking ? booking.driverId : ride.driverId,
+      ratedName: booking ? booking.driverName : ride.driverName || 'Driver',
+      ratedRole: 'driver' as const,
+    };
+    setSelectedRideForRating(rideData);
+    setRatingModalVisible(true);
+  };
+
+  // Handle rating submission
+  const handleSubmitRating = async (rating: number, feedback: string, tags: string[]) => {
+    if (!user?.id || !selectedRideForRating) return;
+
+    try {
+      await submitRating({
+        rideId: selectedRideForRating.rideId,
+        bookingId: selectedRideForRating.bookingId,
+        raterId: user.id,
+        ratedId: selectedRideForRating.ratedId,
+        raterRole: 'passenger',
+        ratedRole: selectedRideForRating.ratedRole,
+        rating,
+        feedback,
+        tags,
+      });
+
+      showAlert('Thank You!', 'Your rating has been submitted successfully.', 'success');
+      
+      // Refresh pending ratings
+      fetchPendingRatings();
+      
+      setRatingModalVisible(false);
+      setSelectedRideForRating(null);
+    } catch (error: any) {
+      console.error('❌ Error submitting rating:', error);
+      if (error.response?.status === 409) {
+        showAlert('Already Rated', 'You have already rated this ride.', 'warning');
+      } else {
+        showAlert('Error', 'Failed to submit rating. Please try again.', 'error');
+      }
+    }
+  };
+
   const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
-  const displayRides = userRides.length > 0 ? userRides : mockTrips;
-  const totalRides = displayRides.length;
+  
+  // Filter out old cancelled/completed rides (older than 48 hours)
+  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  const displayRides = userRides.filter((ride) => {
+    // Always show active rides (waiting, accepted, ongoing)
+    if (['waiting', 'accepted', 'ongoing'].includes(ride.status)) {
+      return true;
+    }
+    
+    // For cancelled/completed rides, only show recent ones (within 48 hours)
+    if (['cancelled', 'completed'].includes(ride.status)) {
+      const rideDate = new Date(ride.createdAt || ride.updatedAt);
+      return rideDate > twoDaysAgo;
+    }
+    
+    return true; // Show any other status
+  });
+  
+  const totalRides = displayRides.length + rideOfferBookings.length;
+
+  // Filter active/ongoing rides (passenger has boarded and is traveling)
+  const activeRides = rideOfferBookings.filter(
+    (booking) => booking.hasConfirmedPickup && booking.approvalStatus === 'confirmed' && 
+    ['waiting', 'booked', 'ongoing'].includes(booking.rideOffer?.status)
+  );
+
+  // Filter bookings that need pickup confirmation
+  const pendingPickups = rideOfferBookings.filter(
+    (booking) => booking.driverInitiatedPickup && !booking.hasConfirmedPickup && booking.approvalStatus === 'confirmed'
+  );
+
+  // Filter confirmed bookings (approved but not yet picked up)
+  const confirmedBookings = rideOfferBookings.filter(
+    (booking) => booking.approvalStatus === 'confirmed' && !booking.driverInitiatedPickup && !booking.hasConfirmedPickup
+  );
+
+  // Filter pending approval bookings
+  const pendingApprovalBookings = rideOfferBookings.filter(
+    (booking) => booking.approvalStatus === 'pending_approval'
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -172,87 +360,352 @@ export default function TripsScreen() {
             <ActivityIndicator size="large" color={Colors.dark.gold} />
             <Text style={styles.loadingText}>Loading your rides...</Text>
           </View>
-        ) : displayRides.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No rides yet</Text>
-            <Text style={styles.emptySubtext}>Create a ride request to get started</Text>
-            <TouchableOpacity
-              style={styles.createRideBtn}
-              onPress={() => setRideRequestModalVisible(true)}
-              activeOpacity={0.7}>
-              <Plus size={20} color={Colors.dark.background} />
-              <Text style={styles.createRideBtnText}>Create Ride</Text>
-            </TouchableOpacity>
-          </View>
         ) : (
-          displayRides.map((ride, index) => (
-            <View key={ride.id || index}>
-              <TouchableOpacity
-                style={styles.tripCard}
-                activeOpacity={0.7}>
-                <View style={styles.tripHeader}>
-                  <View style={styles.routeInfo}>
-                    <View style={styles.routeRow}>
-                      <MapPin size={14} color={Colors.dark.gold} />
-                      <Text style={styles.location}>{ride.from}</Text>
+          <>
+            {/* Active/Ongoing Rides Section - Highest Priority */}
+            {activeRides.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>🚗 Active Ride</Text>
+                <Text style={styles.sectionSubtitle}>Your current trip is in progress</Text>
+                {activeRides.map((booking) => (
+                  <View key={booking._id} style={[styles.tripCard, styles.activeRideCard]}>
+                    <View style={styles.activeRideHeader}>
+                      <View style={styles.activeRideBadge}>
+                        <View style={styles.liveDot} />
+                        <Text style={styles.activeRideBadgeText}>Ride in Progress</Text>
+                      </View>
+                      <View style={styles.activeRideStatus}>
+                        <Check size={14} color={Colors.dark.success} />
+                        <Text style={styles.activeRideStatusText}>Onboard</Text>
+                      </View>
                     </View>
-                    <View style={styles.routeLine} />
-                    <View style={styles.routeRow}>
-                      <MapPin size={14} color={Colors.dark.pink} />
-                      <Text style={styles.location}>{ride.to}</Text>
+
+                    <View style={styles.tripHeader}>
+                      <View style={styles.routeInfo}>
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.gold} />
+                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.pink} />
+                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                        </View>
+                      </View>
                     </View>
-                  </View>
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      ride.status === 'cancelled' && styles.cancelledBadge,
-                      ride.status === 'accepted' && styles.acceptedBadge,
-                      ride.status === 'waiting' && styles.waitingBadge,
-                    ]}>
-                    <Text
-                      style={[
-                        styles.statusText,
-                        ride.status === 'cancelled' && styles.cancelledText,
-                        ride.status === 'accepted' && styles.acceptedText,
-                        ride.status === 'waiting' && styles.waitingText,
-                      ]}>
-                      {ride.status === 'completed' ? 'Completed' : ride.status === 'accepted' ? 'Accepted' : ride.status === 'waiting' ? 'Waiting' : 'Cancelled'}
-                    </Text>
-                  </View>
-              </View>
 
-              <View style={styles.divider} />
-
-              <View style={styles.tripDetails}>
-                {ride.createdAt && (
-                  <View style={styles.detailRow}>
-                    <Calendar size={14} color={Colors.dark.textSecondary} />
-                    <Text style={styles.detailText}>{new Date(ride.createdAt).toLocaleDateString()}</Text>
-                  </View>
-                )}
-              </View>
-
-              {['waiting', 'accepted'].includes(ride.status) && (
-                <View style={styles.actionRow}>
-                  <TouchableOpacity
-                    style={[styles.cancelButton, { opacity: cancellingRideId === ride.id ? 0.6 : 1 }]}
-                    onPress={() => handleCancelRide(ride.id, ride.status)}
-                    disabled={cancellingRideId === ride.id}
-                    activeOpacity={0.7}>
-                    {cancellingRideId === ride.id ? (
-                      <ActivityIndicator size="small" color={Colors.dark.background} />
-                    ) : (
-                      <>
-                        <X size={16} color={Colors.dark.background} />
-                        <Text style={styles.cancelButtonText}>Cancel Request</Text>
-                      </>
+                    {booking.driver && (
+                      <View style={styles.driverInfoSection}>
+                        <View style={styles.driverInfoRow}>
+                          <UserIcon size={16} color={Colors.dark.textSecondary} />
+                          <Text style={styles.driverName}>{booking.driver.name}</Text>
+                          <View style={styles.ratingBadge}>
+                            <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
+                            <Text style={styles.ratingText}>{booking.driver.rating?.toFixed(1) || '5.0'}</Text>
+                          </View>
+                        </View>
+                        {booking.driver.phone && (
+                          <TouchableOpacity
+                            onPress={() => {
+                              const Linking = require('react-native').Linking;
+                              Linking.openURL(`tel:${booking.driver.phone}`);
+                            }}
+                            style={styles.callDriverButton}>
+                            <Phone size={16} color={Colors.dark.gold} />
+                            <Text style={styles.callDriverText}>Call Driver</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     )}
-                  </TouchableOpacity>
-                </View>
-              )}
-            </TouchableOpacity>
-            </View>
-          ))
+
+                    <View style={styles.activeRideInfo}>
+                      <View style={styles.activeRideInfoRow}>
+                        <Users size={14} color={Colors.dark.textSecondary} />
+                        <Text style={styles.activeRideInfoText}>
+                          Seat{booking.seatNumbers?.length > 1 ? 's' : ''}: {booking.seatNumbers?.join(', ') || 'N/A'}
+                        </Text>
+                      </View>
+                      {booking.totalAmount && (
+                        <View style={styles.activeRideInfoRow}>
+                          <DollarSign size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.activeRideInfoText}>₹{booking.totalAmount}</Text>
+                        </View>
+                      )}
+                      {booking.rideOffer?.departureTime && (
+                        <View style={styles.activeRideInfoRow}>
+                          <Clock size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.activeRideInfoText}>
+                            {new Date(booking.rideOffer.departureTime).toLocaleTimeString()}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={styles.activeRideFooter}>
+                      <Text style={styles.activeRideFooterText}>🎯 Traveling to destination...</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Pending Pickups Section - Most Important */}
+            {pendingPickups.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>🚗 Confirm Pickup</Text>
+                <Text style={styles.sectionSubtitle}>Driver is waiting for you to confirm boarding</Text>
+                {pendingPickups.map((booking) => (
+                  <View key={booking._id} style={[styles.tripCard, styles.pickupCard]}>
+                    <View style={styles.pickupHeader}>
+                      <Text style={styles.pickupBadge}>⏳ Pickup Initiated</Text>
+                      <Clock size={16} color={Colors.dark.gold} />
+                    </View>
+
+                    <View style={styles.tripHeader}>
+                      <View style={styles.routeInfo}>
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.gold} />
+                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.pink} />
+                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    {booking.driver && (
+                      <View style={styles.driverInfoCompact}>
+                        <UserIcon size={14} color={Colors.dark.textSecondary} />
+                        <Text style={styles.driverNameCompact}>{booking.driver.name}</Text>
+                        {booking.driver.phone && (
+                          <TouchableOpacity
+                            onPress={() => {
+                              const Linking = require('react-native').Linking;
+                              Linking.openURL(`tel:${booking.driver.phone}`);
+                            }}
+                            style={styles.phoneButton}>
+                            <Phone size={12} color={Colors.dark.gold} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
+
+                    <TouchableOpacity
+                      style={[
+                        styles.confirmPickupButton,
+                        confirmingPickupFor === booking._id && styles.disabledButton
+                      ]}
+                      onPress={() => handleConfirmPickup(booking._id, booking.rideId)}
+                      disabled={confirmingPickupFor === booking._id}
+                      activeOpacity={0.7}>
+                      {confirmingPickupFor === booking._id ? (
+                        <ActivityIndicator size="small" color={Colors.dark.background} />
+                      ) : (
+                        <>
+                          <Check size={18} color={Colors.dark.background} />
+                          <Text style={styles.confirmPickupButtonText}>I Boarded the Car</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Confirmed Bookings - Active Rides */}
+            {confirmedBookings.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>✅ Confirmed Bookings</Text>
+                <Text style={styles.sectionSubtitle}>Waiting for driver to initiate pickup</Text>
+                {confirmedBookings.map((booking) => (
+                  <View key={booking._id} style={styles.tripCard}>
+                    <View style={styles.tripHeader}>
+                      <View style={styles.routeInfo}>
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.gold} />
+                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.pink} />
+                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.statusBadge, styles.acceptedBadge]}>
+                        <Text style={[styles.statusText, styles.acceptedText]}>Confirmed</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.tripDetails}>
+                      {booking.rideOffer?.departureTime && (
+                        <View style={styles.detailRow}>
+                          <Calendar size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>
+                            {new Date(booking.rideOffer.departureTime).toLocaleString()}
+                          </Text>
+                        </View>
+                      )}
+                      {booking.seatNumbers && booking.seatNumbers.length > 0 && (
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailText}>
+                            Seat{booking.seatNumbers.length > 1 ? 's' : ''}: {booking.seatNumbers.join(', ')}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {booking.driver && (
+                      <View style={styles.driverInfo}>
+                        <View style={styles.driverDetails}>
+                          <Text style={styles.driverName}>{booking.driver.name}</Text>
+                          {booking.driver.rating && (
+                            <View style={styles.ratingRow}>
+                              <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
+                              <Text style={styles.rating}>{booking.driver.rating.toFixed(1)}</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Pending Approval Bookings */}
+            {pendingApprovalBookings.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>⏳ Pending Approval</Text>
+                <Text style={styles.sectionSubtitle}>Waiting for driver to approve</Text>
+                {pendingApprovalBookings.map((booking) => (
+                  <View key={booking._id} style={styles.tripCard}>
+                    <View style={styles.tripHeader}>
+                      <View style={styles.routeInfo}>
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.gold} />
+                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.pink} />
+                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.statusBadge, styles.waitingBadge]}>
+                        <Text style={[styles.statusText, styles.waitingText]}>Pending</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.tripDetails}>
+                      {booking.rideOffer?.departureTime && (
+                        <View style={styles.detailRow}>
+                          <Calendar size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>
+                            {new Date(booking.rideOffer.departureTime).toLocaleString()}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Ride Requests Section */}
+            {displayRides.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>📍 My Ride Requests</Text>
+                {displayRides.map((ride, index) => (
+                  <View key={ride.id || index}>
+                    <TouchableOpacity
+                      style={styles.tripCard}
+                      activeOpacity={0.7}>
+                      <View style={styles.tripHeader}>
+                        <View style={styles.routeInfo}>
+                          <View style={styles.routeRow}>
+                            <MapPin size={14} color={Colors.dark.gold} />
+                            <Text style={styles.location}>{ride.from}</Text>
+                          </View>
+                          <View style={styles.routeLine} />
+                          <View style={styles.routeRow}>
+                            <MapPin size={14} color={Colors.dark.pink} />
+                            <Text style={styles.location}>{ride.to}</Text>
+                          </View>
+                        </View>
+                        <View
+                          style={[
+                            styles.statusBadge,
+                            ride.status === 'cancelled' && styles.cancelledBadge,
+                            ride.status === 'accepted' && styles.acceptedBadge,
+                            ride.status === 'waiting' && styles.waitingBadge,
+                          ]}>
+                          <Text
+                            style={[
+                              styles.statusText,
+                              ride.status === 'cancelled' && styles.cancelledText,
+                              ride.status === 'accepted' && styles.acceptedText,
+                              ride.status === 'waiting' && styles.waitingText,
+                            ]}>
+                            {ride.status === 'completed' ? 'Completed' : ride.status === 'accepted' ? 'Accepted' : ride.status === 'waiting' ? 'Waiting' : 'Cancelled'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.divider} />
+
+                      <View style={styles.tripDetails}>
+                        {ride.createdAt && (
+                          <View style={styles.detailRow}>
+                            <Calendar size={14} color={Colors.dark.textSecondary} />
+                            <Text style={styles.detailText}>{new Date(ride.createdAt).toLocaleDateString()}</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {['waiting', 'accepted'].includes(ride.status) && (
+                        <View style={styles.actionRow}>
+                          <TouchableOpacity
+                            style={[styles.cancelButton, { opacity: cancellingRideId === ride.id ? 0.6 : 1 }]}
+                            onPress={() => handleCancelRide(ride.id, ride.status)}
+                            disabled={cancellingRideId === ride.id}
+                            activeOpacity={0.7}>
+                            {cancellingRideId === ride.id ? (
+                              <ActivityIndicator size="small" color={Colors.dark.background} />
+                            ) : (
+                              <>
+                                <X size={16} color={Colors.dark.background} />
+                                <Text style={styles.cancelButtonText}>Cancel Request</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {displayRides.length === 0 && rideOfferBookings.length === 0 && (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>No rides yet</Text>
+                <Text style={styles.emptySubtext}>Create a ride request or book a ride to get started</Text>
+                <TouchableOpacity
+                  style={styles.createRideBtn}
+                  onPress={() => setRideRequestModalVisible(true)}
+                  activeOpacity={0.7}>
+                  <Plus size={20} color={Colors.dark.background} />
+                  <Text style={styles.createRideBtnText}>Create Ride</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
         )}
       </ScrollView>
 
@@ -263,6 +716,19 @@ export default function TripsScreen() {
           console.log('✅ Ride created successfully');
           fetchUserRides();
         }}
+      />
+
+      <RatingModal
+        visible={ratingModalVisible}
+        onClose={() => {
+          setRatingModalVisible(false);
+          setSelectedRideForRating(null);
+        }}
+        onSubmit={handleSubmitRating}
+        ratedName={selectedRideForRating?.ratedName}
+        ratedRole={selectedRideForRating?.ratedRole || 'driver'}
+        from={selectedRideForRating?.from}
+        to={selectedRideForRating?.to}
       />
 
       <CustomAlert
@@ -499,6 +965,223 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     color: Colors.dark.background,
     fontSize: 14,
+    fontWeight: '600',
+  },
+  section: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+    marginBottom: 12,
+  },
+  pickupCard: {
+    borderWidth: 2,
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '08',
+  },
+  pickupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  pickupBadge: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '20',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  confirmPickupButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.gold,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 10,
+    gap: 8,
+    marginTop: 12,
+  },
+  confirmPickupButtonText: {
+    color: Colors.dark.background,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
+  driverInfoCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.dark.backgroundSecondary,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  driverNameCompact: {
+    color: Colors.dark.text,
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  phoneButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.dark.gold + '20',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.gold,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 8,
+  },
+  rateButtonText: {
+    color: Colors.dark.background,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  completedBadge: {
+    backgroundColor: Colors.dark.success + '20',
+  },
+  completedText: {
+    color: Colors.dark.success,
+  },
+  activeRideCard: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: Colors.dark.success,
+  },
+  activeRideHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  activeRideBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.success + '20',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 6,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.dark.success,
+  },
+  activeRideBadgeText: {
+    color: Colors.dark.success,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  activeRideStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.success + '10',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
+  },
+  activeRideStatusText: {
+    color: Colors.dark.success,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  driverInfoSection: {
+    backgroundColor: Colors.dark.backgroundSecondary,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+  },
+  driverInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  driverName: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
+  },
+  ratingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.dark.gold + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  ratingText: {
+    color: Colors.dark.gold,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  callDriverButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.gold + '20',
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginTop: 10,
+    gap: 8,
+  },
+  callDriverText: {
+    color: Colors.dark.gold,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  activeRideInfo: {
+    marginTop: 12,
+    gap: 8,
+  },
+  activeRideInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  activeRideInfoText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 13,
+  },
+  activeRideFooter: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.border,
+    alignItems: 'center',
+  },
+  activeRideFooterText: {
+    color: Colors.dark.success,
+    fontSize: 13,
     fontWeight: '600',
   },
 });

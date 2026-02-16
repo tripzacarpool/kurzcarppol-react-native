@@ -11,6 +11,10 @@ import {
   getMyRideOffers,
   checkExpiringRides,
 } from '../controllers/rideOfferController.js';
+import {
+  driverInitiatePickup,
+  passengerConfirmPickup,
+} from '../controllers/rideOfferPickupController.js';
 
 const router = express.Router();
 
@@ -43,5 +47,9 @@ router.post('/cleanup-expired', cleanupExpiredRideOffers);
 
 // Check for expiring rides and send notifications
 router.post('/check-expiring', checkExpiringRides);
+
+// Pickup confirmation endpoints
+router.post('/:rideId/pickup/initiate', driverInitiatePickup);
+router.post('/:rideId/pickup/confirm', passengerConfirmPickup);
 
 export default router;

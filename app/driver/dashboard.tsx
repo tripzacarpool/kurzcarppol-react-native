@@ -12,6 +12,7 @@ import {
   Platform,
   Linking,
   Alert,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -43,9 +44,10 @@ import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
 import type { DriverVerificationResult, DriverVerificationStatus } from '@/types';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
-import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, getRideOfferById, setAuthToken, getMyRideOffers } from '@/lib/api';
-import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket } from '@/lib/locationSocket';
+import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, getRideOfferById, setAuthToken, getMyRideOffers, getPendingApprovals, getAllDriverPendingApprovals, approveBooking, rejectBooking, driverInitiatePickup } from '@/lib/api';
+import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket, subscribeToPickupConfirmed, unsubscribeFromPickupEvents } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
+import ApprovalControlsDriver from '@/components/ApprovalControlsDriver';
 import VerificationBadge from '@/components/VerificationBadge';
 import ChatModal from '@/components/ChatModal';
 import PushNotificationDebug from '@/components/PushNotificationDebug';
@@ -126,7 +128,6 @@ export default function DriverDashboard() {
   const [liveStateReady, setLiveStateReady] = useState(false);
   const [womenOnlyMode, setWomenOnlyMode] = useState(false);
   const [liveRides, setLiveRides] = useState<Ride[]>([]);
-  const [randomRides, setRandomRides] = useState<Ride[]>([]);
   const [myOffers, setMyOffers] = useState<DriverOffer[]>([]);
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
   const [activeRideDetails, setActiveRideDetails] = useState<Ride | null>(null);
@@ -158,6 +159,16 @@ export default function DriverDashboard() {
   const [selectedConversation, setSelectedConversation] = useState<ConversationWithDetails | null>(null);
   const [chatModalVisible, setChatModalVisible] = useState(false);
   const [debugModalVisible, setDebugModalVisible] = useState(false);
+  const [approvalControlsModalVisible, setApprovalControlsModalVisible] = useState(false);
+  const [requiresManualApproval, setRequiresManualApproval] = useState(false);
+  const [isFestivalRide, setIsFestivalRide] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [expandedBookingId, setExpandedBookingId] = useState<string | null>(null);
+  const [approvingBookingId, setApprovingBookingId] = useState<string | null>(null);
+  const [approvalNotes, setApprovalNotes] = useState<string>('');
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [currentActiveRide, setCurrentActiveRide] = useState<any | null>(null);
+  const [initiatingPickupForBooking, setInitiatingPickupForBooking] = useState<string | null>(null);
   const locationIntervalRef = useRef<NodeJS.Timeout | number | null>(null);
   const liveStateKey = user?.id ? `driver_live_state_${user.id}` : null;
   const offersKey = user?.id ? `driver_offers_${user.id}` : null;
@@ -349,6 +360,110 @@ export default function DriverDashboard() {
     }
   };
 
+  const loadPendingApprovals = async (rideId: string) => {
+    if (!user?.id || !rideId) return;
+
+    try {
+      console.log('🔍 [APPROVALS] Loading pending approvals for ride:', rideId);
+      
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      const response = await getPendingApprovals(rideId);
+      console.log('📋 [APPROVALS] Pending approvals:', response?.pendingBookings?.length || 0);
+      
+      if (response?.success && response?.pendingBookings) {
+        setPendingApprovals(response.pendingBookings);
+        
+        // If there are pending approvals and modal not already visible, show the first one
+        if (response.pendingBookings.length > 0 && !expandedBookingId) {
+          setExpandedBookingId(response.pendingBookings[0]._id);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading pending approvals:', error);
+    }
+  };
+
+  const fetchAllPendingApprovals = async () => {
+    if (!user?.id) {
+      console.log('⚠️ [APPROVALS] Skipping fetch - no user');
+      setPendingApprovals([]);
+      return;
+    }
+
+    try {
+      console.log(`🔍 [APPROVALS] Fetching all pending approvals (batch endpoint)`);
+      
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      // Use batch endpoint instead of looping through all offers
+      const response = await getAllDriverPendingApprovals();
+      
+      if (response?.success && response?.pendingBookings) {
+        console.log(`✅ [APPROVALS] Found ${response.pendingBookings.length} total pending approvals`);
+        setPendingApprovals(response.pendingBookings);
+        
+        // If we found new approvals and modal not showing, show the first one
+        if (response.pendingBookings.length > 0 && !expandedBookingId) {
+          console.log('🎯 [APPROVALS] Auto-expanding first approval request');
+          setExpandedBookingId(response.pendingBookings[0]._id);
+        }
+      } else {
+        console.log(`ℹ️ [APPROVALS] No pending approvals found`);
+        setPendingApprovals([]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching all pending approvals:', error);
+      setPendingApprovals([]);
+    }
+  };
+
+  const fetchCurrentActiveRide = async () => {
+    if (!user?.id) {
+      console.log('⚠️ [ACTIVE RIDE] Skipping fetch - no user');
+      setCurrentActiveRide(null);
+      return;
+    }
+
+    try {
+      console.log('🔍 [ACTIVE RIDE] Fetching current active ride with bookings');
+      
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      // Fetch all driver's ride offers
+      const response = await getMyRideOffers(user.id);
+      if (response?.success && response?.rideOffers) {
+        // Find the first 'waiting' ride with confirmed bookings
+        const activeRide = response.rideOffers.find((ride: any) => 
+          ride.status === 'waiting' && 
+          ride.bookings && 
+          ride.bookings.length > 0 &&
+          ride.bookings.some((booking: any) => booking.status === 'confirmed')
+        );
+        
+        if (activeRide) {
+          console.log(`✅ [ACTIVE RIDE] Found active ride ${activeRide._id || activeRide.id} with ${activeRide.bookings.length} bookings`);
+          setCurrentActiveRide(activeRide);
+        } else {
+          console.log('ℹ️ [ACTIVE RIDE] No active ride with confirmed bookings found');
+          setCurrentActiveRide(null);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error fetching current active ride:', error);
+      setCurrentActiveRide(null);
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
@@ -423,34 +538,6 @@ export default function DriverDashboard() {
     restoreState();
   }, [user?.id, liveStateKey]);
 
-  // Generate random demo rides for UI
-  const generateRandomRides = (): Ride[] => {
-    const passengers = [
-      'Priya Sharma',
-      'Rahul Verma',
-      'Ananya Singh',
-      'Arjun Patel',
-      'Neha Gupta',
-    ];
-    const locations = [
-      { from: 'CP Metro', to: 'Gurgaon' },
-      { from: 'IGI Airport', to: 'Connaught Place' },
-      { from: 'Delhi University', to: 'Cyber City' },
-      { from: 'AIIMS', to: 'Noida' },
-    ];
-
-    return Array.from({ length: 3 }, (_, i) => ({
-      id: `demo-${i}`,
-      passenger: passengers[Math.floor(Math.random() * passengers.length)],
-      from: locations[i].from,
-      to: locations[i].to,
-      passengers: Math.floor(Math.random() * 3) + 1,
-      fare: Math.floor(Math.random() * 150) + 100,
-      rating: Math.floor(Math.random() * 2) + 4.2,
-      isLive: false,
-    }));
-  };
-
   useEffect(() => {
     if (!liveStateReady) return;
     console.log('👤 Driver user:', user?.id);
@@ -469,27 +556,58 @@ export default function DriverDashboard() {
         console.log('📨 Driver received new ride via socket:', newRide);
         fetchLiveRides();
       });
+
+      // Subscribe to pickup confirmations (when passenger confirms boarding)
+      subscribeToPickupConfirmed(user.id, (data) => {
+        console.log('✅ Passenger confirmed pickup:', data);
+        showAlert(
+          '✅ Passenger Boarded',
+          `${data.passengerName || 'Passenger'} has confirmed boarding. Ride started!`,
+          'success'
+        );
+        // Refresh active ride to update pickup status
+        fetchCurrentActiveRide();
+      });
     }
     
     if (isLive) {
+      // Initial fetch
       fetchLiveRides();
-      setRandomRides(generateRandomRides());
-      // Poll for new requests every 30 seconds as fallback
-      const interval = setInterval(fetchLiveRides, 30000);
+      if (myOffers.length > 0) {
+        fetchAllPendingApprovals();
+        fetchCurrentActiveRide();
+      }
+      
+      // Poll for new requests every 60 seconds as fallback (socket is primary)
+      const interval = setInterval(() => {
+        fetchLiveRides();
+        if (myOffers.length > 0) {
+          fetchAllPendingApprovals();
+          fetchCurrentActiveRide();
+        }
+      }, 60000);
       return () => {
         clearInterval(interval);
         unsubscribeFromRideEvents();
+        if (user?.id) {
+          unsubscribeFromPickupEvents(user.id, true);
+        }
       };
     } else {
       setLiveRides([]);
-      setRandomRides([]);
+      setPendingApprovals([]);
     }
-  }, [isLive, user?.id, liveStateReady]);
+  }, [isLive, user?.id, liveStateReady, myOffers.length]);
 
   useEffect(() => {
     if (!user?.id) return;
 
     const socket = getLocationSocket();
+    
+    console.log(`🔌 [SOCKET] Setting up socket listeners for driver: ${user.id}`);
+    console.log(`🔌 [SOCKET] Socket connected: ${socket.connected}`);
+    console.log(`🔌 [SOCKET] Socket ID: ${socket.id}`);
+    console.log(`📡 [SOCKET] Will listen on: driver:booking-approval-request:${user.id}`);
 
     const handlePassengerPickup = (data: any) => {
       if (data.driverClerkId !== user.id || !activeRideId || data.rideId !== activeRideId) {
@@ -518,14 +636,66 @@ export default function DriverDashboard() {
       }
     };
 
+    const handleBookingApprovalRequest = async (data: any) => {
+      console.log('🔔 [APPROVAL] Driver received booking approval request:', data);
+      console.log(`🔔 [APPROVAL] Data driverId: ${data.driverId}, My userId: ${user.id}`);
+      console.log(`🔔 [APPROVAL] Match: ${data.driverId === user.id}`);
+      
+      if (data.driverId !== user.id) {
+        console.log(`⚠️ [APPROVAL] Skipping - not for this driver`);
+        return;
+      }
+      
+      console.log(`✅ [APPROVAL] Processing approval request`);
+      
+      // Show visible mobile notification
+      const bookingData = data.booking;
+      const passengerName = bookingData?.userDetails?.name || 'A passenger';
+      const pickupLocation = bookingData?.from || 'Your pickup location';
+      
+      // Show alert with sound
+      showAlert(
+        '👤 New Booking Request',
+        `${passengerName} wants to book seats for ${pickupLocation}. Review now!`,
+        'info',
+        [
+          { text: 'Later', style: 'cancel' },
+          {
+            text: 'Review',
+            style: 'default',
+            onPress: () => {
+              setExpandedBookingId(bookingData._id);
+              setSelectedTab('live');
+            },
+          },
+        ]
+      );
+
+      // Trigger local notification badge update
+      try {
+        const currentBadgeCount = await Notifications.getBadgeCountAsync();
+        await Notifications.setBadgeCountAsync(currentBadgeCount + 1);
+        console.log('📱 Badge count updated');
+      } catch (err) {
+        console.log('Badge update failed:', err);
+      }
+
+      // Refetch pending approvals
+      if (activeRideId) {
+        loadPendingApprovals(activeRideId);
+      }
+    };
+
     socket.on('ride:pickup-passenger', handlePassengerPickup);
     socket.on('ride:completed', handleRideCompleted);
     socket.on(`user:message:${user.id}`, handleNewMessage);
+    socket.on(`driver:booking-approval-request:${user.id}`, handleBookingApprovalRequest);
 
     return () => {
       socket.off('ride:pickup-passenger', handlePassengerPickup);
       socket.off('ride:completed', handleRideCompleted);
       socket.off(`user:message:${user.id}`, handleNewMessage);
+      socket.off(`driver:booking-approval-request:${user.id}`, handleBookingApprovalRequest);
     };
   }, [user?.id, activeRideId]);
 
@@ -538,6 +708,33 @@ export default function DriverDashboard() {
       return () => clearInterval(interval);
     }
   }, [user?.id, selectedTab]);
+
+  // Poll for pending approvals when a ride is active (for active ride only)
+  useEffect(() => {
+    if (!activeRideId || !user?.id) return;
+
+    try {
+      // Initial load
+      loadPendingApprovals(activeRideId);
+      
+      // Poll every 10 seconds for active ride approvals (reduced from 5s)
+      const interval = setInterval(() => {
+        loadPendingApprovals(activeRideId);
+      }, 10000);
+
+      return () => clearInterval(interval);
+    } catch (error) {
+      console.error('Error setting up approval polling:', error);
+    }
+  }, [activeRideId, user?.id]);
+
+  // Fetch approvals when Live tab is selected (for immediate visibility)
+  useEffect(() => {
+    if (selectedTab === 'live' && isLive && myOffers.length > 0) {
+      console.log('🔄 Live tab selected - fetching pending approvals');
+      fetchAllPendingApprovals();
+    }
+  }, [selectedTab, isLive, myOffers.length]);
 
   const fetchLiveRides = async () => {
     if (!user?.id) return;
@@ -613,6 +810,9 @@ export default function DriverDashboard() {
     setActiveRideDetails(null);
     setDriverPickupConfirmed(false);
     setPickupConfirming(false);
+    setRequiresManualApproval(false);
+    setIsFestivalRide(false);
+    setApprovalControlsModalVisible(false);
   };
 
   const handleAcceptRide = async (rideId: string, isLive: boolean) => {
@@ -628,15 +828,17 @@ export default function DriverDashboard() {
         await startSendingLocation(rideId);
       }
 
-      const acceptedRide = (isLive ? liveRides : randomRides).find((r) => r.id === rideId) || null;
+      const acceptedRide = liveRides.find((r) => r.id === rideId) || null;
       setActiveRideDetails(acceptedRide);
       setDriverPickupConfirmed(false);
+      
+      // Initialize approval settings for this ride
+      setRequiresManualApproval(false); // Default to auto-confirm
+      setIsFestivalRide(false); // Will be updated if needed
       
       // Remove from list
       if (isLive) {
         setLiveRides(liveRides.filter(r => r.id !== rideId));
-      } else {
-        setRandomRides(randomRides.filter(r => r.id !== rideId));
       }
       
       showAlert('Success', 'Ride request accepted! Location tracking started.', 'success');
@@ -657,8 +859,6 @@ export default function DriverDashboard() {
       
       if (isLive) {
         setLiveRides(liveRides.filter(r => r.id !== rideId));
-      } else {
-        setRandomRides(randomRides.filter(r => r.id !== rideId));
       }
     } catch (error) {
       console.error('❌ Error rejecting ride:', error);
@@ -681,6 +881,149 @@ export default function DriverDashboard() {
       showAlert('Error', 'Failed to notify passenger. Try again.', 'error');
     } finally {
       setPickupConfirming(false);
+    }
+  };
+
+  const handleApproveBooking = async (bookingId: string, notes?: string) => {
+    if (!user?.id) {
+      showAlert('Error', 'Missing driver information', 'error');
+      return;
+    }
+
+    // Get booking and rideId from pendingApprovals
+    const booking = pendingApprovals.find(b => b._id === bookingId);
+    const rideId = booking?.rideId;
+    if (!rideId) {
+      showAlert('Error', 'Missing ride information', 'error');
+      return;
+    }
+
+    try {
+      setApprovingBookingId(bookingId);
+      console.log('✅ [APPROVAL] Approving booking:', bookingId, 'for ride:', rideId);
+      
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      await approveBooking(bookingId, user.id, notes);
+      
+      // Remove from pending list
+      setPendingApprovals(pendingApprovals.filter(b => b._id !== bookingId));
+      setExpandedBookingId(null);
+      setApprovalNotes('');
+      
+      // Show success feedback
+      showAlert(
+        '✅ Booking Approved',
+        'Passenger will be notified immediately.',
+        'success'
+      );
+      
+      // Send message to passenger via chat
+      console.log('📱 [APPROVAL] Sending approval notification to passenger...');
+      
+      // Reload pending approvals for this specific ride
+      await fetchAllPendingApprovals();
+      await fetchCurrentActiveRide();
+    } catch (error) {
+      console.error('❌ Error approving booking:', error);
+      showAlert('Error', 'Failed to approve booking. Try again.', 'error');
+    } finally {
+      setApprovingBookingId(null);
+    }
+  };
+
+  const handleRejectBooking = async (bookingId: string, rejectionReason: string) => {
+    if (!user?.id) {
+      showAlert('Error', 'Missing driver information', 'error');
+      return;
+    }
+
+    // Get booking and rideId from pendingApprovals
+    const booking = pendingApprovals.find(b => b._id === bookingId);
+    const rideId = booking?.rideId;
+    if (!rideId) {
+      showAlert('Error', 'Missing ride information', 'error');
+      return;
+    }
+
+    try {
+      setApprovingBookingId(bookingId);
+      console.log('❌ [APPROVAL] Rejecting booking:', bookingId, 'for ride:', rideId, 'Reason:', rejectionReason);
+      
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      await rejectBooking(bookingId, user.id, rejectionReason);
+      
+      // Remove from pending list
+      setPendingApprovals(pendingApprovals.filter(b => b._id !== bookingId));
+      setExpandedBookingId(null);
+      setApprovalNotes('');
+      
+      // Show feedback
+      showAlert(
+        '❌ Booking Rejected',
+        'Passenger has been notified and their seats have been released.',
+        'info'
+      );
+      
+      // Send rejection message to passenger
+      console.log('📱 [APPROVAL] Sending rejection notification to passenger...');
+      
+      // Reload pending approvals for all rides
+      await fetchAllPendingApprovals();
+      await fetchCurrentActiveRide();
+    } catch (error) {
+      console.error('❌ Error rejecting booking:', error);
+      showAlert('Error', 'Failed to reject booking. Try again.', 'error');
+    } finally {
+      setApprovingBookingId(null);
+    }
+  };
+
+  const handleInitiatePickup = async (
+    bookingId: string,
+    passengerClerkId: string,
+    passengerName: string,
+  ) => {
+    if (!currentActiveRide) {
+      showAlert('Error', 'No active ride found', 'error');
+      return;
+    }
+
+    try {
+      setInitiatingPickupForBooking(bookingId);
+      console.log('🚗 [PICKUP] Initiating pickup for booking:', bookingId);
+      
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      await driverInitiatePickup(
+        currentActiveRide._id || currentActiveRide.id,
+        bookingId,
+        passengerClerkId,
+      );
+      
+      showAlert(
+        '✅ Pickup Initiated',
+        `Waiting for ${passengerName} to confirm boarding.`,
+        'success'
+      );
+      
+      // Refresh active ride data
+      await fetchCurrentActiveRide();
+    } catch (error) {
+      console.error('❌ Error initiating pickup:', error);
+      showAlert('Error', 'Failed to initiate pickup. Try again.', 'error');
+    } finally {
+      setInitiatingPickupForBooking(null);
     }
   };
 
@@ -747,7 +1090,8 @@ export default function DriverDashboard() {
     setRefreshing(true);
     if (isLive) {
       await fetchLiveRides();
-      setRandomRides(generateRandomRides());
+      await fetchAllPendingApprovals();
+      await fetchCurrentActiveRide();
     }
     setRefreshing(false);
   };
@@ -853,147 +1197,205 @@ export default function DriverDashboard() {
       );
     }
 
+    // Separate rides into active and upcoming
+    const validOffers = myOffers.filter(offer => offer && offer.id && offer.from && offer.to && offer.seats != null);
+    
+    const activeRides = validOffers.filter(offer => {
+      // Active: ride is live and departure time has passed (indicating ride is in progress)
+      const departureTime = offer.departureTime ? new Date(offer.departureTime) : null;
+      const hasDeparted = departureTime && departureTime <= new Date();
+      
+      return offer.status === 'live' && hasDeparted;
+    });
+
+    const upcomingRides = validOffers.filter(offer => {
+      // Upcoming: everything else (not yet departed or completed rides)
+      return !activeRides.includes(offer);
+    });
+
+    const renderOfferCard = (offer: DriverOffer) => {
+      const truncateAddr = (addr: string = '', max: number = 25) => {
+        if (!addr) return '';
+        return addr.length > max ? addr.substring(0, max) + '...' : addr;
+      };
+
+      const isActive = activeRides.includes(offer);
+
+      return (
+      <View key={offer.id} style={[styles.requestCard, styles.offerCard, isActive && styles.activeOfferCard]}>
+        {isActive && (
+          <View style={styles.activeRideBadge}>
+            <Text style={styles.activeRideBadgeText}>🚗 Active</Text>
+          </View>
+        )}
+        <View style={styles.requestHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.passengerName} numberOfLines={1}>{truncateAddr(offer.from, 20)} → {truncateAddr(offer.to, 20)}</Text>
+            {offer.departureTime && typeof offer.departureTime === 'string' && (
+              <Text style={styles.offerTime}>
+                🚗 Departure: {new Date(offer.departureTime).toLocaleString('en-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </Text>
+            )}
+            {!offer.departureTime && offer.createdAt && typeof offer.createdAt === 'string' && (
+              <Text style={styles.offerTime}>
+                Created: {new Date(offer.createdAt).toLocaleString('en-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </Text>
+            )}
+          </View>
+          <View style={styles.fareAndSeatsContainer}>
+            {offer.fare != null && typeof offer.fare === 'number' && (
+              <Text style={styles.requestFare}>₹{offer.fare}<Text style={styles.perSeatSmall}>/seat</Text></Text>
+            )}
+            {offer.seats != null && typeof offer.seats === 'number' && (
+              <Text style={styles.seatsCount}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.requestRoute}>
+          <View style={styles.routeRow}>
+            <MapPin size={14} color={Colors.dark.gold} />
+            <Text style={styles.routeText}>{offer.from || 'N/A'}</Text>
+          </View>
+          <View style={styles.routeLine} />
+          <View style={styles.routeRow}>
+            <MapPin size={14} color={Colors.dark.pink} />
+            <Text style={styles.routeText}>{offer.to || 'N/A'}</Text>
+          </View>
+        </View>
+
+        <View style={styles.requestDetails}>
+          {offer.seats != null && typeof offer.seats === 'number' && (
+            <View style={styles.detailRow}>
+              <Users size={14} color={Colors.dark.textSecondary} />
+              <Text style={styles.detailText}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
+            </View>
+          )}
+          {offer.womenOnly && (
+            <View style={styles.detailRow}>
+              <Star size={14} color={Colors.dark.pink} />
+              <Text style={styles.detailText}>Women only</Text>
+            </View>
+          )}
+          {offer.departureTime && typeof offer.departureTime === 'string' && (
+            <View style={styles.detailRow}>
+              <Clock size={14} color={Colors.dark.gold} />
+              <Text style={styles.detailText}>Departing {new Date(offer.departureTime).toLocaleString('en-IN', {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}</Text>
+            </View>
+          )}
+          {!offer.departureTime && offer.createdAt && typeof offer.createdAt === 'string' && (
+            <View style={styles.detailRow}>
+              <Clock size={14} color={Colors.dark.textSecondary} />
+              <Text style={styles.detailText}>Created {new Date(offer.createdAt).toLocaleString()}</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.offerStatusRow}>
+          <Text style={[styles.badgeText, styles.liveBadge]}>
+            {(offer.status || 'live') === 'completed' ? '✓ Completed' : '🔴 Live'}
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={() => {
+                console.log('🔄 Editing offer with ID:', offer.id, 'Type:', typeof offer.id);
+                
+                // Check if it's a valid MongoDB ID (not a local temporary ID)
+                const isValidMongoId = (id: string) => {
+                  return id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id) && !id.startsWith('local-');
+                };
+
+                if (!isValidMongoId(offer.id)) {
+                  showAlert('Cannot Edit', 'This ride offer cannot be edited. Please create a new one instead.', 'warning');
+                  return;
+                }
+
+                setEditingOffer(offer);
+                setRideOfferModalVisible(true);
+              }}
+              activeOpacity={0.7}>
+              <Text style={styles.editButtonText}>Edit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.cancelButton]}
+              onPress={() => handleCancelOffer(offer.id)}
+              disabled={cancellingOfferId === offer.id}
+              activeOpacity={0.7}>
+              {cancellingOfferId === offer.id ? (
+                <ActivityIndicator size="small" color={Colors.dark.error} />
+              ) : (
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+      );
+    };
+
     return (
       <View style={styles.requestsSection}>
-        <View style={styles.requestsHeader}>
-          <Text style={styles.sectionTitle}>Your ride offers</Text>
-          <TouchableOpacity
-            style={styles.refreshButton}
-            onPress={loadSavedOffers}
-            activeOpacity={0.7}>
-            <RefreshCw size={18} color={Colors.dark.gold} />
-          </TouchableOpacity>
-        </View>
-        {myOffers
-          .filter(offer => offer && offer.id && offer.from && offer.to && offer.seats != null)
-          .map((offer) => {
-          const truncateAddr = (addr: string = '', max: number = 25) => {
-            if (!addr) return '';
-            return addr.length > max ? addr.substring(0, max) + '...' : addr;
-          };
-
-          return (
-          <View key={offer.id} style={[styles.requestCard, styles.offerCard]}>
-            <View style={styles.requestHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.passengerName} numberOfLines={1}>{truncateAddr(offer.from, 20)} → {truncateAddr(offer.to, 20)}</Text>
-                {offer.departureTime && typeof offer.departureTime === 'string' && (
-                  <Text style={styles.offerTime}>
-                    🚗 Departure: {new Date(offer.departureTime).toLocaleString('en-IN', {
-                      day: 'numeric',
-                      month: 'short',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </Text>
-                )}
-                {!offer.departureTime && offer.createdAt && typeof offer.createdAt === 'string' && (
-                  <Text style={styles.offerTime}>
-                    Created: {new Date(offer.createdAt).toLocaleString('en-IN', {
-                      day: 'numeric',
-                      month: 'short',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </Text>
-                )}
+        {/* Active/Ongoing Rides Section */}
+        {activeRides.length > 0 && (
+          <>
+            <View style={styles.requestsHeader}>
+              <View style={styles.sectionHeaderWithBadge}>
+                <Text style={styles.sectionTitle}>Active Rides</Text>
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{activeRides.length}</Text>
+                </View>
               </View>
-              <View style={styles.fareAndSeatsContainer}>
-                {offer.fare != null && typeof offer.fare === 'number' && (
-                  <Text style={styles.requestFare}>₹{offer.fare}<Text style={styles.perSeatSmall}>/seat</Text></Text>
-                )}
-                {offer.seats != null && typeof offer.seats === 'number' && (
-                  <Text style={styles.seatsCount}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
-                )}
-              </View>
+              <TouchableOpacity
+                style={styles.refreshButton}
+                onPress={loadSavedOffers}
+                activeOpacity={0.7}>
+                <RefreshCw size={18} color={Colors.dark.gold} />
+              </TouchableOpacity>
             </View>
+            <Text style={styles.sectionSubtitle}>Rides currently in progress</Text>
+            {activeRides.map(renderOfferCard)}
+          </>
+        )}
 
-            <View style={styles.requestRoute}>
-              <View style={styles.routeRow}>
-                <MapPin size={14} color={Colors.dark.gold} />
-                <Text style={styles.routeText}>{offer.from || 'N/A'}</Text>
+        {/* Upcoming/Created Rides Section */}
+        {upcomingRides.length > 0 && (
+          <>
+            <View style={[styles.requestsHeader, activeRides.length > 0 && { marginTop: 20 }]}>
+              <View style={styles.sectionHeaderWithBadge}>
+                <Text style={styles.sectionTitle}>Upcoming Rides</Text>
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{upcomingRides.length}</Text>
+                </View>
               </View>
-              <View style={styles.routeLine} />
-              <View style={styles.routeRow}>
-                <MapPin size={14} color={Colors.dark.pink} />
-                <Text style={styles.routeText}>{offer.to || 'N/A'}</Text>
-              </View>
-            </View>
-
-            <View style={styles.requestDetails}>
-              {offer.seats != null && typeof offer.seats === 'number' && (
-                <View style={styles.detailRow}>
-                  <Users size={14} color={Colors.dark.textSecondary} />
-                  <Text style={styles.detailText}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
-                </View>
-              )}
-              {offer.womenOnly && (
-                <View style={styles.detailRow}>
-                  <Star size={14} color={Colors.dark.pink} />
-                  <Text style={styles.detailText}>Women only</Text>
-                </View>
-              )}
-              {offer.departureTime && typeof offer.departureTime === 'string' && (
-                <View style={styles.detailRow}>
-                  <Clock size={14} color={Colors.dark.gold} />
-                  <Text style={styles.detailText}>Departing {new Date(offer.departureTime).toLocaleString('en-IN', {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}</Text>
-                </View>
-              )}
-              {!offer.departureTime && offer.createdAt && typeof offer.createdAt === 'string' && (
-                <View style={styles.detailRow}>
-                  <Clock size={14} color={Colors.dark.textSecondary} />
-                  <Text style={styles.detailText}>Created {new Date(offer.createdAt).toLocaleString()}</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.offerStatusRow}>
-              <Text style={[styles.badgeText, styles.liveBadge]}>
-                {(offer.status || 'live') === 'completed' ? '✓ Completed' : '🔴 Live'}
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
+              {activeRides.length === 0 && (
                 <TouchableOpacity
-                  style={styles.editButton}
-                  onPress={() => {
-                    console.log('🔄 Editing offer with ID:', offer.id, 'Type:', typeof offer.id);
-                    
-                    // Check if it's a valid MongoDB ID (not a local temporary ID)
-                    const isValidMongoId = (id: string) => {
-                      return id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id) && !id.startsWith('local-');
-                    };
-
-                    if (!isValidMongoId(offer.id)) {
-                      showAlert('Cannot Edit', 'This ride offer cannot be edited. Please create a new one instead.', 'warning');
-                      return;
-                    }
-
-                    setEditingOffer(offer);
-                    setRideOfferModalVisible(true);
-                  }}
+                  style={styles.refreshButton}
+                  onPress={loadSavedOffers}
                   activeOpacity={0.7}>
-                  <Text style={styles.editButtonText}>Edit</Text>
+                  <RefreshCw size={18} color={Colors.dark.gold} />
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.cancelButton]}
-                  onPress={() => handleCancelOffer(offer.id)}
-                  disabled={cancellingOfferId === offer.id}
-                  activeOpacity={0.7}>
-                  {cancellingOfferId === offer.id ? (
-                    <ActivityIndicator size="small" color={Colors.dark.error} />
-                  ) : (
-                    <Text style={styles.cancelButtonText}>Cancel</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
+              )}
             </View>
-          </View>
-          );
-        })}
+            <Text style={styles.sectionSubtitle}>All your created ride offers</Text>
+            {upcomingRides.map(renderOfferCard)}
+          </>
+        )}
       </View>
     );
   };
@@ -1033,7 +1435,7 @@ export default function DriverDashboard() {
           <Text style={styles.statLabel}>Online time</Text>
         </View>
       </View>
-      
+
       <View style={styles.insightCard}>
         <View style={styles.insightHeader}>
           <Text style={styles.insightTitle}>💡 Pro Tips</Text>
@@ -1093,9 +1495,31 @@ export default function DriverDashboard() {
           </View>
         </View>
         <View style={styles.headerActions}>
+          {/* Pending Approvals Bell */}
+          {pendingApprovals.length > 0 && (
+            <TouchableOpacity
+              onPress={() => {
+                if (pendingApprovals.length > 0) {
+                  setSelectedTab('live');
+                  setExpandedBookingId(pendingApprovals[0]._id);
+                  setTimeout(() => {
+                    scrollViewRef.current?.scrollTo({ y: 400, animated: true });
+                  }, 100);
+                }
+              }}
+              style={styles.notificationBellButton}
+              activeOpacity={0.7}>
+              <MessageSquare size={22} color={Colors.dark.gold} />
+              {pendingApprovals.length > 0 && (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>{pendingApprovals.length}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={() => setDebugModalVisible(true)}
-            style={[styles.createRideButton, { backgroundColor: Colors.dark.primary }]}
+            style={[styles.createRideButton, { backgroundColor: Colors.dark.gold }]}
             activeOpacity={0.7}>
             <Text style={[styles.debugButtonText, { color: Colors.dark.background }]}>🔔</Text>
           </TouchableOpacity>
@@ -1115,6 +1539,7 @@ export default function DriverDashboard() {
       </View>
 
       <ScrollView
+        ref={scrollViewRef}
         style={styles.content}
         contentContainerStyle={{ paddingBottom: 160 }}
         showsVerticalScrollIndicator={false}
@@ -1183,15 +1608,17 @@ export default function DriverDashboard() {
           </View>
 
           {isLive && (
-            <View style={styles.womenOnlyContainer}>
-              <Text style={styles.womenOnlyLabel}>Women Only Mode</Text>
-              <Switch
-                value={womenOnlyMode}
-                onValueChange={setWomenOnlyMode}
-                trackColor={{ false: Colors.dark.border, true: Colors.dark.pink }}
-                thumbColor={Colors.dark.text}
-              />
-            </View>
+            <>
+              <View style={styles.womenOnlyContainer}>
+                <Text style={styles.womenOnlyLabel}>Women Only Mode</Text>
+                <Switch
+                  value={womenOnlyMode}
+                  onValueChange={setWomenOnlyMode}
+                  trackColor={{ false: Colors.dark.border, true: Colors.dark.pink }}
+                  thumbColor={Colors.dark.text}
+                />
+              </View>
+            </>
           )}
         </View>
 
@@ -1242,7 +1669,191 @@ export default function DriverDashboard() {
               </View>
             )}
 
-            {isLive && (liveRides.length > 0 || randomRides.length > 0) && (
+            {/* CURRENT ACTIVE RIDE OFFER - Your ride with confirmed passengers */}
+            {currentActiveRide && (
+              <View style={styles.activeRideOfferCard}>
+                <View style={styles.activeRideHeader}>
+                  <Text style={styles.sectionTitle}>Your Current Ride</Text>
+                  <View style={styles.activeRideStatusSuccess}>
+                    <Text style={styles.activeRideStatusText}>
+                      {currentActiveRide.bookings?.filter((b: any) => b.status === 'confirmed').length || 0} confirmed
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Route */}
+                <View style={styles.requestRoute}>
+                  <View style={styles.routeRow}>
+                    <MapPin size={14} color={Colors.dark.gold} />
+                    <Text style={styles.routeText}>{currentActiveRide.from}</Text>
+                  </View>
+                  <View style={styles.routeLine} />
+                  <View style={styles.routeRow}>
+                    <MapPin size={14} color={Colors.dark.pink} />
+                    <Text style={styles.routeText}>{currentActiveRide.to}</Text>
+                  </View>
+                </View>
+
+                {/* Departure Time */}
+                {currentActiveRide.departureTime && (
+                  <View style={styles.detailRow}>
+                    <Clock size={14} color={Colors.dark.textSecondary} />
+                    <Text style={styles.detailText}>
+                      Departure: {new Date(currentActiveRide.departureTime).toLocaleString('en-IN', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      })}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Seats Info */}
+                <View style={styles.seatsInfoRow}>
+                  <View style={styles.detailRow}>
+                    <Users size={14} color={Colors.dark.textSecondary} />
+                    <Text style={styles.detailText}>
+                      {currentActiveRide.availableSeats?.length || 0} seats available
+                    </Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <DollarSign size={14} color={Colors.dark.gold} />
+                    <Text style={[styles.detailText, { color: Colors.dark.gold }]}>
+                      ₹{currentActiveRide.bookings
+                        ?.filter((b: any) => b.status === 'confirmed')
+                        .reduce((sum: number, b: any) => sum + (b.totalAmount || 0), 0) || 0}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Passenger List - Only show passengers waiting for pickup */}
+                <View style={styles.passengerListContainer}>
+                  <Text style={styles.passengerListTitle}>Waiting for Pickup:</Text>
+                  {currentActiveRide.bookings
+                    ?.filter((b: any) => {
+                      // Only show confirmed bookings that haven't boarded yet
+                      const hasBoarded = currentActiveRide.pickupStatus?.confirmedPassengers?.includes(b.passengerClerkId || b.userId);
+                      return b.status === 'confirmed' && !hasBoarded;
+                    })
+                    .map((booking: any, index: number) => {
+                      // Find corresponding booking in RideBooking collection to get the actual booking ID
+                      const isPickupConfirmed = false; // Will always be false since we filtered out boarded passengers
+                      const bookingId = booking._id; // This should be set when adding to ride.bookings
+                      
+                      return (
+                        <View key={index} style={styles.passengerItem}>
+                          <View style={styles.passengerInfo}>
+                            <Text style={styles.passengerItemName}>
+                              {booking.passengerName || 'Passenger'}
+                            </Text>
+                            {booking.passengerPhone && (
+                              <TouchableOpacity
+                                onPress={() => Linking.openURL(`tel:${booking.passengerPhone}`)}
+                                style={styles.phoneLink}>
+                                <Phone size={12} color={Colors.dark.gold} />
+                                <Text style={styles.phoneText}>{booking.passengerPhone}</Text>
+                              </TouchableOpacity>
+                            )}
+                            <View style={styles.seatBadge}>
+                              <Text style={styles.seatBadgeText}>
+                                Seat{booking.seatNumbers?.length > 1 ? 's' : ''}: {booking.seatNumbers?.join(', ') || 'N/A'}
+                              </Text>
+                            </View>
+                          </View>
+                          
+                          {/* Pickup Button */}
+                          <TouchableOpacity
+                            style={[
+                              styles.pickupButton,
+                              isPickupConfirmed && styles.pickupButtonConfirmed,
+                              initiatingPickupForBooking === bookingId && styles.pickupButtonDisabled,
+                            ]}
+                            onPress={() => handleInitiatePickup(
+                              bookingId,
+                              booking.passengerClerkId || booking.userId,
+                              booking.passengerName || 'Passenger',
+                            )}
+                            disabled={isPickupConfirmed || initiatingPickupForBooking === bookingId}
+                            activeOpacity={0.7}>
+                            {initiatingPickupForBooking === bookingId ? (
+                              <ActivityIndicator size="small" color={Colors.dark.gold} />
+                            ) : isPickupConfirmed ? (
+                              <>
+                                <Check size={14} color={Colors.dark.success} />
+                                <Text style={styles.pickupButtonTextConfirmed}>Boarded</Text>
+                              </>
+                            ) : (
+                              <>
+                                <Users size={14} color={Colors.dark.gold} />
+                                <Text style={styles.pickupButtonText}>Pickup</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  
+                  {/* Show message when all passengers have boarded */}
+                  {currentActiveRide.bookings?.filter((b: any) => {
+                    const hasBoarded = currentActiveRide.pickupStatus?.confirmedPassengers?.includes(b.passengerClerkId || b.userId);
+                    return b.status === 'confirmed' && !hasBoarded;
+                  }).length === 0 && (
+                    <View style={styles.allBoardedMessage}>
+                      <Check size={18} color={Colors.dark.success} />
+                      <Text style={styles.allBoardedText}>All passengers have boarded! 🚗</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Passengers Onboard Section */}
+                {currentActiveRide.pickupStatus?.confirmedPassengers && 
+                 currentActiveRide.pickupStatus.confirmedPassengers.length > 0 && (
+                  <View style={styles.passengersOnboardContainer}>
+                    <View style={styles.onboardHeader}>
+                      <Check size={18} color={Colors.dark.success} />
+                      <Text style={styles.onboardTitle}>Passengers Onboard ({currentActiveRide.pickupStatus.confirmedPassengers.length})</Text>
+                    </View>
+                    {currentActiveRide.bookings
+                      ?.filter((b: any) => {
+                        const hasBoarded = currentActiveRide.pickupStatus?.confirmedPassengers?.includes(b.passengerClerkId || b.userId);
+                        return b.status === 'confirmed' && hasBoarded;
+                      })
+                      .map((booking: any, index: number) => (
+                        <View key={index} style={styles.onboardPassengerItem}>
+                          <View style={styles.onboardPassengerInfo}>
+                            <View style={styles.onboardCheckmark}>
+                              <Check size={12} color={Colors.dark.success} />
+                            </View>
+                            <View style={styles.onboardPassengerDetails}>
+                              <Text style={styles.onboardPassengerName}>
+                                {booking.passengerName || 'Passenger'}
+                              </Text>
+                              {booking.passengerPhone && (
+                                <TouchableOpacity
+                                  onPress={() => Linking.openURL(`tel:${booking.passengerPhone}`)}
+                                  style={styles.phoneLink}>
+                                  <Phone size={10} color={Colors.dark.gold} />
+                                  <Text style={styles.phoneTextSmall}>{booking.passengerPhone}</Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          </View>
+                          <View style={styles.onboardSeatBadge}>
+                            <Text style={styles.onboardSeatText}>
+                              Seat{booking.seatNumbers?.length > 1 ? 's' : ''}: {booking.seatNumbers?.join(', ') || 'N/A'}
+                            </Text>
+                          </View>
+                        </View>
+                      ))}
+                  </View>
+                )}
+
+                <Text style={styles.activeRideHint}>
+                  📍 Passengers waiting for pickup are shown above. Once they board and confirm, they'll be removed from this list.
+                </Text>
+              </View>
+            )}
+
+            {isLive && (liveRides.length > 0 || pendingApprovals.length > 0) && (
               <View style={styles.requestsSection}>
                 {/* LIVE RIDES SECTION */}
                 {liveRides.length > 0 && (
@@ -1313,32 +1924,39 @@ export default function DriverDashboard() {
                   </>
                 )}
 
-                {/* AVAILABLE RIDES SECTION (Random Data) */}
-                {randomRides.length > 0 && (
+                {/* PENDING APPROVAL REQUESTS */}
+                {pendingApprovals.length > 0 && (
                   <>
                     <View style={styles.requestsHeader}>
-                      <Text style={styles.sectionTitle}>Other Available Rides</Text>
+                      <Text style={styles.sectionTitle}>Pending Approval Requests</Text>
                     </View>
-                    {randomRides.map((ride) => (
-                      <View key={ride.id}>
-                        <View style={styles.requestCard}>
+                    {pendingApprovals.map((booking) => (
+                      <View key={booking._id}>
+                        <TouchableOpacity
+                          style={styles.requestCard}
+                          onPress={() => setExpandedBookingId(expandedBookingId === booking._id ? null : booking._id)}
+                          activeOpacity={0.7}>
                           <View style={styles.requestHeader}>
-                            <Text style={styles.passengerName}>{ride.passenger}</Text>
+                            <Text style={styles.passengerName}>
+                              {booking.userDetails?.name || 'Unknown Passenger'}
+                            </Text>
                             <View style={styles.ratingBadge}>
                               <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
-                              <Text style={styles.ratingText}>{ride.rating?.toFixed(1) || '5.0'}</Text>
+                              <Text style={styles.ratingText}>
+                                {booking.userDetails?.rating?.toFixed(1) || '5.0'}
+                              </Text>
                             </View>
                           </View>
 
                           <View style={styles.requestRoute}>
                             <View style={styles.routeRow}>
                               <MapPin size={14} color={Colors.dark.gold} />
-                              <Text style={styles.routeText}>{ride.from}</Text>
+                              <Text style={styles.routeText}>{booking.from || 'Pickup Location'}</Text>
                             </View>
                             <View style={styles.routeLine} />
                             <View style={styles.routeRow}>
                               <MapPin size={14} color={Colors.dark.pink} />
-                              <Text style={styles.routeText}>{ride.to}</Text>
+                              <Text style={styles.routeText}>{booking.to || 'Drop Location'}</Text>
                             </View>
                           </View>
 
@@ -1346,34 +1964,108 @@ export default function DriverDashboard() {
                             <View style={styles.detailRow}>
                               <Users size={14} color={Colors.dark.textSecondary} />
                               <Text style={styles.detailText}>
-                                {ride.passengers} {ride.passengers === 1 ? 'passenger' : 'passengers'}
+                                {booking.seatNumbers?.length || 1} {booking.seatNumbers?.length === 1 ? 'seat' : 'seats'}
                               </Text>
                             </View>
-                            {ride.fare && (
+                            {booking.fare && (
                               <View style={styles.detailRow}>
                                 <DollarSign size={14} color={Colors.dark.textSecondary} />
-                                <Text style={styles.detailText}>₹{ride.fare}</Text>
+                                <Text style={styles.detailText}>₹{booking.fare}</Text>
+                              </View>
+                            )}
+                            {booking.customRequest && (
+                              <View style={styles.detailRow}>
+                                <Text style={[styles.detailText, { fontStyle: 'italic', color: Colors.dark.textSecondary }]}>
+                                  "{booking.customRequest}"
+                                </Text>
                               </View>
                             )}
                           </View>
 
+                          {expandedBookingId === booking._id && (
+                            <View style={styles.expandedSection}>
+                              <View style={styles.expandedDivider} />
+                              
+                              {/* Additional booking details */}
+                              {booking.pickupTime && (
+                                <View style={styles.expandedRow}>
+                                  <Clock size={14} color={Colors.dark.textSecondary} />
+                                  <Text style={styles.expandedLabel}>Pickup Time:</Text>
+                                  <Text style={styles.expandedValue}>
+                                    {new Date(booking.pickupTime).toLocaleString()}
+                                  </Text>
+                                </View>
+                              )}
+                              
+                              {booking.userDetails?.phone && (
+                                <View style={styles.expandedRow}>
+                                  <Phone size={14} color={Colors.dark.textSecondary} />
+                                  <Text style={styles.expandedLabel}>Contact:</Text>
+                                  <Text style={styles.expandedValue}>{booking.userDetails.phone}</Text>
+                                </View>
+                              )}
+                              
+                              {/* Approval Notes Input */}
+                              <Text style={styles.notesLabel}>Approval Notes (Optional):</Text>
+                              <TextInput
+                                style={styles.notesInput}
+                                placeholder="Add notes for this booking..."
+                                placeholderTextColor={Colors.dark.textSecondary}
+                                value={approvalNotes}
+                                onChangeText={setApprovalNotes}
+                                multiline
+                                numberOfLines={3}
+                                maxLength={200}
+                              />
+                            </View>
+                          )}
+
                           <View style={styles.requestActions}>
                             <TouchableOpacity
                               style={styles.rejectButton}
-                              onPress={() => handleRejectRide(ride.id, false)}
-                              activeOpacity={0.7}>
+                              onPress={(e) => {
+                                e.stopPropagation();
+                                showAlert(
+                                  'Reject Booking',
+                                  'Why are you rejecting this booking?',
+                                  'warning',
+                                  [
+                                    { text: 'Cancel', style: 'cancel' },
+                                    {
+                                      text: 'Not Available',
+                                      onPress: () => handleRejectBooking(booking._id, 'Driver not available'),
+                                    },
+                                    {
+                                      text: 'Other Reason',
+                                      onPress: () => handleRejectBooking(booking._id, 'Rejected by driver'),
+                                    },
+                                  ]
+                                );
+                              }}
+                              activeOpacity={0.7}
+                              disabled={approvingBookingId === booking._id}>
                               <X size={20} color={Colors.dark.error} />
                               <Text style={styles.rejectButtonText}>Reject</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                               style={styles.acceptButton}
-                              onPress={() => handleAcceptRide(ride.id, false)}
-                              activeOpacity={0.7}>
-                              <Check size={20} color={Colors.dark.background} />
-                              <Text style={styles.acceptButtonText}>Accept</Text>
+                              onPress={(e) => {
+                                e.stopPropagation();
+                                handleApproveBooking(booking._id);
+                              }}
+                              activeOpacity={0.7}
+                              disabled={approvingBookingId === booking._id}>
+                              {approvingBookingId === booking._id ? (
+                                <ActivityIndicator size="small" color={Colors.dark.background} />
+                              ) : (
+                                <>
+                                  <Check size={20} color={Colors.dark.background} />
+                                  <Text style={styles.acceptButtonText}>Approve</Text>
+                                </>
+                              )}
                             </TouchableOpacity>
                           </View>
-                        </View>
+                        </TouchableOpacity>
                       </View>
                     ))}
                   </>
@@ -1381,12 +2073,12 @@ export default function DriverDashboard() {
               </View>
             )}
 
-            {isLive && liveRides.length === 0 && randomRides.length === 0 && (
+            {isLive && liveRides.length === 0 && pendingApprovals.length === 0 && (
               <View style={styles.emptyState}>
                 <Users size={48} color={Colors.dark.textSecondary} />
                 <Text style={styles.emptyText}>Waiting for requests...</Text>
                 <Text style={styles.emptySubtext}>
-                  You'll see ride requests here
+                  You'll see ride requests and approval requests here
                 </Text>
               </View>
             )}
@@ -1488,6 +2180,35 @@ export default function DriverDashboard() {
         {selectedTab === 'insights' && renderInsights()}
       </ScrollView>
 
+      {/* Approval Controls Modal */}
+      {approvalControlsModalVisible && activeRideId && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.approvalModal}>
+            <TouchableOpacity
+              style={styles.closeApprovalModal}
+              onPress={() => setApprovalControlsModalVisible(false)}
+            >
+              <X size={24} color={Colors.dark.text} />
+            </TouchableOpacity>
+            <ApprovalControlsDriver
+              rideId={activeRideId}
+              requiresManualApproval={requiresManualApproval}
+              isFestivalRide={isFestivalRide}
+              onSave={(settings) => {
+                setRequiresManualApproval(settings.requiresManualApproval);
+                setApprovalControlsModalVisible(false);
+                showAlert('Success', 'Approval settings updated!', 'success');
+              }}
+              onError={(error) => {
+                showAlert('Error', error, 'error');
+              }}
+            />
+          </View>
+        </View>
+      )}
+
+      {/* Approval modal removed - using inline expandable cards */}
+
       <DriverRideOfferModal
         visible={rideOfferModalVisible}
         editingOffer={editingOffer}
@@ -1557,7 +2278,7 @@ export default function DriverDashboard() {
             <MessageSquare size={18} color={selectedTab === 'messages' ? Colors.dark.background : Colors.dark.text} />
             {totalUnreadMessages > 0 && (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{totalUnreadMessages > 99 ? '99+' : totalUnreadMessages}</Text>
+                <Text style={styles.badgeCountText}>{totalUnreadMessages > 99 ? '99+' : totalUnreadMessages}</Text>
               </View>
             )}
           </View>
@@ -1894,6 +2615,190 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 14,
   },
+  activeRideOfferCard: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: Colors.dark.gold,
+  },
+  seatsInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  passengerListContainer: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: Colors.dark.background,
+    borderRadius: 12,
+    gap: 8,
+  },
+  passengerListTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  passengerItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  passengerInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  passengerItemName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.dark.text,
+  },
+  phoneLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  phoneText: {
+    fontSize: 12,
+    color: Colors.dark.gold,
+  },
+  seatBadge: {
+    backgroundColor: Colors.dark.gold + '20',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '40',
+  },
+  seatBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.dark.gold,
+  },
+  pickupButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: Colors.dark.gold + '20',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold,
+  },
+  pickupButtonConfirmed: {
+    backgroundColor: Colors.dark.success + '20',
+    borderColor: Colors.dark.success,
+  },
+  pickupButtonDisabled: {
+    opacity: 0.5,
+  },
+  pickupButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.dark.gold,
+  },
+  pickupButtonTextConfirmed: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.dark.success,
+  },
+  allBoardedMessage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 16,
+    backgroundColor: Colors.dark.success + '15',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.success + '30',
+  },
+  allBoardedText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.dark.success,
+  },
+  passengersOnboardContainer: {
+    marginTop: 16,
+    backgroundColor: Colors.dark.success + '10',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.success + '30',
+  },
+  onboardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  onboardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.dark.success,
+  },
+  onboardPassengerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.dark.card,
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.success + '20',
+  },
+  onboardPassengerInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  onboardCheckmark: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.dark.success + '20',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  onboardPassengerDetails: {
+    flex: 1,
+  },
+  onboardPassengerName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.dark.text,
+    marginBottom: 2,
+  },
+  phoneTextSmall: {
+    fontSize: 10,
+    color: Colors.dark.gold,
+    marginLeft: 4,
+  },
+  onboardSeatBadge: {
+    backgroundColor: Colors.dark.success + '20',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  onboardSeatText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.dark.success,
+  },
   requestsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2029,6 +2934,49 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
+  expandedSection: {
+    marginTop: 16,
+    paddingTop: 16,
+  },
+  expandedDivider: {
+    height: 1,
+    backgroundColor: Colors.dark.border,
+    marginBottom: 12,
+  },
+  expandedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  expandedLabel: {
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+    fontWeight: '500',
+  },
+  expandedValue: {
+    fontSize: 13,
+    color: Colors.dark.text,
+    flex: 1,
+  },
+  notesLabel: {
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+    fontWeight: '600',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  notesInput: {
+    backgroundColor: Colors.dark.backgroundSecondary,
+    borderRadius: 8,
+    padding: 12,
+    color: Colors.dark.text,
+    fontSize: 14,
+    minHeight: 80,
+    textAlignVertical: 'top',
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -2082,6 +3030,45 @@ const styles = StyleSheet.create({
   offerCard: {
     borderColor: Colors.dark.border,
   },
+  activeOfferCard: {
+    borderWidth: 2,
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '08',
+  },
+  activeRideBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    backgroundColor: Colors.dark.gold,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    zIndex: 10,
+  },
+  activeRideBadgeText: {
+    color: Colors.dark.background,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  sectionHeaderWithBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  countBadge: {
+    backgroundColor: Colors.dark.gold + '30',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    minWidth: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countBadgeText: {
+    color: Colors.dark.gold,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   offerStatusRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2123,7 +3110,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  disabledButton: {
+  disabledButtonAlt: {
     backgroundColor: Colors.dark.textSecondary + '10',
     borderColor: Colors.dark.textSecondary + '30',
   },
@@ -2304,7 +3291,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
   },
-  emptySubtext: {
+  emptySubtextAlt: {
     fontSize: 14,
     color: Colors.dark.textSecondary,
     textAlign: 'center',
@@ -2410,7 +3397,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: Colors.dark.background,
   },
-  badgeText: {
+  badgeCountText: {
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: 'bold',
@@ -2418,6 +3405,37 @@ const styles = StyleSheet.create({
   debugButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
+},
+  notificationBellButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.dark.card,
+    marginRight: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: Colors.dark.gold,
+    position: 'relative',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: Colors.dark.error,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: Colors.dark.background,
+  },
+  notificationBadgeText: {
+    color: Colors.dark.background,
+    fontSize: 11,
+    fontWeight: '700',
   },
   debugModal: {
     position: 'absolute',
@@ -2452,5 +3470,30 @@ const styles = StyleSheet.create({
   },
   debugModalClose: {
     padding: 4,
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+    zIndex: 999,
+  },
+  approvalModal: {
+    backgroundColor: Colors.dark.card,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    maxHeight: '85%',
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.border,
+  },
+  closeApprovalModal: {
+    alignSelf: 'flex-end',
+    padding: 8,
+    marginBottom: 10,
   },
 });

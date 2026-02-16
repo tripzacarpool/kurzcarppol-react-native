@@ -13,7 +13,8 @@ interface RouteInfoProps {
   pickupLocation: RouteCoordinate | null;
   dropoffLocation: RouteCoordinate | null;
   farePerKm?: number;
-  onFareCalculated?: (fare: number) => void;
+  totalSeats?: number; // Total available seats for passengers (not including driver)
+  onFareCalculated?: (farePerSeat: number) => void;
   onCalculationStart?: () => void;
 }
 
@@ -21,6 +22,7 @@ export default function RouteInfo({
   pickupLocation,
   dropoffLocation,
   farePerKm = 15,
+  totalSeats = 4, // Default 4 seats for rideshare
   onFareCalculated,
   onCalculationStart,
 }: RouteInfoProps) {
@@ -62,18 +64,24 @@ export default function RouteInfo({
 
         // Calculate fare using actual Google distance value (in meters)
         const distanceKm = result.distanceValue / 1000; // Convert meters to km
-        const baseFare = Math.round(distanceKm * farePerKm);
-        const discountedFare = Math.round(baseFare * 0.9); // 10% discount
-        setOriginalFare(baseFare);
-        setFare(discountedFare);
+        const totalTripFare = Math.round(distanceKm * farePerKm);
+        const discountedTotalFare = Math.round(totalTripFare * 0.9); // 10% discount
+        
+        // Calculate PER SEAT fare for rideshare (divide by available seats)
+        const baseFarePerSeat = Math.round(totalTripFare / totalSeats);
+        const discountedFarePerSeat = Math.round(discountedTotalFare / totalSeats);
+        
+        setOriginalFare(baseFarePerSeat);
+        setFare(discountedFarePerSeat);
         setCalculated(true);
         
         console.log(`📊 Google Maps Data: ${result.distance} (${result.distanceValue}m), ${result.duration} (${result.durationValue}s)`);
-        console.log(`💰 Calculated: ₹${baseFare} → ₹${discountedFare} (10% off)`);
+        console.log(`💰 Total Trip: ₹${totalTripFare} → ₹${discountedTotalFare} (10% off)`);
+        console.log(`💰 Per Seat (${totalSeats} seats): ₹${baseFarePerSeat} → ₹${discountedFarePerSeat} per seat`);
         
-        // Notify parent component of calculated fare
+        // Notify parent component of calculated PER SEAT fare
         if (onFareCalculated) {
-          onFareCalculated(discountedFare);
+          onFareCalculated(discountedFarePerSeat);
         }
       } else {
         resetInfo();
@@ -140,11 +148,13 @@ export default function RouteInfo({
             <DollarSign size={18} color={Colors.dark.gold} />
             <Text style={styles.infoLabel}>Market Rate</Text>
             <Text style={styles.infoValue}>₹{originalFare}</Text>
+            <Text style={styles.perSeatLabel}>per seat</Text>
             {originalFare > 0 && (
               <>
                 <View style={styles.dividerLine} />
                 <Text style={styles.reducedLabel}>Your Price</Text>
                 <Text style={styles.discountedValue}>₹{fare}</Text>
+                <Text style={styles.perSeatLabel}>per seat</Text>
               </>
             )}
           </View>
@@ -171,6 +181,9 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 15,
+    fontWeight: '600',
+    color: Colors.dark.text,
+  },
   buttonContainer: {
     alignItems: 'center',
     paddingVertical: 8,
@@ -193,8 +206,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 16,
   },
-    fontWeight: '600',
-    color: Colors.dark.text,
+  perSeatLabel: {
+    fontSize: 10,
+    color: Colors.dark.textSecondary,
+    marginTop: 2,
   },
   googleBadge: {
     fontSize: 11,

@@ -205,6 +205,52 @@ export function unsubscribeFromRideEvents() {
 }
 
 /**
+ * Subscribe to pickup initiation (for passengers)
+ * Driver has initiated pickup and is waiting for passenger confirmation
+ */
+export function subscribeToPickupInitiated(
+  passengerClerkId: string,
+  onPickupInitiated: (data: any) => void,
+) {
+  const sock = getLocationSocket();
+  const eventName = `passenger:pickup-initiated:${passengerClerkId}`;
+
+  sock.on(eventName, (data: any) => {
+    console.log('🚗 Pickup initiated by driver:', data);
+    onPickupInitiated(data);
+  });
+}
+
+/**
+ * Subscribe to pickup confirmation (for drivers)
+ * Passenger has confirmed they've boarded
+ */
+export function subscribeToPickupConfirmed(
+  driverId: string,
+  onPickupConfirmed: (data: any) => void,
+) {
+  const sock = getLocationSocket();
+  const eventName = `driver:pickup-confirmed:${driverId}`;
+
+  sock.on(eventName, (data: any) => {
+    console.log('✅ Pickup confirmed by passenger:', data);
+    onPickupConfirmed(data);
+  });
+}
+
+/**
+ * Unsubscribe from pickup events
+ */
+export function unsubscribeFromPickupEvents(userId: string, isDriver: boolean) {
+  const sock = getLocationSocket();
+  if (isDriver) {
+    sock.off(`driver:pickup-confirmed:${userId}`);
+  } else {
+    sock.off(`passenger:pickup-initiated:${userId}`);
+  }
+}
+
+/**
  * Export socket instance (ensures initialization)
  */
 export { socket, getLocationSocket as getSocket };

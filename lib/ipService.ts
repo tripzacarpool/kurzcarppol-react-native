@@ -69,13 +69,21 @@ export async function getUserProfile(userId: string) {
     });
 
     if (!response.ok) {
+      console.error(
+        '❌ Profile fetch failed:',
+        response.status,
+        response.statusText,
+      );
       throw new Error('Failed to fetch user profile');
     }
 
     const data = await response.json();
-    return data;
+    console.log('✅ Profile fetched successfully:', data);
+
+    // Return the user object from the response
+    return data.user || data;
   } catch (error) {
-    console.error('Failed to fetch user profile:', error);
+    console.error('❌ Failed to fetch user profile:', error);
     return null;
   }
 }

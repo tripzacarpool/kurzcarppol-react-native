@@ -258,6 +258,7 @@ const rideOfferSchema = new Schema(
       index: true,
     },
     clerkId: { type: String, required: true, index: true },
+    driverId: { type: String, required: true, index: true }, // Driver's clerkId
     from: { type: String, required: true },
     to: { type: String, required: true },
     totalSeats: { type: Number, required: true, min: 1, max: 6 },
@@ -300,6 +301,26 @@ const rideOfferSchema = new Schema(
       ],
       default: 'waiting',
       index: true,
+    },
+    // Festival Special Pool fields (optional - only for admin testing)
+    festivalType: {
+      type: String,
+      enum: ['diwali', 'holi', 'eid', 'chhath', 'wedding'],
+      default: null,
+      required: false,
+      index: true,
+    },
+    festivalConfig: {
+      verifiedLongRouteDriver: { type: Boolean, default: false },
+      returnDiscount: { type: Number, default: 0 },
+      groupBooking: { type: Boolean, default: false },
+      smartPricing: { type: Boolean, default: false },
+      tier: {
+        type: String,
+        enum: ['Tier 1', 'Tier 2', 'Tier 3'],
+        default: null,
+        required: false,
+      },
     },
     vehicle: {
       model: String,
@@ -347,6 +368,28 @@ const rideOfferSchema = new Schema(
       completedAt: Date,
       confirmedPassengers: [String], // Array of passenger clerkIds
     },
+    // Approval system fields
+    approvalMode: {
+      type: String,
+      enum: ['auto', 'manual'],
+      default: 'manual',
+      index: true,
+    },
+    requiresManualApproval: { type: Boolean, default: true },
+    seatLocks: [
+      {
+        seatNumber: Number,
+        status: {
+          type: String,
+          enum: ['locked', 'confirmed'],
+          default: 'locked',
+        },
+        userId: String,
+        bookingId: mongoose.Schema.Types.ObjectId,
+        lockedAt: { type: Date, default: Date.now },
+        expiresAt: Date,
+      },
+    ],
     departureNotificationSent: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now, index: true },
     updatedAt: { type: Date, default: Date.now },
@@ -365,6 +408,72 @@ rideOfferSchema.index({ earliestDeparture: 1, latestDeparture: 1 });
 rideOfferSchema.index({ from: 1, to: 1, departureTime: 1 });
 
 export const RideOffer = mongoose.model('RideOffer', rideOfferSchema);
+
+// ==================== BOOKING APPROVAL MODEL ====================
+
+// Ride Booking Schema (for manual approval system)
+const rideBookingSchema = new Schema(
+  {
+    rideId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'RideOffer',
+      required: true,
+      index: true,
+    },
+    passengerId: { type: String, required: true, index: true },
+    driverId: { type: String, required: true, index: true },
+    seatNumbers: [{ type: Number, required: true }],
+    customRequest: String,
+    approvalStatus: {
+      type: String,
+      enum: [
+        'auto_accepted',
+        'pending_approval',
+        'pending_passenger',
+        'approved',
+        'confirmed',
+        'rejected',
+        'cancelled',
+        'expired',
+        'locked',
+      ],
+      default: 'pending_approval',
+      index: true,
+    },
+    approvalRequestedAt: { type: Date, default: Date.now, index: true },
+    approvedAt: Date,
+    approvedBy: String,
+    rejectedAt: Date,
+    rejectionReason: String,
+    approvalNotes: String,
+    seatLockExpiry: Date,
+    userDetails: {
+      name: String,
+      phone: String,
+      rating: Number,
+      avatar: String,
+    },
+    from: String,
+    to: String,
+    fare: Number,
+    departureTime: Date,
+    paymentId: String,
+    paymentMethod: String,
+    paymentStatus: String,
+    paymentCompletedAt: Date,
+    createdAt: { type: Date, default: Date.now, index: true },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { timestamps: true },
+);
+
+// Indexes for booking queries
+rideBookingSchema.index({ rideId: 1, approvalStatus: 1 });
+rideBookingSchema.index({ passengerId: 1, approvalStatus: 1 });
+rideBookingSchema.index({ driverId: 1, approvalStatus: 1 });
+rideBookingSchema.index({ approvalRequestedAt: 1, approvalStatus: 1 });
+
+export const RideBooking = mongoose.model('RideBooking', rideBookingSchema);
 
 // ==================== CHAT MODELS ====================
 
@@ -413,3 +522,45 @@ messageSchema.index({ conversationId: 1, sentAt: 1 });
 messageSchema.index({ conversationId: 1, readBy: 1 });
 
 export const Message = mongoose.model('Message', messageSchema);
+
+// ==================== RATING MODEL ====================
+
+// Rating Schema - For rating drivers and passengers after rides
+const ratingSchema = new Schema(
+  {
+    rideId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'RideOffer',
+      required: true,
+      index: true,
+    },
+    bookingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'RideBooking',
+      index: true,
+    },
+    raterId: { type: String, required: true, index: true }, // Person giving the rating
+    ratedId: { type: String, required: true, index: true }, // Person being rated
+    raterRole: {
+      type: String,
+      enum: ['driver', 'passenger'],
+      required: true,
+    },
+    ratedRole: {
+      type: String,
+      enum: ['driver', 'passenger'],
+      required: true,
+    },
+    rating: { type: Number, required: true, min: 1, max: 5 },
+    feedback: String,
+    tags: [String], // e.g., ['punctual', 'friendly', 'safe_driver']
+    createdAt: { type: Date, default: Date.now, index: true },
+  },
+  { timestamps: true },
+);
+
+// Prevent duplicate ratings for same ride
+ratingSchema.index({ rideId: 1, raterId: 1, ratedId: 1 }, { unique: true });
+ratingSchema.index({ ratedId: 1, ratedRole: 1, createdAt: -1 });
+
+export const Rating = mongoose.model('Rating', ratingSchema);

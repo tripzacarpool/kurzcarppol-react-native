@@ -44,9 +44,15 @@ export default function ExtendTimeScreen() {
     }
   };
 
-  const handleExtendTime = async (additionalMinutes: number) => {
+  const handleExtendTime = async (newTime: Date) => {
     try {
       setExtending(true);
+      // Calculate additional minutes from the new time
+      const currentDepartureDate = getDepartureDate();
+      const additionalMinutes = Math.round(
+        (newTime.getTime() - currentDepartureDate.getTime()) / (1000 * 60)
+      );
+      
       const response = await extendRideOfferTime(
         offerId as string,
         additionalMinutes,
@@ -121,7 +127,7 @@ export default function ExtendTimeScreen() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.gold} />
+        <ActivityIndicator size="large" color={Colors.dark.gold} />
         <Text style={styles.loadingText}>Loading ride details...</Text>
       </View>
     );
@@ -147,7 +153,7 @@ export default function ExtendTimeScreen() {
       <ScrollView style={styles.content}>
         {/* Alert Banner */}
         <View style={styles.alertBanner}>
-          <Clock size={24} color={Colors.gold} />
+          <Clock size={24} color={Colors.dark.gold} />
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={styles.alertTitle}>Ride Departing Soon!</Text>
             <Text style={styles.alertMessage}>
@@ -181,13 +187,13 @@ export default function ExtendTimeScreen() {
           {/* Time Info */}
           <View style={styles.timeContainer}>
             <View style={styles.timeRow}>
-              <Calendar size={20} color={Colors.gold} />
+              <Calendar size={20} color={Colors.dark.gold} />
               <Text style={styles.timeLabel}>Date</Text>
               <Text style={styles.timeValue}>{formatDate(departure)}</Text>
             </View>
 
             <View style={styles.timeRow}>
-              <Clock size={20} color={Colors.gold} />
+              <Clock size={20} color={Colors.dark.gold} />
               <Text style={styles.timeLabel}>Departure</Text>
               <Text style={styles.timeValue}>{formatTime(departure)}</Text>
             </View>
@@ -223,9 +229,9 @@ export default function ExtendTimeScreen() {
       {/* Time Extension Picker Modal */}
       <TimeExtensionPicker
         visible={showTimePicker}
-        onClose={() => setShowTimePicker(false)}
+        onCancel={() => setShowTimePicker(false)}
         onConfirm={handleExtendTime}
-        currentDepartureTime={departure}
+        currentTime={departure}
       />
     </View>
   );
@@ -234,13 +240,13 @@ export default function ExtendTimeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.dark.background,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.dark.background,
   },
   loadingText: {
     color: '#999',
@@ -277,13 +283,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: 'rgba(255, 215, 0, 0.1)',
     borderWidth: 1,
-    borderColor: Colors.gold,
+    borderColor: Colors.dark.gold,
     borderRadius: 12,
     padding: 16,
     marginBottom: 20,
   },
   alertTitle: {
-    color: Colors.gold,
+    color: Colors.dark.gold,
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 4,
@@ -319,7 +325,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   dotStart: {
-    backgroundColor: Colors.gold,
+    backgroundColor: Colors.dark.gold,
   },
   dotEnd: {
     backgroundColor: '#4ade80',
@@ -382,7 +388,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.gold,
+    backgroundColor: Colors.dark.gold,
     borderRadius: 12,
     padding: 18,
     gap: 8,

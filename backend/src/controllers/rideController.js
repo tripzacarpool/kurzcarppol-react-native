@@ -1,6 +1,9 @@
 import mongoose from 'mongoose';
 import { UserProfile, RideRequest, RideOffer } from '../config/models.js';
 import { locationService } from '../services/locationService.js';
+import { Expo } from 'expo-server-sdk';
+
+const expo = new Expo();
 
 // Socket.io instance will be injected
 let io = null;
@@ -27,6 +30,35 @@ const getClerkUserId = (req) => {
     return req.auth?.userId;
   } catch (error) {
     console.error('❌ Error getting Clerk userId:', error);
+    return null;
+  }
+};
+
+/**
+ * Helper to send push notification
+ */
+const sendPushNotification = async (pushToken, title, body, data = {}) => {
+  if (!pushToken || !expo.isExpoPushToken(pushToken)) {
+    console.warn('⚠️ Invalid push token:', pushToken);
+    return null;
+  }
+
+  try {
+    const response = await expo.sendPushNotificationsAsync([
+      {
+        to: pushToken,
+        sound: 'default',
+        title,
+        body,
+        data,
+        badge: 1,
+        priority: 'high',
+      },
+    ]);
+    console.log('✅ Push notification sent:', { title, body });
+    return response;
+  } catch (error) {
+    console.error('❌ Error sending push notification:', error);
     return null;
   }
 };
@@ -951,6 +983,25 @@ export const passengerConfirmPickup = async (req, res, next) => {
       ride.updatedAt = new Date();
       await ride.save();
 
+      // Send push notification to driver
+      try {
+        const driver = await UserProfile.findOne({ clerkId: ride.clerkId });
+        if (driver?.pushToken) {
+          await sendPushNotification(
+            driver.pushToken,
+            '✅ Passenger Confirmed Pickup',
+            'Your passenger has confirmed pickup. Start the ride now!',
+            {
+              type: 'passenger_pickup_confirmed',
+              rideId: ride._id.toString(),
+              rideType: 'offer',
+            },
+          );
+        }
+      } catch (error) {
+        console.error('❌ Error sending driver notification:', error);
+      }
+
       if (io) {
         io.emit('ride:pickup-passenger', {
           rideId: ride._id,
@@ -994,6 +1045,28 @@ export const passengerConfirmPickup = async (req, res, next) => {
       }
       ride.updatedAt = new Date();
       await ride.save();
+
+      // Send push notification to driver
+      try {
+        const driverId = ride.acceptedBy?.clerkId;
+        if (driverId) {
+          const driver = await UserProfile.findOne({ clerkId: driverId });
+          if (driver?.pushToken) {
+            await sendPushNotification(
+              driver.pushToken,
+              '✅ Passenger Confirmed Pickup',
+              'Your passenger has confirmed pickup. Start the ride now!',
+              {
+                type: 'passenger_pickup_confirmed',
+                rideId: ride._id.toString(),
+                rideType: 'request',
+              },
+            );
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error sending driver notification:', error);
+      }
 
       if (io) {
         io.emit('ride:pickup-passenger', {
@@ -1566,26 +1639,39 @@ export const createDriverRideOffer = async (req, res, next) => {
     }
 
     // Create and save driver ride offer to database
-    const rideOffer = new RideRequest({
+    const rideOffer = new RideOffer({
       userId: driver._id,
       clerkId,
+      driverId: clerkId,
       from,
       to,
-      passengers,
+      totalSeats: passengers + 1, // +1 for driver
+      availableSeats: Array.from({ length: passengers }, (_, i) => i + 2), // Seats 2, 3, 4, etc. (1 is driver)
+      farePerSeat: fare || 0,
       vehicleType: sanitizedVehicleType,
       notes: notes || '',
       womenOnly: womenOnly || false,
-      fare: fare || 0,
       pickupLatitude: pickupLatitude || null,
       pickupLongitude: pickupLongitude || null,
       pickupCity: pickupCity || null,
       pickupCountry: pickupCountry || null,
-      offeredByDriver: true,
+      departureTime: departureDate,
       scheduledDeparture: departureDate,
       earliestDeparture,
       latestDeparture,
       timeFlexibilityMinutes: flexMinutes,
       status: 'waiting',
+      approvalMode: 'manual',
+      requiresManualApproval: true,
+      seatLocks: [],
+      driver: {
+        name: `${driver.firstName} ${driver.lastName}`.trim(),
+        profileImage: driver.profileImage,
+        rating: driver.rating || 5,
+        ridesCompleted: driver.totalTrips || 0,
+        gender: driver.gender || 'other',
+      },
+      vehicle: driver.vehicle || {},
     });
 
     await rideOffer.save();
@@ -1595,9 +1681,11 @@ export const createDriverRideOffer = async (req, res, next) => {
       driverName: `${driver.firstName} ${driver.lastName}`.trim(),
       from,
       to,
-      passengers,
-      vehicleType: sanitizedVehicleType,
-      fare,
+      totalSeats: passengers + 1,
+      availableSeats: rideOffer.availableSeats,
+      farePerSeat: fare,
+      approvalMode: rideOffer.approvalMode,
+      requiresManualApproval: rideOffer.requiresManualApproval,
     });
 
     // Emit socket event for new driver ride offer
@@ -1607,16 +1695,20 @@ export const createDriverRideOffer = async (req, res, next) => {
         offerId: rideOffer._id,
         from: rideOffer.from,
         to: rideOffer.to,
-        passengers: rideOffer.passengers,
+        totalSeats: rideOffer.totalSeats,
+        availableSeats: rideOffer.availableSeats,
+        farePerSeat: rideOffer.farePerSeat,
         womenOnly: rideOffer.womenOnly,
         vehicleType: rideOffer.vehicleType,
-        fare: rideOffer.fare,
         notes: rideOffer.notes,
+        departureTime: rideOffer.departureTime,
         scheduledDeparture: rideOffer.scheduledDeparture,
         earliestDeparture: rideOffer.earliestDeparture,
         latestDeparture: rideOffer.latestDeparture,
         timeFlexibilityMinutes: rideOffer.timeFlexibilityMinutes,
         status: rideOffer.status,
+        approvalMode: rideOffer.approvalMode,
+        requiresManualApproval: rideOffer.requiresManualApproval,
         createdAt: rideOffer.createdAt,
         driver: {
           clerkId: clerkId,
@@ -1635,13 +1727,16 @@ export const createDriverRideOffer = async (req, res, next) => {
         id: rideOffer._id,
         from: rideOffer.from,
         to: rideOffer.to,
-        passengers: rideOffer.passengers,
+        totalSeats: rideOffer.totalSeats,
+        availableSeats: rideOffer.availableSeats,
+        farePerSeat: rideOffer.farePerSeat,
         notes: rideOffer.notes,
         womenOnly: rideOffer.womenOnly,
         vehicleType: rideOffer.vehicleType,
-        fare: rideOffer.fare,
-        offeredByDriver: rideOffer.offeredByDriver,
         status: rideOffer.status,
+        approvalMode: rideOffer.approvalMode,
+        requiresManualApproval: rideOffer.requiresManualApproval,
+        departureTime: rideOffer.departureTime,
         createdAt: rideOffer.createdAt,
         scheduledDeparture: rideOffer.scheduledDeparture,
         earliestDeparture: rideOffer.earliestDeparture,
@@ -1868,50 +1963,64 @@ export const extendRideTime = async (req, res, next) => {
 export const cleanupExpiredRides = async (req, res, next) => {
   try {
     const now = new Date();
-    // Remove rides that are 5 minutes past their departure time
+    // Remove rides that are 5 minutes past their scheduled departure time
     const expirationTime = new Date(now.getTime() - 5 * 60000);
+    const estimatedTripDuration = 3 * 60 * 60 * 1000; // 3 hours estimated trip duration
 
-    const expiredRides = await RideRequest.find({
-      departureTime: { $lt: expirationTime },
-      status: { $in: ['pending', 'active'] },
+    // 1. AUTO-COMPLETE: Find ongoing/booked rides that should be completed
+    // (scheduledDeparture + 3 hours has passed)
+    const ridesForCompletion = await RideRequest.find({
+      $or: [
+        { scheduledDeparture: { $lt: new Date(now - estimatedTripDuration) } },
+        { earliestDeparture: { $lt: new Date(now - estimatedTripDuration) } },
+      ],
+      status: { $in: ['ongoing', 'booked'] },
     });
 
-    if (expiredRides.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: 'No expired rides to cleanup',
-        count: 0,
-      });
+    let completedCount = 0;
+    for (const ride of ridesForCompletion) {
+      ride.status = 'completed';
+      ride.completedAt = now;
+      await ride.save();
+      completedCount++;
+      console.log(`✅ Auto-completed ride request: ${ride._id}`);
     }
 
-    // Update all expired rides to 'expired' status
-    const updateResult = await RideRequest.updateMany(
-      {
-        departureTime: { $lt: expirationTime },
-        status: { $in: ['pending', 'active'] },
-      },
-      {
-        $set: { status: 'expired' },
-      },
-    );
+    // 2. AUTO-CANCEL: Find expired ride requests that never got accepted
+    const expiredRides = await RideRequest.find({
+      $or: [
+        { scheduledDeparture: { $lt: expirationTime } },
+        { earliestDeparture: { $lt: expirationTime } },
+      ],
+      status: { $in: ['waiting', 'accepted'] },
+    });
 
-    console.log(`🗑️ Cleaned up ${updateResult.modifiedCount} expired rides`);
+    let cancelledCount = 0;
+    for (const ride of expiredRides) {
+      ride.status = 'cancelled';
+      await ride.save();
+      cancelledCount++;
+      console.log(`🗑️ Auto-cancelled expired ride request: ${ride._id}`);
 
-    // Notify clients about expired rides
-    if (io) {
-      expiredRides.forEach((ride) => {
+      // Notify client about expired ride
+      if (io) {
         io.emit('ride:expired', {
           rideId: ride._id,
           from: ride.from,
           to: ride.to,
         });
-      });
+      }
     }
+
+    console.log(
+      `🧹 Cleanup complete: ${cancelledCount} cancelled, ${completedCount} auto-completed`,
+    );
 
     res.status(200).json({
       success: true,
-      message: `Cleaned up ${updateResult.modifiedCount} expired rides`,
-      count: updateResult.modifiedCount,
+      message: `Cleaned up ${cancelledCount} expired rides and auto-completed ${completedCount} ongoing rides`,
+      cancelledCount,
+      completedCount,
     });
   } catch (error) {
     console.error('❌ Cleanup expired rides error:', error.message);

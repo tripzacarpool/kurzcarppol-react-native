@@ -295,8 +295,10 @@ export default function SignupScreen() {
         profilePhotoUrl: ridePartnerForm.profilePhotoUrl.trim() || undefined,
       },
       vehicleDetails: {
+        vehicleType: vehicleType,
         carModel: ridePartnerForm.carModel.trim(),
         vehicleNumber: ridePartnerForm.vehicleNumber.trim(),
+        maxPassengers: vehicleType === 'cab' ? 4 : 3,
         vehiclePhotoUrl: ridePartnerForm.vehiclePhotoUrl.trim() || undefined,
       },
       licenseDetails: {

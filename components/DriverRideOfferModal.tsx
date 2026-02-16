@@ -14,12 +14,13 @@ import {
 } from 'react-native';
 import { X, MapPin, Users, DollarSign, FileText, Navigation } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import DateTimeSelector from './DateTimeSelector';
+import DateTimeSelectorAdvanced from './DateTimeSelectorAdvanced';
 import { useAuth, useUser } from '@/lib/clerkHooks';
 import { Colors } from '@/constants/Colors';
 import { GOOGLE_MAPS_API_KEY } from '@/config/googleMaps';
 import { VEHICLE_TYPE_OPTIONS } from '@/constants/vehicleTypes';
-import { createDriverRideOffer, updateRideOffer, setAuthToken } from '@/lib/api';
+import { FESTIVAL_TYPES } from '@/constants/festivals';
+import { createDriverRideOffer, createRideOffer, updateRideOffer, setAuthToken } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
@@ -35,6 +36,14 @@ interface DriverRideOfferModalProps {
     fare?: number;
     womenOnly?: boolean;
     createdAt?: string;
+    festivalType?: string;
+    festivalConfig?: {
+      longRoute?: boolean;
+      discount?: boolean;
+      groupBooking?: boolean;
+      smartPricing?: boolean;
+      tier?: string;
+    };
   } | null;
   onSuccess?: (offer?: {
     id?: string;
@@ -78,6 +87,17 @@ export default function DriverRideOfferModal({
   const [suggestedFare, setSuggestedFare] = useState<number>(0);
   const [isRouteCalculated, setIsRouteCalculated] = useState(false);
   const [vehicleType, setVehicleType] = useState<'two_wheeler' | 'three_wheeler' | 'four_wheeler'>('four_wheeler');
+  const [requiresManualApproval, setRequiresManualApproval] = useState(false);
+
+  // Festival special-pool state
+  const [festivalType, setFestivalType] = useState<string>('');
+  const [festivalConfig, setFestivalConfig] = useState<{
+    longRoute: boolean;
+    discount: boolean;
+    groupBooking: boolean;
+    smartPricing: boolean;
+    tier: string;
+  }>({ longRoute: false, discount: false, groupBooking: false, smartPricing: false, tier: '' });
   
   // Custom alert state
   const [alertVisible, setAlertVisible] = useState(false);
@@ -105,6 +125,14 @@ export default function DriverRideOfferModal({
       // These will be used if user doesn't change locations
       setFromLocation({ latitude: 0, longitude: 0 });
       setToLocation({ latitude: 0, longitude: 0 });
+      setFestivalType(editingOffer.festivalType || '');
+      setFestivalConfig({
+        longRoute: editingOffer.festivalConfig?.longRoute || false,
+        discount: editingOffer.festivalConfig?.discount || false,
+        groupBooking: editingOffer.festivalConfig?.groupBooking || false,
+        smartPricing: editingOffer.festivalConfig?.smartPricing || false,
+        tier: editingOffer.festivalConfig?.tier || '',
+      });
     } else if (!visible) {
       // Reset when modal closes
       setFrom('');
@@ -118,6 +146,14 @@ export default function DriverRideOfferModal({
       setSelectedSeats([]);
       setIsRouteCalculated(false);
       setSuggestedFare(0);
+      setFestivalType('');
+      setFestivalConfig({
+        longRoute: false,
+        discount: false,
+        groupBooking: false,
+        smartPricing: false,
+        tier: '',
+      });
     }
   }, [visible, editingOffer]);
 
@@ -530,11 +566,14 @@ export default function DriverRideOfferModal({
         vehicleType,
         notes: notes.trim(),
         womenOnly,
+        requiresManualApproval,
         departureTime: departureTime.toISOString(),
         pickupLatitude: fromLocation?.latitude,
         pickupLongitude: fromLocation?.longitude,
         dropoffLatitude: toLocation?.latitude,
         dropoffLongitude: toLocation?.longitude,
+        festivalType,
+        festivalConfig,
       };
 
       console.log('📤 Payload:', JSON.stringify(payload, null, 2));
@@ -555,7 +594,12 @@ export default function DriverRideOfferModal({
         // Update existing ride offer (accept any non-local ID)
         console.log('🔄 Updating existing ride offer:', editingOffer.id);
         try {
-          response = await updateRideOffer(editingOffer.id, payload);
+          // updateRideOffer expects availableSeats as number, not array
+          const updatePayload = { 
+            ...payload, 
+            availableSeats: availableSeats.length 
+          };
+          response = await updateRideOffer(editingOffer.id, updatePayload);
           console.log('✅ Ride offer updated:', response);
           showAlert('Success', 'Your ride offer has been updated!', 'success');
         } catch (error: any) {
@@ -569,7 +613,6 @@ export default function DriverRideOfferModal({
       } else {
         // Create new ride offer
         console.log('✨ Creating new ride offer');
-        const { createRideOffer } = await import('@/lib/api');
         response = await createRideOffer(payload);
         console.log('✅ Ride offer created:', response);
         console.log('🔍 Response structure:', JSON.stringify(response, null, 2));
@@ -610,6 +653,7 @@ export default function DriverRideOfferModal({
     setFare('');
     setNotes('');
     setWomenOnly(false);
+    setRequiresManualApproval(false);
     setSelectedSeats([]);
     setIsRouteCalculated(false);
     setSuggestedFare(0);
@@ -675,7 +719,7 @@ export default function DriverRideOfferModal({
                         activeOpacity={0.7}
                         onPress={() => handleRecentSearchSelect(search, 'from')}
                       >
-                        <MapPin size={16} color={Colors.dark.primary} />
+                        <MapPin size={16} color={Colors.dark.gold} />
                         <Text style={styles.recentDropdownText}>{search}</Text>
                         <TouchableOpacity
                           style={styles.recentLocationIcon}
@@ -722,7 +766,7 @@ export default function DriverRideOfferModal({
                         activeOpacity={0.7}
                         onPress={() => handleRecentSearchSelect(search, 'to')}
                       >
-                        <MapPin size={16} color={Colors.dark.primary} />
+                        <MapPin size={16} color={Colors.dark.gold} />
                         <Text style={styles.recentDropdownText}>{search}</Text>
                         <TouchableOpacity
                           style={styles.recentLocationIcon}
@@ -773,6 +817,7 @@ export default function DriverRideOfferModal({
                   pickupLocation={fromLocation}
                   dropoffLocation={toLocation}
                   farePerKm={15}
+                  totalSeats={getPassengerSeats()}
                   onFareCalculated={handleFareCalculated}
                   onCalculationStart={handleCalculationStart}
                 />
@@ -789,7 +834,7 @@ export default function DriverRideOfferModal({
             )}
 
             {/* Departure Time */}
-            <DateTimeSelector
+            <DateTimeSelectorAdvanced
               value={departureTime}
               onChange={setDepartureTime}
               minimumDate={new Date(Date.now() + 5 * 60 * 1000)} // 5 minutes from now
@@ -831,6 +876,70 @@ export default function DriverRideOfferModal({
                   </TouchableOpacity>
                 ))}
               </View>
+            </View>
+
+            {/* Festival Special Pool */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Festival Special Pool</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                {FESTIVAL_TYPES.map((option) => (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.vehicleTypeButton,
+                      festivalType === option.value && styles.vehicleTypeButtonActive,
+                    ]}
+                    onPress={() => setFestivalType(option.value)}>
+                    <Text
+                      style={[
+                        styles.vehicleTypeText,
+                        festivalType === option.value && styles.vehicleTypeTextActive,
+                      ]}>
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {festivalType && festivalType !== '' && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={styles.label}>Festival Pool Options</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginVertical: 8 }}>
+                    <TouchableOpacity
+                      style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => setFestivalConfig((c) => ({ ...c, longRoute: !c.longRoute }))}>
+                      <Switch value={festivalConfig.longRoute} onValueChange={() => setFestivalConfig((c) => ({ ...c, longRoute: !c.longRoute }))} />
+                      <Text style={{ marginLeft: 4 }}>Long Route</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => setFestivalConfig((c) => ({ ...c, discount: !c.discount }))}>
+                      <Switch value={festivalConfig.discount} onValueChange={() => setFestivalConfig((c) => ({ ...c, discount: !c.discount }))} />
+                      <Text style={{ marginLeft: 4 }}>Discount</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => setFestivalConfig((c) => ({ ...c, groupBooking: !c.groupBooking }))}>
+                      <Switch value={festivalConfig.groupBooking} onValueChange={() => setFestivalConfig((c) => ({ ...c, groupBooking: !c.groupBooking }))} />
+                      <Text style={{ marginLeft: 4 }}>Group Booking</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => setFestivalConfig((c) => ({ ...c, smartPricing: !c.smartPricing }))}>
+                      <Switch value={festivalConfig.smartPricing} onValueChange={() => setFestivalConfig((c) => ({ ...c, smartPricing: !c.smartPricing }))} />
+                      <Text style={{ marginLeft: 4 }}>Smart Pricing</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={styles.label}>Tier (Optional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g., Gold, Silver, Platinum"
+                      value={festivalConfig.tier}
+                      onChangeText={(text) => setFestivalConfig((c) => ({ ...c, tier: text }))}
+                    />
+                  </View>
+                </View>
+              )}
             </View>
 
             {/* Max Passengers */}
@@ -913,6 +1022,50 @@ export default function DriverRideOfferModal({
                   thumbColor={Colors.dark.text}
                 />
               </View>
+
+              <View style={styles.switchContainer}>
+                <View style={styles.switchLabel}>
+                  <Text style={styles.switchText}>Passenger Approval</Text>
+                  <Text style={styles.switchSubtext}>
+                    How you want to approve bookings
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.approvalModeOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.approvalModeButton,
+                    !requiresManualApproval && styles.approvalModeButtonActive,
+                  ]}
+                  onPress={() => setRequiresManualApproval(false)}>
+                  <Text style={[
+                    styles.approvalModeButtonText,
+                    !requiresManualApproval && styles.approvalModeButtonTextActive,
+                  ]}>
+                    🚀 Auto-Approve
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.approvalModeButton,
+                    requiresManualApproval && styles.approvalModeButtonActive,
+                  ]}
+                  onPress={() => setRequiresManualApproval(true)}>
+                  <Text style={[
+                    styles.approvalModeButtonText,
+                    requiresManualApproval && styles.approvalModeButtonTextActive,
+                  ]}>
+                    ✋ Manual Review
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.approvalModeDescription}>
+                {requiresManualApproval
+                  ? 'You\'ll review and approve each booking within 5 minutes'
+                  : 'Bookings are automatically confirmed instantly'}
+              </Text>
             </View>
           </ScrollView>
 
@@ -1098,7 +1251,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
   },
-  fareHint: {
+  fareHintSubtle: {
     fontSize: 12,
     color: Colors.dark.textSecondary,
     marginTop: 6,
@@ -1421,5 +1574,41 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.dark.text,
     flex: 1,
+  },
+  approvalModeOptions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+    paddingHorizontal: 0,
+  },
+  approvalModeButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: Colors.dark.card,
+    borderWidth: 2,
+    borderColor: Colors.dark.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  approvalModeButtonActive: {
+    backgroundColor: Colors.dark.gold + '20',
+    borderColor: Colors.dark.gold,
+  },
+  approvalModeButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.dark.textSecondary,
+  },
+  approvalModeButtonTextActive: {
+    color: Colors.dark.gold,
+  },
+  approvalModeDescription: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    lineHeight: 16,
+    fontStyle: 'italic',
+    paddingHorizontal: 0,
   },
 });

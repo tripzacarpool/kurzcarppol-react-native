@@ -211,9 +211,37 @@ export const getUserProfile = async (req, res, next) => {
       });
     }
 
+    // Return comprehensive profile data for the profile page
+    const fullProfile = {
+      id: user._id,
+      clerkId: user.clerkId,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      full_name:
+        `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User',
+      profileImage: user.profileImage,
+      role: user.role,
+      rating: user.rating || 4.8,
+      total_trips: user.totalTrips || 0,
+      walletBalance: user.walletBalance || 0,
+      phone: user.phone,
+      isWomenOnly: user.isWomenOnly,
+      ip_address: user.ipAddress,
+      ipUpdatedAt: user.ipUpdatedAt,
+      location: user.location || null,
+      last_location_update: user.location?.updatedAt,
+      vehicleInfo: user.vehicleInfo || null,
+      driverVerified: user.driverVerified || false,
+      verificationStatus: user.verificationStatus,
+      ridePartnerProfile: user.ridePartnerProfile || null,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+
     res.json({
       success: true,
-      user: formatUserResponse(user),
+      user: fullProfile,
     });
   } catch (error) {
     console.error('❌ Get user error:', error.message);

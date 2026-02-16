@@ -350,6 +350,7 @@ export default function RideRequestModal({
                 latitude: dropoffLocation.latitude,
                 longitude: dropoffLocation.longitude,
               }}
+              totalSeats={4}
             />
           )}
 

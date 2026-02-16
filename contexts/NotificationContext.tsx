@@ -46,8 +46,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     type: 'info' | 'success' | 'error' | 'warning';
   } | null>(null);
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
-  const notificationListener = useRef<any>();
-  const responseListener = useRef<any>();
+  const notificationListener = useRef<any>(null);
+  const responseListener = useRef<any>(null);
 
   const showCustomAlert = (title: string, message: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
     setAlertConfig({ title, message, type });

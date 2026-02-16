@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  TextInput,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar, Clock } from 'lucide-react-native';
@@ -26,6 +27,15 @@ export default function DateTimeSelector({
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
+  // Web-specific state for native HTML inputs
+  const isWeb = Platform.OS === 'web';
+  const [webDateString, setWebDateString] = useState(
+    value.toISOString().split('T')[0]
+  );
+  const [webTimeString, setWebTimeString] = useState(
+    value.toTimeString().slice(0, 5)
+  );
+
   const handleDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(false);
     if (selectedDate) {
@@ -44,6 +54,33 @@ export default function DateTimeSelector({
       const newDateTime = new Date(value);
       newDateTime.setHours(selectedTime.getHours());
       newDateTime.setMinutes(selectedTime.getMinutes());
+      onChange(newDateTime);
+    }
+  };
+
+  // Web platform handlers
+  const handleWebDateChange = (dateString: string) => {
+    setWebDateString(dateString);
+    if (dateString) {
+      const [year, month, day] = dateString.split('-');
+      const newDateTime = new Date(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        value.getHours(),
+        value.getMinutes()
+      );
+      onChange(newDateTime);
+    }
+  };
+
+  const handleWebTimeChange = (timeString: string) => {
+    setWebTimeString(timeString);
+    if (timeString) {
+      const [hours, minutes] = timeString.split(':');
+      const newDateTime = new Date(value);
+      newDateTime.setHours(parseInt(hours));
+      newDateTime.setMinutes(parseInt(minutes));
       onChange(newDateTime);
     }
   };
@@ -95,37 +132,91 @@ export default function DateTimeSelector({
     <View style={styles.container}>
       <Text style={styles.label}>{label}</Text>
       
-      <View style={styles.selectorContainer}>
-        {/* Date Selector */}
-        <TouchableOpacity
-          style={styles.selectorButton}
-          onPress={() => setShowDatePicker(true)}
-          activeOpacity={0.7}
-        >
-          <View style={styles.selectorContent}>
-            <Calendar size={20} color={Colors.dark.gold} />
-            <View style={styles.selectorText}>
-              <Text style={styles.selectorValue}>{formatDate(value)}</Text>
-              <Text style={styles.selectorLabel}>Date</Text>
+      {isWeb ? (
+        // Web Platform - Use HTML5 native inputs
+        <View style={styles.selectorContainer}>
+          {/* Date Input */}
+          <View style={styles.webInputWrapper}>
+            <View style={styles.inputLabelWeb}>
+              <Calendar size={20} color={Colors.dark.gold} />
+              <Text style={styles.inputLabelText}>Date</Text>
             </View>
+            <input
+              type="date"
+              value={webDateString}
+              onChange={(e) => handleWebDateChange(e.target.value)}
+              min={minimumDate.toISOString().split('T')[0]}
+              style={{
+                ...styles.webInput,
+                padding: '10px 12px',
+                fontSize: '16px',
+                borderRadius: '8px',
+                border: `1px solid ${Colors.dark.border}`,
+                backgroundColor: Colors.dark.card,
+                color: Colors.dark.text,
+                fontFamily: 'system-ui',
+              } as any}
+            />
           </View>
-        </TouchableOpacity>
 
-        {/* Time Selector */}
-        <TouchableOpacity
-          style={styles.selectorButton}
-          onPress={() => setShowTimePicker(true)}
-          activeOpacity={0.7}
-        >
-          <View style={styles.selectorContent}>
-            <Clock size={20} color={Colors.dark.gold} />
-            <View style={styles.selectorText}>
-              <Text style={styles.selectorValue}>{formatTime(value)}</Text>
-              <Text style={styles.selectorLabel}>Time</Text>
+          {/* Time Input */}
+          <View style={styles.webInputWrapper}>
+            <View style={styles.inputLabelWeb}>
+              <Clock size={20} color={Colors.dark.gold} />
+              <Text style={styles.inputLabelText}>Time</Text>
             </View>
+            <input
+              type="time"
+              value={webTimeString}
+              onChange={(e) => handleWebTimeChange(e.target.value)}
+              step="300"
+              style={{
+                ...styles.webInput,
+                padding: '10px 12px',
+                fontSize: '16px',
+                borderRadius: '8px',
+                border: `1px solid ${Colors.dark.border}`,
+                backgroundColor: Colors.dark.card,
+                color: Colors.dark.text,
+                fontFamily: 'system-ui',
+              } as any}
+            />
           </View>
-        </TouchableOpacity>
-      </View>
+        </View>
+      ) : (
+        // Mobile Platforms (iOS/Android) - Use TouchableOpacity
+        <View style={styles.selectorContainer}>
+          {/* Date Selector */}
+          <TouchableOpacity
+            style={styles.selectorButton}
+            onPress={() => setShowDatePicker(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.selectorContent}>
+              <Calendar size={20} color={Colors.dark.gold} />
+              <View style={styles.selectorText}>
+                <Text style={styles.selectorValue}>{formatDate(value)}</Text>
+                <Text style={styles.selectorLabel}>Date</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+
+          {/* Time Selector */}
+          <TouchableOpacity
+            style={styles.selectorButton}
+            onPress={() => setShowTimePicker(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.selectorContent}>
+              <Clock size={20} color={Colors.dark.gold} />
+              <View style={styles.selectorText}>
+                <Text style={styles.selectorValue}>{formatTime(value)}</Text>
+                <Text style={styles.selectorLabel}>Time</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Status Indicator */}
       <View style={styles.statusContainer}>
@@ -135,8 +226,8 @@ export default function DateTimeSelector({
         </Text>
       </View>
 
-      {/* Date Picker Modal */}
-      {showDatePicker && (
+      {/* Date Picker Modal - Only on Mobile */}
+      {!isWeb && showDatePicker && (
         <DateTimePicker
           value={value}
           mode="date"
@@ -146,8 +237,8 @@ export default function DateTimeSelector({
         />
       )}
 
-      {/* Time Picker Modal */}
-      {showTimePicker && (
+      {/* Time Picker Modal - Only on Mobile */}
+      {!isWeb && showTimePicker && (
         <DateTimePicker
           value={value}
           mode="time"
@@ -215,5 +306,23 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 12,
     fontWeight: '500',
+  },
+  webInputWrapper: {
+    flex: 1,
+  },
+  webInput: {
+    width: '100%',
+  },
+  inputLabelWeb: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  inputLabelText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.dark.textSecondary,
+    textTransform: 'uppercase',
   },
 });

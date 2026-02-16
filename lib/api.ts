@@ -846,7 +846,8 @@ export async function extendRideOfferTime(
 }
 
 /**
- * Book a ride offer (passenger booking)
+ * Book a ride offer (passenger booking) - Uses approval system
+ * This creates a booking request that requires driver approval
  */
 export async function bookRideOffer(
   offerId: string,
@@ -857,15 +858,16 @@ export async function bookRideOffer(
   },
 ): Promise<any> {
   try {
+    // Use the approval system endpoint instead of direct booking
     const response = await apiClient.post(
-      `/api/ride-offers/${offerId}/book`,
+      `/api/rides/${offerId}/book`,
       bookingData,
     );
-    console.log('✅ Ride offer booked successfully');
+    console.log('✅ Booking request sent - awaiting driver approval');
     return response.data;
   } catch (error: any) {
     console.error(
-      '❌ Error booking ride offer:',
+      '❌ Error creating booking request:',
       error.response?.data || error.message,
     );
     throw error;
@@ -1135,5 +1137,933 @@ export async function getUserConversations(userId: string): Promise<any> {
       error.response?.data || error.message,
     );
     return { success: true, conversations: [], count: 0 };
+  }
+}
+
+// ============================================================================
+// FESTIVAL SPECIAL POOL API
+// ============================================================================
+
+export async function createFestivalPoolRide(data: {
+  rideId: string;
+  festival: string;
+  verifiedLongRoute: boolean;
+  groupBookingDiscount: number;
+  smartPrice: number;
+  returnRideAvailable: boolean;
+  tier: string;
+}): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/festival-pool/create', data);
+    console.log('✅ Festival pool ride created');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error creating festival pool:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function getFestivalPoolRides(festival: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/festival-pool/${festival}`);
+    console.log('✅ Festival pool rides retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching festival rides:',
+      error.response?.data || error.message,
+    );
+    return { success: true, rides: [] };
+  }
+}
+
+export async function bookReturnTrip(data: {
+  originalRideId: string;
+  userId: string;
+  seatCount: number;
+}): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      '/api/festival-pool/book-return',
+      data,
+    );
+    console.log('✅ Return trip booked with discount');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error booking return trip:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// ============================================================================
+// INSURANCE API
+// ============================================================================
+
+export async function purchaseRideInsurance(data: {
+  rideId: string;
+  userId: string;
+  plan: string;
+}): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/insurance/purchase', data);
+    console.log('✅ Insurance purchased');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error purchasing insurance:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function getRideInsurance(rideId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/insurance/ride/${rideId}`);
+    console.log('✅ Ride insurance retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching ride insurance:',
+      error.response?.data || error.message,
+    );
+    return { success: false, insurance: null };
+  }
+}
+
+export async function submitInsuranceClaim(data: {
+  insuranceId: string;
+  rideId: string;
+  userId: string;
+  claimType: string;
+  amount: number;
+  description: string;
+  documents?: string[];
+}): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/insurance/claim/submit', data);
+    console.log('✅ Insurance claim submitted');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error submitting claim:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function getUserInsurancePolicies(userId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/insurance/policies/${userId}`);
+    console.log('✅ Insurance policies retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching policies:',
+      error.response?.data || error.message,
+    );
+    return { success: true, policies: [] };
+  }
+}
+
+// ============================================================================
+// DISTRICT/VILLAGE/RAILWAY ROUTES API
+// ============================================================================
+
+export async function getDistrictRoutes(
+  fromDistrict: string,
+  toDistrict: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/routes/district', {
+      params: { fromDistrict, toDistrict },
+    });
+    console.log('✅ District routes retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching district routes:',
+      error.response?.data || error.message,
+    );
+    return { success: true, routes: [] };
+  }
+}
+
+export async function getVillagePickupPoints(
+  lat: number,
+  lng: number,
+  radiusKm: number = 15,
+): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/routes/village-pickups', {
+      params: { lat, lng, radiusKm },
+    });
+    console.log('✅ Village pickup points retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching village pickups:',
+      error.response?.data || error.message,
+    );
+    return { success: true, pickupPoints: [] };
+  }
+}
+
+export async function getRailwayConnectorRides(
+  stationName: string,
+  destination: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/routes/railway-connector', {
+      params: { stationName, destination },
+    });
+    console.log('✅ Railway connector rides retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching railway rides:',
+      error.response?.data || error.message,
+    );
+    return { success: true, rides: [] };
+  }
+}
+
+// ============================================================================
+// VERNACULAR ONBOARDING API
+// ============================================================================
+
+export async function startVernacularOnboarding(data: {
+  userId: string;
+  preferredLanguage: string;
+  offlineAgentId?: string;
+}): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      '/api/vernacular/onboarding/start',
+      data,
+    );
+    console.log('✅ Vernacular onboarding started');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error starting vernacular onboarding:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function getOfflineAgents(district: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/vernacular/agents/${district}`);
+    console.log('✅ Offline agents retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching agents:',
+      error.response?.data || error.message,
+    );
+    return { success: true, agents: [] };
+  }
+}
+
+export async function registerOfflineAgent(data: {
+  name: string;
+  phone: string;
+  areasCovered: string[];
+  language: string;
+}): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      '/api/vernacular/agents/register',
+      data,
+    );
+    console.log('✅ Offline agent registered');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error registering agent:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// ============================================================================
+// GAMIFICATION API
+// ============================================================================
+
+export async function getRideStreak(userId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/gamification/streak/${userId}`);
+    console.log('✅ Ride streak retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching ride streak:',
+      error.response?.data || error.message,
+    );
+    return { success: false, streak: { currentStreak: 0 } };
+  }
+}
+
+export async function updateRideStreak(
+  userId: string,
+  ridesCount: number,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(`/api/gamification/streak/update`, {
+      userId,
+      ridesCount,
+    });
+    console.log('✅ Ride streak updated');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error updating streak:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function getCarbonCounter(userId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/gamification/carbon/${userId}`);
+    console.log('✅ Carbon counter retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching carbon counter:',
+      error.response?.data || error.message,
+    );
+    return { success: false, carbon: { totalRides: 0, emissionsSavedKg: 0 } };
+  }
+}
+
+export async function getUserBadges(userId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/gamification/badges/${userId}`);
+    console.log('✅ User badges retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching badges:',
+      error.response?.data || error.message,
+    );
+    return { success: true, badges: [] };
+  }
+}
+
+export async function getSafeDriverTier(userId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(
+      `/api/gamification/safe-driver-tier/${userId}`,
+    );
+    console.log('✅ Safe driver tier retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching driver tier:',
+      error.response?.data || error.message,
+    );
+    return { success: false, tier: { tier: 'bronze' } };
+  }
+}
+
+export async function generateReferralCode(userId: string): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      '/api/gamification/referral/generate',
+      {
+        userId,
+      },
+    );
+    console.log('✅ Referral code generated');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error generating referral code:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function redeemReferralCode(
+  userId: string,
+  referralCode: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/gamification/referral/redeem', {
+      userId,
+      referralCode,
+    });
+    console.log('✅ Referral code redeemed');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error redeeming code:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function getLeaderboard(limit: number = 100): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/gamification/leaderboard', {
+      params: { limit },
+    });
+    console.log('✅ Leaderboard retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching leaderboard:',
+      error.response?.data || error.message,
+    );
+    return { success: true, leaderboard: [] };
+  }
+}
+// ============================================================================
+// HYBRID RIDE APPROVAL SYSTEM APIs
+// ============================================================================
+
+/**
+ * Update ride approval settings
+ * Driver toggles manual approval on/off
+ */
+export async function updateRideApprovalSettings(
+  rideId: string,
+  requiresManualApproval: boolean,
+  approvalSettings?: {
+    autoApproveThreshold?: number;
+    approvalDeadlineMinutes?: number;
+    allowDirectConfirmation?: boolean;
+  },
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/rides/${rideId}/approval-settings`,
+      {
+        requiresManualApproval,
+        approvalSettings,
+      },
+    );
+    console.log('✅ Approval settings updated');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error updating approval settings:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get pending approval requests for a ride
+ * Driver views all pending bookings that need approval
+ */
+export async function getPendingApprovals(rideId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(
+      `/api/rides/${rideId}/pending-approvals`,
+    );
+    console.log('✅ Pending approvals retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching pending approvals:',
+      error.response?.data || error.message,
+    );
+    return { success: true, pendingBookings: [] };
+  }
+}
+
+/**
+ * Get ALL pending approval requests for a driver (batch endpoint)
+ * Replaces multiple per-ride calls with a single batched query
+ */
+export async function getAllDriverPendingApprovals(): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/approvals/driver/pending');
+    console.log('✅ Driver pending approvals retrieved (batch)');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching driver pending approvals:',
+      error.response?.data || error.message,
+    );
+    return { success: true, pendingBookings: [] };
+  }
+}
+
+/**
+ * Approve a booking request
+ * Driver explicitly approves a passenger's booking
+ */
+export async function approveBooking(
+  bookingId: string,
+  driverId: string,
+  notes?: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/bookings/${bookingId}/approve`,
+      {
+        driverId,
+        notes,
+        approvedAt: new Date().toISOString(),
+      },
+    );
+    console.log('✅ Booking approved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error approving booking:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Reject a booking request
+ * Driver declines a passenger's booking
+ */
+export async function rejectBooking(
+  bookingId: string,
+  driverId: string,
+  reason: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(`/api/bookings/${bookingId}/reject`, {
+      driverId,
+      rejectionReason: reason,
+      rejectedAt: new Date().toISOString(),
+    });
+    console.log('✅ Booking rejected');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error rejecting booking:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Confirm payment after driver approval
+ * Passenger confirms payment to finalize booking
+ */
+export async function confirmBookingPayment(
+  bookingId: string,
+  paymentId: string,
+  paymentMethod: string = 'razorpay',
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/bookings/${bookingId}/confirm-payment`,
+      {
+        paymentId,
+        paymentMethod,
+        paymentStatus: 'paid',
+      },
+    );
+    console.log('✅ Payment confirmed, booking complete');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error confirming payment:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Lock seats for a booking (temporary reservation)
+ * System locks seats when passenger initiates booking
+ */
+export async function lockSeats(
+  rideId: string,
+  seatNumbers: number[],
+  bookingId: string,
+  userId: string,
+  lockDurationMinutes: number = 2,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(`/api/rides/${rideId}/lock-seats`, {
+      seatNumbers,
+      bookingId,
+      userId,
+      lockDurationMinutes,
+      lockedAt: new Date().toISOString(),
+    });
+    console.log(`✅ ${seatNumbers.length} seat(s) locked`);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error locking seats:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Unlock seats (release temporary reservation)
+ * Called when booking is rejected or expired
+ */
+export async function unlockSeats(
+  rideId: string,
+  seatNumbers: number[],
+  bookingId: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(`/api/rides/${rideId}/unlock-seats`, {
+      seatNumbers,
+      bookingId,
+    });
+    console.log(`✅ ${seatNumbers.length} seat(s) unlocked`);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error unlocking seats:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get available seats for a ride
+ * Shows which seats are available/locked/booked
+ */
+export async function getAvailableSeats(rideId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(
+      `/api/rides/${rideId}/available-seats`,
+    );
+    console.log('✅ Available seats retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching available seats:',
+      error.response?.data || error.message,
+    );
+    return { success: true, seats: [] };
+  }
+}
+
+/**
+ * Get booking approval status
+ * Passenger checks if booking is approved/pending/rejected
+ */
+export async function getBookingApprovalStatus(
+  bookingId: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.get(
+      `/api/bookings/${bookingId}/approval-status`,
+    );
+    console.log('✅ Booking status retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching booking status:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get approval analytics for driver dashboard
+ * Shows statistics about bookings and approvals
+ */
+export async function getApprovalAnalytics(
+  driverId: string,
+  dateRange?: {
+    startDate: string;
+    endDate: string;
+  },
+): Promise<any> {
+  try {
+    const response = await apiClient.get(
+      `/api/driver/${driverId}/approval-analytics`,
+      {
+        params: dateRange,
+      },
+    );
+    console.log('✅ Approval analytics retrieved');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching approval analytics:',
+      error.response?.data || error.message,
+    );
+    return {
+      success: true,
+      analytics: {
+        totalBookings: 0,
+        autoConfirmed: 0,
+        manualApproved: 0,
+        rejected: 0,
+      },
+    };
+  }
+}
+
+/**
+ * Cancel booking with penalty calculation
+ * Handles cancellation and refund/deduction logic
+ */
+export async function cancelBookingWithPenalty(
+  bookingId: string,
+  cancelledBy: 'passenger' | 'driver',
+  rideId: string,
+  departureTime: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(`/api/bookings/${bookingId}/cancel`, {
+      cancelledBy,
+      rideId,
+      departureTime,
+      cancelledAt: new Date().toISOString(),
+    });
+    console.log('✅ Booking cancelled with penalty calculation');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error cancelling booking:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Handle expired approval requests
+ * Auto-rejects approvals that have expired
+ */
+export async function handleExpiredApprovals(rideId: string): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/rides/${rideId}/handle-expired-approvals`,
+    );
+    console.log('✅ Expired approvals handled');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error handling expired approvals:',
+      error.response?.data || error.message,
+    );
+    return { success: true, expiredCount: 0 };
+  }
+}
+
+/**
+ * Create ride with approval mode
+ * Driver creates new ride with auto/manual approval setting
+ */
+export async function createRideWithApprovalMode(
+  rideData: any,
+  approvalMode: 'auto' | 'manual',
+  approvalSettings?: any,
+): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/rides/create-with-approval', {
+      ...rideData,
+      approvalMode,
+      requiresManualApproval: approvalMode === 'manual',
+      isFestivalRide: rideData.isFestivalRide || false,
+      approvalSettings,
+    });
+    console.log('✅ Ride created with approval mode:', approvalMode);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error creating ride:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Driver initiates pickup for a specific passenger
+ * POST /api/ride-offers/:rideId/pickup/initiate
+ */
+export async function driverInitiatePickup(
+  rideId: string,
+  bookingId: string,
+  passengerClerkId: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/ride-offers/${rideId}/pickup/initiate`,
+      {
+        bookingId,
+        passengerClerkId,
+      },
+    );
+    console.log('✅ Pickup initiated for passenger');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error initiating pickup:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Passenger confirms they have boarded (for ride offers)
+ * POST /api/ride-offers/:rideId/pickup/confirm
+ */
+export async function passengerConfirmRideOfferPickup(
+  rideId: string,
+  bookingId: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/ride-offers/${rideId}/pickup/confirm`,
+      {
+        bookingId,
+      },
+    );
+    console.log('✅ Pickup confirmed by passenger');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error confirming pickup:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get passenger's ride offer bookings
+ * GET /api/bookings/passenger/me
+ */
+export async function getPassengerBookings(): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/bookings/passenger/me');
+    console.log('✅ Passenger bookings fetched');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching passenger bookings:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+// ==================== RATING APIS ====================
+
+/**
+ * Submit a rating for a driver or passenger
+ * POST /api/ratings
+ */
+export async function submitRating(ratingData: {
+  rideId: string;
+  bookingId?: string;
+  raterId: string;
+  ratedId: string;
+  raterRole: 'driver' | 'passenger';
+  ratedRole: 'driver' | 'passenger';
+  rating: number;
+  feedback?: string;
+  tags?: string[];
+}): Promise<any> {
+  try {
+    const response = await apiClient.post('/api/ratings', ratingData);
+    console.log('✅ Rating submitted successfully');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error submitting rating:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get ratings for a user
+ * GET /api/ratings/:userId
+ */
+export async function getUserRatings(
+  userId: string,
+  role?: 'driver' | 'passenger',
+  limit?: number,
+): Promise<any> {
+  try {
+    const params: any = {};
+    if (role) params.role = role;
+    if (limit) params.limit = limit;
+
+    const response = await apiClient.get(`/api/ratings/${userId}`, { params });
+    console.log('✅ User ratings fetched');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching ratings:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Check if user has rated a specific ride
+ * GET /api/ratings/check/:rideId/:userId
+ */
+export async function checkRatingStatus(
+  rideId: string,
+  userId: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.get(
+      `/api/ratings/check/${rideId}/${userId}`,
+    );
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error checking rating status:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get pending ratings for a user (rides that need rating)
+ * GET /api/ratings/pending/:userId
+ */
+export async function getPendingRatings(userId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/api/ratings/pending/${userId}`);
+    console.log('✅ Pending ratings fetched');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching pending ratings:',
+      error.response?.data || error.message,
+    );
+    throw error;
   }
 }
