@@ -350,7 +350,9 @@ export const getAllDriverPendingApprovals = async (req, res, next) => {
 
     const rideIds = driverRides.map((ride) => ride._id);
 
-    console.log(`🔍 [APPROVAL] Fetching pending approvals for driver ${clerkId}, ${rideIds.length} rides`);
+    console.log(
+      `🔍 [APPROVAL] Fetching pending approvals for driver ${clerkId}, ${rideIds.length} rides`,
+    );
 
     if (rideIds.length === 0) {
       return res.status(200).json({
