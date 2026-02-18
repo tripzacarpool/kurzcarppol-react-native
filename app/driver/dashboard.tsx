@@ -82,7 +82,7 @@ interface DriverOffer {
   womenOnly?: boolean;
   createdAt?: string;
   departureTime?: string;
-  status?: 'live' | 'completed' | 'draft';
+  status?: 'live' | 'ongoing' | 'completed' | 'draft';
 }
 
 interface Conversation {
@@ -223,15 +223,21 @@ export default function DriverDashboard() {
             id: offer._id || offer.id,
             from: offer.from,
             to: offer.to,
-            seats: offer.totalSeats - 1, // Subtract 1 for driver seat
+            seats: offer.availableSeats?.length || 0, // Show actual available seats
             fare: offer.farePerSeat,
             womenOnly: offer.womenOnly,
             createdAt: offer.createdAt,
             departureTime: offer.departureTime,
-            status: offer.status === 'waiting' ? 'live' : offer.status,
+            status: (offer.status === 'waiting' || offer.status === 'ongoing') ? 'live' : offer.status, // Map both waiting and ongoing to live
           }));
           
           console.log('✅ Loaded offers from backend:', backendOffers.length);
+          console.log('📊 Offers status mapping:', backendOffers.map(o => ({ 
+            id: o.id, 
+            from: o.from?.substring(0, 20), 
+            seats: o.seats, 
+            status: o.status 
+          })));
           setMyOffers(backendOffers);
           
           // Update local storage with fresh data
@@ -442,16 +448,30 @@ export default function DriverDashboard() {
       // Fetch all driver's ride offers
       const response = await getMyRideOffers(user.id);
       if (response?.success && response?.rideOffers) {
-        // Find the first 'waiting' ride with confirmed bookings
+        console.log(`📊 [ACTIVE RIDE] Total ride offers: ${response.rideOffers.length}`);
+        
+        // Log all rides for debugging
+        response.rideOffers.forEach((ride: any) => {
+          console.log(`📍 [ACTIVE RIDE] Ride ${ride._id || ride.id}: status=${ride.status}, bookings=${ride.bookings?.length || 0}, confirmed=${ride.bookings?.filter((b: any) => b.status === 'confirmed').length || 0}`);
+        });
+        
+        // Find the first 'waiting' or 'ongoing' ride with confirmed bookings
         const activeRide = response.rideOffers.find((ride: any) => 
-          ride.status === 'waiting' && 
+          (ride.status === 'waiting' || ride.status === 'ongoing') && 
           ride.bookings && 
           ride.bookings.length > 0 &&
           ride.bookings.some((booking: any) => booking.status === 'confirmed')
         );
         
         if (activeRide) {
-          console.log(`✅ [ACTIVE RIDE] Found active ride ${activeRide._id || activeRide.id} with ${activeRide.bookings.length} bookings`);
+          const confirmedCount = activeRide.bookings.filter((b: any) => b.status === 'confirmed').length;
+          console.log(`✅ [ACTIVE RIDE] Found active ride ${activeRide._id || activeRide.id} with ${confirmedCount} confirmed booking(s)`);
+          console.log(`📋 [ACTIVE RIDE] Bookings:`, activeRide.bookings.map((b: any) => ({
+            id: b._id,
+            passenger: b.passengerName,
+            status: b.status,
+            seats: b.seatNumbers
+          })));
           setCurrentActiveRide(activeRide);
         } else {
           console.log('ℹ️ [ACTIVE RIDE] No active ride with confirmed bookings found');
@@ -1201,15 +1221,22 @@ export default function DriverDashboard() {
     const validOffers = myOffers.filter(offer => offer && offer.id && offer.from && offer.to && offer.seats != null);
     
     const activeRides = validOffers.filter(offer => {
-      // Active: ride is live and departure time has passed (indicating ride is in progress)
-      const departureTime = offer.departureTime ? new Date(offer.departureTime) : null;
-      const hasDeparted = departureTime && departureTime <= new Date();
+      // Active: ride is live/ongoing and has available seats (available for booking)
+      // This includes both started rides and rides waiting for passengers
+      const isLiveStatus = offer.status === 'live' || offer.status === 'ongoing';
+      const hasSeats = offer.seats > 0;
       
-      return offer.status === 'live' && hasDeparted;
+      // Also include if departure time is within next 2 hours (imminent departure)
+      const departureTime = offer.departureTime ? new Date(offer.departureTime) : null;
+      const now = new Date();
+      const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+      const isDepartingSoon = departureTime && departureTime >= now && departureTime <= twoHoursFromNow;
+      
+      return isLiveStatus && (hasSeats || isDepartingSoon);
     });
 
     const upcomingRides = validOffers.filter(offer => {
-      // Upcoming: everything else (not yet departed or completed rides)
+      // Upcoming: future rides not in active category, or completed rides
       return !activeRides.includes(offer);
     });
 
@@ -1356,7 +1383,7 @@ export default function DriverDashboard() {
           <>
             <View style={styles.requestsHeader}>
               <View style={styles.sectionHeaderWithBadge}>
-                <Text style={styles.sectionTitle}>Active Rides</Text>
+                <Text style={styles.sectionTitle}>🔴 Live & Available</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{activeRides.length}</Text>
                 </View>
@@ -1368,7 +1395,7 @@ export default function DriverDashboard() {
                 <RefreshCw size={18} color={Colors.dark.gold} />
               </TouchableOpacity>
             </View>
-            <Text style={styles.sectionSubtitle}>Rides currently in progress</Text>
+            <Text style={styles.sectionSubtitle}>Your rides visible to passengers for booking</Text>
             {activeRides.map(renderOfferCard)}
           </>
         )}
@@ -2073,7 +2100,7 @@ export default function DriverDashboard() {
               </View>
             )}
 
-            {isLive && liveRides.length === 0 && pendingApprovals.length === 0 && (
+            {isLive && liveRides.length === 0 && pendingApprovals.length === 0 && !currentActiveRide && (
               <View style={styles.emptyState}>
                 <Users size={48} color={Colors.dark.textSecondary} />
                 <Text style={styles.emptyText}>Waiting for requests...</Text>

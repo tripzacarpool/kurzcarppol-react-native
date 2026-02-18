@@ -417,7 +417,8 @@ export const updateRideOffer = async (req, res, next) => {
   }
 };
 
-/** * Get all available ride offers
+/**
+ * Get all available ride offers
  * GET /api/ride-offers/available
  */
 export const getAvailableRideOffers = async (req, res, next) => {
@@ -432,17 +433,18 @@ export const getAvailableRideOffers = async (req, res, next) => {
       console.log('⚠️ Using clerkId from query params (auth not available)');
     }
 
-    console.log('🔍 Fetching available ride offers:', {
+    console.log('\n🎯 ===== FETCHING AVAILABLE RIDE OFFERS =====');
+    console.log('🔍 Request params:', {
       from,
       to,
       minSeats,
       includeOwn,
       clerkId,
-      currentTime: now,
+      currentTime: now.toISOString(),
     });
 
     const query = {
-      status: 'waiting', // Only waiting rides (available for new bookings)
+      status: { $in: ['waiting', 'ongoing'] }, // Include both waiting and ongoing rides with available seats
       availableSeats: { $exists: true, $ne: [] }, // Must have available seats
       departureTime: { $gte: now }, // Only future rides
     };
@@ -463,12 +465,27 @@ export const getAvailableRideOffers = async (req, res, next) => {
 
     console.log('📋 Query filters:', JSON.stringify(query, null, 2));
 
+    // First, let's check all rides without filters
+    const allRides = await RideOffer.find({}).limit(5);
+    console.log('\n🔍 DEBUG: Sample of ALL rides in database:');
+    allRides.forEach((ride, index) => {
+      console.log(`   ${index + 1}. ${ride.from} → ${ride.to}`);
+      console.log(`      ID: ${ride._id}`);
+      console.log(`      ClerkId: ${ride.clerkId}`);
+      console.log(`      Status: ${ride.status}`);
+      console.log(`      Departure: ${ride.departureTime}`);
+      console.log(
+        `      Available Seats: ${JSON.stringify(ride.availableSeats)}`,
+      );
+      console.log(`      Total Seats: ${ride.totalSeats}`);
+    });
+
     const rideOffers = await RideOffer.find(query)
       .sort({ departureTime: 1, createdAt: -1 })
       .limit(50);
 
     console.log(
-      `✅ Found ${rideOffers.length} available ride offers before any filtering`,
+      `\n✅ Found ${rideOffers.length} available ride offers matching query`,
     );
 
     // Log all rides for debugging

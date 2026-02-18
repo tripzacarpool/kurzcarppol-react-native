@@ -33,8 +33,14 @@ let socket: any = null;
 /**
  * Initialize Socket.io connection for real-time location tracking
  * React Native only supports WebSocket transport
+ * SKIP on web platform - causes connection errors
  */
 export function initializeLocationSocket() {
+  if (Platform.OS === 'web') {
+    console.log('⚠️ Skipping WebSocket on web platform');
+    return null;
+  }
+
   if (socket) return socket;
 
   socket = io(BACKEND_URL, {
@@ -64,6 +70,10 @@ export function initializeLocationSocket() {
  * Get Socket.io instance
  */
 export function getLocationSocket() {
+  if (Platform.OS === 'web') {
+    return null;
+  }
+
   if (!socket) {
     return initializeLocationSocket();
   }
@@ -78,7 +88,11 @@ export function emitDriverLocation(
   latitude: number,
   longitude: number,
 ) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   sock.emit('driver:location', {
     rideId,
     latitude,
@@ -90,7 +104,11 @@ export function emitDriverLocation(
  * Driver comes online
  */
 export function driverGoesOnline(driverId: string) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   sock.emit('driver:online', { driverId });
 }
 
@@ -98,7 +116,11 @@ export function driverGoesOnline(driverId: string) {
  * Driver goes offline
  */
 export function driverGoesOffline() {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   sock.emit('driver:offline');
 }
 
@@ -109,7 +131,10 @@ export function subscribeToRideLocation(
   rideId: string,
   onLocationUpdate: (location: any) => void,
 ) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
 
   // Subscribe to this ride
   sock.emit('rider:subscribe', { rideId });
@@ -135,7 +160,11 @@ export function subscribeToRideLocation(
  * Rider unsubscribes from location updates
  */
 export function unsubscribeFromRideLocation(rideId: string) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   sock.emit('rider:unsubscribe', { rideId });
   sock.off('ride:location-update');
   sock.off('ride:driver-offline');
@@ -145,6 +174,8 @@ export function unsubscribeFromRideLocation(rideId: string) {
  * Disconnect socket
  */
 export function disconnectLocationSocket() {
+  if (Platform.OS === 'web') return;
+
   if (socket) {
     socket.disconnect();
     socket = null;
@@ -155,7 +186,10 @@ export function disconnectLocationSocket() {
  * Subscribe to new ride requests (for drivers/home screen)
  */
 export function subscribeToNewRides(onNewRide: (ride: any) => void) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
 
   // Listen to new ride requests from passengers (for drivers)
   sock.on('new_ride_request', (ride: any) => {
@@ -180,7 +214,11 @@ export function subscribeToNewRides(onNewRide: (ride: any) => void) {
  * Subscribe to ride acceptance updates (for passengers)
  */
 export function subscribeToRideAcceptance(onRideAccepted: (data: any) => void) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   sock.on('ride:accepted', (data: any) => {
     console.log('✅ Ride accepted:', data);
     onRideAccepted(data);
@@ -196,7 +234,11 @@ export function subscribeToRideAcceptance(onRideAccepted: (data: any) => void) {
  * Unsubscribe from ride events
  */
 export function unsubscribeFromRideEvents() {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   sock.off('ride:new');
   sock.off('new_ride_request');
   sock.off('new_driver_offer');
@@ -212,7 +254,11 @@ export function subscribeToPickupInitiated(
   passengerClerkId: string,
   onPickupInitiated: (data: any) => void,
 ) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   const eventName = `passenger:pickup-initiated:${passengerClerkId}`;
 
   sock.on(eventName, (data: any) => {
@@ -229,7 +275,11 @@ export function subscribeToPickupConfirmed(
   driverId: string,
   onPickupConfirmed: (data: any) => void,
 ) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   const eventName = `driver:pickup-confirmed:${driverId}`;
 
   sock.on(eventName, (data: any) => {
@@ -242,7 +292,11 @@ export function subscribeToPickupConfirmed(
  * Unsubscribe from pickup events
  */
 export function unsubscribeFromPickupEvents(userId: string, isDriver: boolean) {
+  if (Platform.OS === 'web') return;
+
   const sock = getLocationSocket();
+  if (!sock) return;
+
   if (isDriver) {
     sock.off(`driver:pickup-confirmed:${userId}`);
   } else {

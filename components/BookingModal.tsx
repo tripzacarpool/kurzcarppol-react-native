@@ -219,10 +219,10 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         console.log('✅ Booking approved by driver:', data.bookingId);
         setApprovalStatus('approved');
         setApprovalCountdown(0);
-        // Don't set bookingConfirmed here - only after payment!
-        showAlert('Approved!', 'Driver approved your request. Proceed to payment.', 'success');
+        setBookingConfirmed(true); // Booking is confirmed after driver approval
+        showAlert('Approved!', 'Driver approved your request. Please confirm when you board.', 'success');
         setTimeout(() => {
-          setStep('payment'); // Go to payment, not boarding
+          setStep('boarding'); // Go to boarding, payment comes after ride completion
         }, 1500);
       }
     };

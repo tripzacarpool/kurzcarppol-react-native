@@ -136,10 +136,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// Initialize database connection
+// Initialize database connection with a small delay to ensure readiness
 (async () => {
   try {
+    console.log('🔄 Connecting to database...');
     await connectToDatabase();
+
+    // Small delay to ensure MongoDB connection is fully ready
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
     dbReady = true;
     console.log('✅ Database ready and routes are live');
 

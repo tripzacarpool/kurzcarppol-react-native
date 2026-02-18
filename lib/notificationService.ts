@@ -23,6 +23,12 @@ export interface PushNotificationToken {
  * Request notification permissions from the user
  */
 export async function requestNotificationPermissions(): Promise<boolean> {
+  // Skip permission request on web - not supported the same way
+  if (Platform.OS === 'web') {
+    console.log('ℹ️ Notification permissions not applicable on web platform');
+    return false;
+  }
+
   if (!Device.isDevice) {
     console.log('⚠️ Push notifications only work on physical devices');
     return false;
@@ -57,6 +63,15 @@ export async function requestNotificationPermissions(): Promise<boolean> {
  */
 export async function getExpoPushToken(): Promise<string | null> {
   try {
+    // Skip push notifications on web platform - requires VAPID configuration
+    if (Platform.OS === 'web') {
+      console.log('ℹ️ Push notifications not supported on web platform');
+      console.log(
+        'ℹ️ Web users will receive real-time updates via socket connections',
+      );
+      return null;
+    }
+
     if (!Device.isDevice) {
       console.log('⚠️ Must use physical device for remote push notifications');
       return null;
@@ -82,7 +97,8 @@ export async function getExpoPushToken(): Promise<string | null> {
     // Gracefully handle Firebase not being set up
     if (
       error.message?.includes('FirebaseApp') ||
-      error.message?.includes('FCM')
+      error.message?.includes('FCM') ||
+      error.message?.includes('vapid')
     ) {
       console.log('ℹ️ Remote push notifications require Firebase setup');
       console.log('ℹ️ Local notifications will still work for development');
@@ -133,6 +149,12 @@ export async function sendLocalNotification(
   data?: any,
 ): Promise<string> {
   try {
+    // Skip local notifications on web platform
+    if (Platform.OS === 'web') {
+      console.log('ℹ️ Local notifications not supported on web platform');
+      return '';
+    }
+
     const notificationId = await Notifications.scheduleNotificationAsync({
       content: {
         title,
@@ -162,6 +184,12 @@ export async function scheduleNotification(
   data?: any,
 ): Promise<string> {
   try {
+    // Skip scheduled notifications on web platform
+    if (Platform.OS === 'web') {
+      console.log('ℹ️ Scheduled notifications not supported on web platform');
+      return '';
+    }
+
     const notificationId = await Notifications.scheduleNotificationAsync({
       content: {
         title,

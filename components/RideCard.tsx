@@ -77,6 +77,12 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime }: Rid
         <View style={styles.fareContainer}>
           <Text style={styles.fare}>₹{ride.farePerSeat}</Text>
           <Text style={styles.perSeat}>per seat</Text>
+          {ride.status === 'ongoing' && (
+            <View style={styles.liveStatusBadge}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveStatusText}>In Progress</Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -259,6 +265,27 @@ const styles = StyleSheet.create({
   perSeat: {
     color: Colors.dark.textSecondary,
     fontSize: 11,
+  },
+  liveStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.success + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 6,
+    gap: 4,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.dark.success,
+  },
+  liveStatusText: {
+    color: Colors.dark.success,
+    fontSize: 10,
+    fontWeight: '600',
   },
   divider: {
     height: 1,

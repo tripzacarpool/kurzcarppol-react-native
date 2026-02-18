@@ -93,6 +93,13 @@ export const createBooking = async (req, res, next) => {
       });
     }
 
+    // Ensure driverId is populated (backward compatibility migration)
+    if (!ride.driverId && ride.clerkId) {
+      ride.driverId = ride.clerkId;
+      await ride.save();
+      console.log(`✅ Migrated driverId for ride ${rideId}: ${ride.clerkId}`);
+    }
+
     // Get passenger profile
     const passenger = await UserProfile.findOne({ clerkId });
     if (!passenger) {
@@ -102,12 +109,14 @@ export const createBooking = async (req, res, next) => {
       });
     }
 
-    // Get driver profile
-    const driver = await UserProfile.findOne({ clerkId: ride.driverId });
+    // Get driver profile (support both driverId and clerkId for backward compatibility)
+    const targetDriverId = ride.driverId || ride.clerkId;
+    const driver = await UserProfile.findOne({ clerkId: targetDriverId });
     if (!driver) {
       return res.status(404).json({
         error: 'Driver not found',
         code: 'DRIVER_NOT_FOUND',
+        details: `No driver profile found for clerkId: ${targetDriverId}`,
       });
     }
 
@@ -146,7 +155,7 @@ export const createBooking = async (req, res, next) => {
     const booking = new RideBooking({
       rideId: ride._id,
       passengerId: clerkId,
-      driverId: ride.driverId,
+      driverId: targetDriverId, // Use the resolved driver ID
       seatNumbers,
       customRequest,
       approvalStatus,

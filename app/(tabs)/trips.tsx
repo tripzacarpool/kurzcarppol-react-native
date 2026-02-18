@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
 import { getUserRides, cancelRide, getPassengerBookings, passengerConfirmRideOfferPickup, setAuthToken, submitRating, getPendingRatings } from '@/lib/api';  
-import { getToken } from '@/lib/clerkSessionHelper';
+import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
 import RideRequestModal from '@/components/RideRequestModal';
 import RatingModal from '@/components/RatingModal';
 import { 
@@ -19,6 +19,7 @@ import CustomAlert, { AlertButton, AlertType } from '@/components/CustomAlert';
 
 export default function TripsScreen() {
   const { user } = useAuth();
+  const { getToken } = useClerkAuth();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [userRides, setUserRides] = useState<any[]>([]);
   const [rideOfferBookings, setRideOfferBookings] = useState<any[]>([]);
@@ -140,6 +141,28 @@ export default function TripsScreen() {
       if (response.success && response.bookings && Array.isArray(response.bookings)) {
         setRideOfferBookings(response.bookings);
         console.log('✅ Ride offer bookings fetched:', response.bookings.length);
+        console.log('📊 Booking statuses:', response.bookings.map(b => ({
+          id: b._id,
+          status: b.approvalStatus,
+          from: b.rideOffer?.from,
+          to: b.rideOffer?.to,
+          rideStatus: b.rideOffer?.status,
+          hasPickup: b.hasConfirmedPickup,
+          driverInitiated: b.driverInitiatedPickup
+        })));
+        
+        // Log detailed info for debugging active rides
+        const confirmedPickup = response.bookings.filter(b => b.hasConfirmedPickup);
+        if (confirmedPickup.length > 0) {
+          console.log('🚗 Bookings with confirmed pickup:', confirmedPickup.map(b => ({
+            id: b._id,
+            approvalStatus: b.approvalStatus,
+            rideStatus: b.rideOffer?.status,
+            hasConfirmedPickup: b.hasConfirmedPickup,
+            from: b.rideOffer?.from,
+            to: b.rideOffer?.to
+          })));
+        }
       }
     } catch (error) {
       console.error('❌ Error fetching ride offer bookings:', error);
@@ -309,13 +332,28 @@ export default function TripsScreen() {
     
     return true; // Show any other status
   });
-  
-  const totalRides = displayRides.length + rideOfferBookings.length;
 
   // Filter active/ongoing rides (passenger has boarded and is traveling)
   const activeRides = rideOfferBookings.filter(
-    (booking) => booking.hasConfirmedPickup && booking.approvalStatus === 'confirmed' && 
-    ['waiting', 'booked', 'ongoing'].includes(booking.rideOffer?.status)
+    (booking) => {
+      const isActive = booking.hasConfirmedPickup && 
+                      booking.approvalStatus === 'confirmed' && 
+                      ['waiting', 'booked', 'ongoing'].includes(booking.rideOffer?.status);
+      
+      if (booking.hasConfirmedPickup) {
+        console.log('🔍 Checking booking for active ride:', {
+          id: booking._id,
+          hasConfirmedPickup: booking.hasConfirmedPickup,
+          approvalStatus: booking.approvalStatus,
+          rideStatus: booking.rideOffer?.status,
+          isActive,
+          from: booking.rideOffer?.from,
+          to: booking.rideOffer?.to
+        });
+      }
+      
+      return isActive;
+    }
   );
 
   // Filter bookings that need pickup confirmation
@@ -332,6 +370,37 @@ export default function TripsScreen() {
   const pendingApprovalBookings = rideOfferBookings.filter(
     (booking) => booking.approvalStatus === 'pending_approval'
   );
+
+  // Filter rejected/expired bookings
+  const rejectedBookings = rideOfferBookings.filter(
+    (booking) => booking.approvalStatus === 'rejected' || booking.approvalStatus === 'expired'
+  );
+
+  // Filter completed bookings (ride finished, payment done)
+  const completedBookings = rideOfferBookings.filter(
+    (booking) => booking.approvalStatus === 'completed' || booking.rideOffer?.status === 'completed'
+  );
+
+  // Filter cancelled bookings
+  const cancelledBookings = rideOfferBookings.filter(
+    (booking) => booking.approvalStatus === 'cancelled'
+  );
+
+  // Calculate total active bookings (excluding completed/cancelled/rejected)
+  const activeBookingsCount = activeRides.length + pendingPickups.length + confirmedBookings.length + pendingApprovalBookings.length;
+  const totalRides = displayRides.length + activeBookingsCount;
+
+  console.log('📊 Trips screen breakdown:', {
+    activeRides: activeRides.length,
+    pendingPickups: pendingPickups.length,
+    confirmedBookings: confirmedBookings.length,
+    pendingApprovalBookings: pendingApprovalBookings.length,
+    rejectedBookings: rejectedBookings.length,
+    completedBookings: completedBookings.length,
+    cancelledBookings: cancelledBookings.length,
+    displayRides: displayRides.length,
+    totalActiveRides: totalRides
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -452,45 +521,97 @@ export default function TripsScreen() {
             {/* Pending Pickups Section - Most Important */}
             {pendingPickups.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>🚗 Confirm Pickup</Text>
+                <Text style={styles.sectionTitle}>🚗 Pickup Verification Required</Text>
                 <Text style={styles.sectionSubtitle}>Driver is waiting for you to confirm boarding</Text>
                 {pendingPickups.map((booking) => (
-                  <View key={booking._id} style={[styles.tripCard, styles.pickupCard]}>
-                    <View style={styles.pickupHeader}>
-                      <Text style={styles.pickupBadge}>⏳ Pickup Initiated</Text>
-                      <Clock size={16} color={Colors.dark.gold} />
+                  <View key={booking._id} style={[styles.tripCard, styles.pickupVerificationCard]}>
+                    {/* Verification Header with Shield Icon */}
+                    <View style={styles.verificationHeader}>
+                      <View style={styles.shieldIconContainer}>
+                        <Check size={32} color={Colors.dark.gold} strokeWidth={3} />
+                      </View>
                     </View>
 
-                    <View style={styles.tripHeader}>
-                      <View style={styles.routeInfo}>
-                        <View style={styles.routeRow}>
-                          <MapPin size={14} color={Colors.dark.gold} />
-                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                    <Text style={styles.verificationTitle}>Pickup Verification</Text>
+                    <Text style={styles.verificationSubtitle}>
+                      Driver has approved your booking. Confirm once you board the car to start tracking.
+                    </Text>
+
+                    {/* Route Information */}
+                    <View style={styles.verificationRoute}>
+                      <View style={styles.routeRow}>
+                        <MapPin size={16} color={Colors.dark.gold} />
+                        <Text style={styles.verificationLocation}>{booking.rideOffer?.from || 'N/A'}</Text>
+                      </View>
+                      <View style={styles.routeLine} />
+                      <View style={styles.routeRow}>
+                        <MapPin size={16} color={Colors.dark.pink} />
+                        <Text style={styles.verificationLocation}>{booking.rideOffer?.to || 'N/A'}</Text>
+                      </View>
+                    </View>
+
+                    {/* Booking Details */}
+                    <View style={styles.verificationDetails}>
+                      <View style={styles.verificationDetailRow}>
+                        <Text style={styles.verificationDetailLabel}>Approved Seats</Text>
+                        <View style={styles.verificationDetailValue}>
+                          <Users size={14} color={Colors.dark.gold} />
+                          <Text style={styles.verificationDetailText}>
+                            {booking.seatNumbers?.length || 1}
+                          </Text>
                         </View>
-                        <View style={styles.routeLine} />
-                        <View style={styles.routeRow}>
-                          <MapPin size={14} color={Colors.dark.pink} />
-                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                      </View>
+
+                      <View style={styles.verificationDivider} />
+
+                      <View style={styles.verificationDetailRow}>
+                        <Text style={styles.verificationDetailLabel}>Total Amount</Text>
+                        <Text style={styles.verificationAmountText}>₹{booking.totalAmount || booking.fare || 0}</Text>
+                      </View>
+
+                      <View style={styles.verificationDivider} />
+
+                      <View style={styles.verificationDetailRow}>
+                        <Text style={styles.verificationDetailLabel}>Status</Text>
+                        <View style={styles.approvedBadge}>
+                          <Check size={12} color={Colors.dark.success} />
+                          <Text style={styles.approvedBadgeText}>Approved by Driver</Text>
                         </View>
                       </View>
                     </View>
 
+                    {/* Driver Info */}
                     {booking.driver && (
-                      <View style={styles.driverInfoCompact}>
-                        <UserIcon size={14} color={Colors.dark.textSecondary} />
-                        <Text style={styles.driverNameCompact}>{booking.driver.name}</Text>
+                      <View style={styles.verificationDriverInfo}>
+                        <View style={styles.driverInfoRow}>
+                          <UserIcon size={16} color={Colors.dark.textSecondary} />
+                          <Text style={styles.driverNameCompact}>{booking.driver.name}</Text>
+                          {booking.driver.rating && (
+                            <View style={styles.ratingBadge}>
+                              <Star size={10} color={Colors.dark.gold} fill={Colors.dark.gold} />
+                              <Text style={styles.ratingText}>{booking.driver.rating.toFixed(1)}</Text>
+                            </View>
+                          )}
+                        </View>
                         {booking.driver.phone && (
                           <TouchableOpacity
                             onPress={() => {
                               const Linking = require('react-native').Linking;
                               Linking.openURL(`tel:${booking.driver.phone}`);
                             }}
-                            style={styles.phoneButton}>
-                            <Phone size={12} color={Colors.dark.gold} />
+                            style={styles.callDriverButton}>
+                            <Phone size={16} color={Colors.dark.gold} />
+                            <Text style={styles.callDriverText}>Call Driver</Text>
                           </TouchableOpacity>
                         )}
                       </View>
                     )}
+
+                    {/* Confirmation Question */}
+                    <View style={styles.verificationQuestion}>
+                      <Text style={styles.verificationQuestionTitle}>Did you board the car?</Text>
+                      <Text style={styles.verificationQuestionSubtitle}>Driver is waiting for your confirmation</Text>
+                    </View>
 
                     <TouchableOpacity
                       style={[
@@ -505,7 +626,7 @@ export default function TripsScreen() {
                       ) : (
                         <>
                           <Check size={18} color={Colors.dark.background} />
-                          <Text style={styles.confirmPickupButtonText}>I Boarded the Car</Text>
+                          <Text style={styles.confirmPickupButtonText}>Yes, I'm in the Car</Text>
                         </>
                       )}
                     </TouchableOpacity>
@@ -514,11 +635,11 @@ export default function TripsScreen() {
               </View>
             )}
 
-            {/* Confirmed Bookings - Active Rides */}
+            {/* Confirmed Bookings - Waiting for Driver */}
             {confirmedBookings.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>✅ Confirmed Bookings</Text>
-                <Text style={styles.sectionSubtitle}>Waiting for driver to initiate pickup</Text>
+                <Text style={styles.sectionTitle}>✅ Approved Bookings</Text>
+                <Text style={styles.sectionSubtitle}>Driver approved • Pickup verification will appear when driver arrives</Text>
                 {confirmedBookings.map((booking) => (
                   <View key={booking._id} style={styles.tripCard}>
                     <View style={styles.tripHeader}>
@@ -611,7 +732,131 @@ export default function TripsScreen() {
                           </Text>
                         </View>
                       )}
+                      {booking.seatNumbers && booking.seatNumbers.length > 0 && (
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailText}>
+                            Seat{booking.seatNumbers.length > 1 ? 's' : ''}: {booking.seatNumbers.join(', ')}
+                          </Text>
+                        </View>
+                      )}
+                      {booking.fare && (
+                        <View style={styles.detailRow}>
+                          <DollarSign size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>₹{booking.fare}</Text>
+                        </View>
+                      )}
                     </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Rejected/Expired Bookings */}
+            {rejectedBookings.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>❌ Rejected/Expired</Text>
+                <Text style={styles.sectionSubtitle}>These bookings were not approved</Text>
+                {rejectedBookings.map((booking) => (
+                  <View key={booking._id} style={styles.tripCard}>
+                    <View style={styles.tripHeader}>
+                      <View style={styles.routeInfo}>
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.gold} />
+                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.pink} />
+                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.statusBadge, styles.cancelledBadge]}>
+                        <Text style={[styles.statusText, styles.cancelledText]}>
+                          {booking.approvalStatus === 'expired' ? 'Expired' : 'Rejected'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.tripDetails}>
+                      {booking.rideOffer?.departureTime && (
+                        <View style={styles.detailRow}>
+                          <Calendar size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>
+                            {new Date(booking.rideOffer.departureTime).toLocaleString()}
+                          </Text>
+                        </View>
+                      )}
+                      {booking.rejectionReason && (
+                        <View style={styles.detailRow}>
+                          <Text style={[styles.detailText, { color: Colors.dark.pink }]}>
+                            Reason: {booking.rejectionReason}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Completed Bookings */}
+            {completedBookings.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>✅ Completed Rides</Text>
+                <Text style={styles.sectionSubtitle}>Your finished rides</Text>
+                {completedBookings.map((booking) => (
+                  <View key={booking._id} style={styles.tripCard}>
+                    <View style={styles.tripHeader}>
+                      <View style={styles.routeInfo}>
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.gold} />
+                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.pink} />
+                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.statusBadge, styles.acceptedBadge]}>
+                        <Text style={[styles.statusText, styles.acceptedText]}>Completed</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.tripDetails}>
+                      {booking.rideOffer?.departureTime && (
+                        <View style={styles.detailRow}>
+                          <Calendar size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>
+                            {new Date(booking.rideOffer.departureTime).toLocaleString()}
+                          </Text>
+                        </View>
+                      )}
+                      {booking.fare && (
+                        <View style={styles.detailRow}>
+                          <DollarSign size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>₹{booking.fare}</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {booking.driver && (
+                      <View style={styles.driverInfo}>
+                        <View style={styles.driverDetails}>
+                          <Text style={styles.driverName}>{booking.driver.name}</Text>
+                          {booking.driver.rating && (
+                            <View style={styles.ratingRow}>
+                              <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
+                              <Text style={styles.rating}>{booking.driver.rating.toFixed(1)}</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    )}
                   </View>
                 ))}
               </View>
@@ -1183,5 +1428,126 @@ const styles = StyleSheet.create({
     color: Colors.dark.success,
     fontSize: 13,
     fontWeight: '600',
+  },
+  // Pickup Verification Styles
+  pickupVerificationCard: {
+    borderWidth: 2,
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.card,
+    padding: 20,
+  },
+  verificationHeader: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  shieldIconContainer: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: Colors.dark.gold + '15',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: Colors.dark.gold + '40',
+  },
+  verificationTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  verificationSubtitle: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  verificationRoute: {
+    backgroundColor: Colors.dark.backgroundSecondary,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  verificationLocation: {
+    fontSize: 15,
+    color: Colors.dark.text,
+    fontWeight: '600',
+    flex: 1,
+  },
+  verificationDetails: {
+    backgroundColor: Colors.dark.backgroundSecondary,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  verificationDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  verificationDetailLabel: {
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+    fontWeight: '500',
+  },
+  verificationDetailValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  verificationDetailText: {
+    fontSize: 16,
+    color: Colors.dark.text,
+    fontWeight: '700',
+  },
+  verificationAmountText: {
+    fontSize: 18,
+    color: Colors.dark.gold,
+    fontWeight: '700',
+  },
+  verificationDivider: {
+    height: 1,
+    backgroundColor: Colors.dark.border,
+    marginVertical: 12,
+  },
+  approvedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.dark.success + '20',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  approvedBadgeText: {
+    fontSize: 12,
+    color: Colors.dark.success,
+    fontWeight: '700',
+  },
+  verificationDriverInfo: {
+    backgroundColor: Colors.dark.backgroundSecondary,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  verificationQuestion: {
+    backgroundColor: Colors.dark.gold + '10',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '30',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  verificationQuestionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    marginBottom: 6,
+  },
+  verificationQuestionSubtitle: {
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
   },
 });
