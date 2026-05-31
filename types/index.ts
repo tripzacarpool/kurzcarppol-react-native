@@ -2,6 +2,8 @@ export type UserRole = 'passenger' | 'ride_partner' | 'admin';
 
 export type RidePartnerMode = 'daily' | 'casual' | 'professional';
 export type RidePartnerVehicleType = 'personal' | 'cab';
+export type DriverPrivacyType = 'full_detail' | 'private_vehicle';
+export type DriverTrustBatch = 'new' | 'community' | 'trusted' | 'featured';
 export type RidePartnerApplicationStatus =
   | 'draft'
   | 'submitted'
@@ -33,6 +35,16 @@ export interface RidePartnerProfile {
   status: RidePartnerApplicationStatus;
   mode: RidePartnerMode;
   vehicleType: RidePartnerVehicleType;
+  driverPrivacyType?: DriverPrivacyType;
+  publicDisclosure?: {
+    showFullName: boolean;
+    showPhone: boolean;
+    showFullVehicleNumber: boolean;
+    showProfilePhoto: boolean;
+  };
+  trustBatch?: DriverTrustBatch;
+  trustScore?: number;
+  publicityScore?: number;
   basicProfile: {
     fullName: string;
     phone: string;
@@ -137,6 +149,16 @@ export interface Ride {
     color: string;
   };
   vehicleType?: RideVehicleType;
+  driverPrivacyType?: DriverPrivacyType;
+  publicDisclosure?: {
+    showFullName: boolean;
+    showPhone: boolean;
+    showFullVehicleNumber: boolean;
+    showProfilePhoto: boolean;
+  };
+  trustBatch?: DriverTrustBatch;
+  trustScore?: number;
+  publicityScore?: number;
   from: string;
   to: string;
   pickupPoint: {

@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Alert } from 'react-native';
-import Constants from 'expo-constants';
 import { useAuth as useClerkAuth, useUser } from '@/lib/clerkHooks';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearAllClerkSessions } from '@/lib/clerkSessionHelper';
-import { logoutUserFromBackend, fetchRidePartnerProfile, submitRidePartnerApplication, RidePartnerApplicationPayload, setAuthToken } from '@/lib/api';
+import { logoutUserFromBackend, fetchRidePartnerProfile, setAuthToken } from '@/lib/api';
+import { getApiBaseUrl } from '@/lib/backendConfig';
 import { RidePartnerProfile, RidePartnerApplicationStatus, UserRole } from '@/types';
 
 export interface AuthUser {
@@ -121,10 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const syncUserWithDatabase = async (authUser: AuthUser) => {
     try {
-      const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
-      if (!API_URL) {
-        throw new Error('API URL not configured');
-      }
+      const API_URL = getApiBaseUrl();
       const syncUrl = `${API_URL}/api/users/sync`;
       console.log('🔗 Syncing to:', syncUrl);
       
@@ -266,36 +263,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       const pendingData = await AsyncStorage.getItem('pending_driver_application');
       if (!pendingData) {
-        return; // No pending application
+        return;
       }
 
-      const payload: RidePartnerApplicationPayload = JSON.parse(pendingData);
-      console.log('📤 Found pending driver application, submitting...');
-
-      await submitRidePartnerApplication(payload);
-      console.log('✅ Pending driver application submitted');
-
-      // Clear the pending data after successful submission
+      console.log('Removing legacy pending driver application cache');
       await AsyncStorage.removeItem('pending_driver_application');
-
-      // Update user with ride partner status
-      const { profile } = await fetchRidePartnerProfile(payload.clerkId);
-      if (profile) {
-        setUser((prev) =>
-          prev
-            ? {
-                ...prev,
-                ridePartnerProfile: profile,
-                ridePartnerStatus: profile.status,
-              }
-            : prev,
-        );
-        console.log('✅ Ride partner profile updated');
-      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : JSON.stringify(err);
-      console.warn('⚠️ Failed to submit pending driver application:', errorMsg);
-      // Don't block login - user can submit later from profile
+      console.warn('Unable to clear legacy pending driver application:', errorMsg);
     }
   };
 

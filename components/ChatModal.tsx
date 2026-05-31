@@ -77,6 +77,13 @@ export default function ChatModal({
     if (!conversationId) return;
 
     const socket = getLocationSocket();
+    
+    // Check if socket is available (returns null on web platform)
+    if (!socket) {
+      console.log('⚠️ [ChatModal] Socket not available (likely running on web platform)');
+      return;
+    }
+    
     const eventName = `chat:message:${conversationId}`;
 
     const handleNewMessage = (data: any) => {

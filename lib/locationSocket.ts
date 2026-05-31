@@ -1,31 +1,8 @@
 import { io } from 'socket.io-client';
 import { Platform } from 'react-native';
-import Constants from 'expo-constants';
+import { getSocketBaseUrl } from '@/lib/backendConfig';
 
-// Automatically detects if running on emulator or physical device
-const getBackendUrl = () => {
-  // Try environment variable first (for development)
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
-  }
-
-  // Fallback to app.json extra config (for production builds)
-  const apiUrl = Constants.expoConfig?.extra?.apiUrl;
-  if (apiUrl) {
-    return apiUrl;
-  }
-
-  throw new Error(
-    'API URL not configured. Set EXPO_PUBLIC_API_URL environment variable or configure extra.apiUrl in app.json',
-  );
-  // Android emulator uses 10.0.2.2 to access host's localhost
-  // if (Platform.OS === 'android' && __DEV__) {
-  //   return 'http://10.0.2.2:5000'; // Android emulator
-  // }
-  // return 'http://10.238.194.123:5000'; // Local development
-};
-
-const BACKEND_URL = getBackendUrl();
+const BACKEND_URL = getSocketBaseUrl();
 console.log('🔌 Socket Backend URL:', BACKEND_URL);
 
 let socket: any = null;
@@ -44,11 +21,14 @@ export function initializeLocationSocket() {
   if (socket) return socket;
 
   socket = io(BACKEND_URL, {
-    transports: ['websocket'], // Only use WebSocket for React Native
+    transports: ['polling', 'websocket'],
+    upgrade: true,
+    timeout: 10000,
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
-    reconnectionAttempts: 5,
+    reconnectionAttempts: 10,
+    forceNew: false,
   });
 
   socket.on('connect', () => {
@@ -78,6 +58,20 @@ export function getLocationSocket() {
     return initializeLocationSocket();
   }
   return socket;
+}
+
+export function joinUserSocketRoom(userId: string) {
+  if (Platform.OS === 'web' || !userId) return;
+
+  const sock = getLocationSocket();
+  if (!sock) return;
+
+  const join = () => sock.emit('join:user', { userId });
+  if (sock.connected) {
+    join();
+  } else {
+    sock.once('connect', join);
+  }
 }
 
 /**

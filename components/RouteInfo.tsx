@@ -32,6 +32,7 @@ export default function RouteInfo({
   const [originalFare, setOriginalFare] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [calculated, setCalculated] = useState(false);
+  const [routeSource, setRouteSource] = useState<'google' | 'estimate' | null>(null);
 
   // Reset when locations change
   useEffect(() => {
@@ -61,6 +62,7 @@ export default function RouteInfo({
         // Show exact Google Maps data
         setDistance(result.distance);
         setDuration(result.duration);
+        setRouteSource(result.source || 'google');
 
         // Calculate fare using actual Google distance value (in meters)
         const distanceKm = result.distanceValue / 1000; // Convert meters to km
@@ -100,6 +102,7 @@ export default function RouteInfo({
     setFare(0);
     setOriginalFare(0);
     setCalculated(false);
+    setRouteSource(null);
   };
 
   if (!pickupLocation || !dropoffLocation) {
@@ -110,7 +113,11 @@ export default function RouteInfo({
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Route Information</Text>
-        {calculated && <Text style={styles.googleBadge}>🗺️ Google Maps</Text>}
+        {calculated && (
+          <Text style={styles.googleBadge}>
+            {routeSource === 'estimate' ? 'Estimated' : 'Google Maps'}
+          </Text>
+        )}
       </View>
       
       {!calculated && !loading ? (
@@ -119,10 +126,10 @@ export default function RouteInfo({
             style={styles.calculateButton}
             onPress={fetchRoute}
           >
-            <Text style={styles.calculateButtonText}>📍 Calculate Market Rate (Optional)</Text>
+            <Text style={styles.calculateButtonText}>Calculate distance and fare</Text>
           </TouchableOpacity>
           <Text style={styles.optionalHint}>
-            You can proceed without calculating, or tap above to see suggested pricing
+            Optional, but helps set a fair per-seat price
           </Text>
         </View>
       ) : loading ? (

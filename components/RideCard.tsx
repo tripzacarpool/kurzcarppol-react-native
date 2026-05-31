@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Car, Star, Clock, MapPin, Users, Timer, Plus } from 'lucide-react-native';
+import { Car, Star, Clock, MapPin, Users, Timer, Plus, IndianRupee, ShieldCheck, Hand } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { DRIVER_MODE_META } from '@/constants/driverModes';
 import { Ride } from '@/types';
@@ -13,16 +13,42 @@ interface RideCardProps {
   onPress: () => void;
   isOwner?: boolean;
   onExtendTime?: (rideId: string, newTime: Date) => void;
+  onHoldRequest?: (rideId: string) => void;
+  holding?: boolean;
 }
 
-function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime }: RideCardProps) {
-  const modeMeta = DRIVER_MODE_META[ride.driverMode];
+function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime, onHoldRequest, holding = false }: RideCardProps) {
+  const modeMeta = DRIVER_MODE_META[ride.driverMode] || DRIVER_MODE_META.commuter;
+  const driver = ride.driver || {};
+  const vehicle = ride.vehicle || {};
+  const driverName = driver.name || 'Tripza Driver';
+  const driverInitial = driverName.trim()[0] || 'T';
+  const driverGender = driver.gender || 'other';
+  const driverRating = Number(driver.rating ?? 5);
+  const ridesCompleted = driver.ridesCompleted ?? 0;
+  const trustBatch = (ride as any).trustBatch || (driver as any).trustBatch || 'new';
+  const privacyLabel = (driver as any).privacyLabel || ((ride as any).driverPrivacyType === 'full_detail' ? 'Full detail driver' : 'Private vehicle driver');
+  const vehicleModel = vehicle.model || 'Vehicle';
+  const availableSeats = Array.isArray(ride.availableSeats) ? ride.availableSeats : [];
+  const womenOnly = ride.isWomenOnly || (ride as any).womenOnly;
+  const from = ride.from || 'Pickup location';
+  const to = ride.to || 'Drop location';
+  const departureDate = new Date(ride.departureTime);
+  const readableDepartureTime = Number.isNaN(departureDate.getTime())
+    ? 'Time not set'
+    : departureDate.toLocaleString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
   const timeRemaining = useRideTimer(ride.departureTime);
   const [showExtendPicker, setShowExtendPicker] = useState(false);
   const [expandedAddress, setExpandedAddress] = useState(false);
 
   const truncateAddress = (address: string, maxLength: number = 30) => {
-    if (address.length <= maxLength) return address;
+    if (!address || address.length <= maxLength) return address || '';
     return address.substring(0, maxLength) + '...';
   };
 
@@ -40,24 +66,24 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime }: Rid
 
   return (
     <TouchableOpacity
-      style={[styles.card, ride.isWomenOnly && styles.womenOnlyCard]}
+      style={[styles.card, womenOnly && styles.womenOnlyCard]}
       onPress={onPress}
       activeOpacity={0.7}>
       <View style={styles.header}>
         <View style={styles.driverInfo}>
-          <View style={[styles.avatar, ride.driver.gender === 'female' && styles.femaleAvatar]}>
-            <Text style={styles.avatarText}>{ride.driver.name[0]}</Text>
+          <View style={[styles.avatar, driverGender === 'female' && styles.femaleAvatar]}>
+            <Text style={styles.avatarText}>{driverInitial}</Text>
           </View>
           <View style={styles.driverDetails}>
             <View style={styles.nameRow}>
-              <Text style={styles.driverName}>{ride.driver.name}</Text>
+              <Text style={styles.driverName}>{driverName}</Text>
               <VerificationBadge
-                verificationBatch={ride.driver.verificationBatch}
-                driverVerified={ride.driver.driverVerified}
+                verificationBatch={driver.verificationBatch}
+                driverVerified={driver.driverVerified}
                 size="small"
                 showLabel={false}
               />
-              {ride.isWomenOnly && (
+              {womenOnly && (
                 <View style={styles.womenBadge}>
                   <Text style={styles.womenBadgeText}>Women Only</Text>
                 </View>
@@ -65,17 +91,26 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime }: Rid
             </View>
             <View style={styles.ratingRow}>
               <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
-              <Text style={styles.rating}>{ride.driver.rating}</Text>
-              <Text style={styles.rides}>• {ride.driver.ridesCompleted} {ride.driver.ridesCompleted === 1 ? 'ride' : 'rides'}</Text>
+              <Text style={styles.rating}>{driverRating.toFixed(1)}</Text>
+              <Text style={styles.rides}>- {ridesCompleted} {ridesCompleted === 1 ? 'ride' : 'rides'}</Text>
             </View>
             <View style={styles.modeBadge}>
               <Text style={styles.modeBadgeLabel}>{modeMeta.label}</Text>
               <Text style={styles.modeBadgeTagline}>{modeMeta.tagline}</Text>
             </View>
+            <View style={styles.trustRow}>
+              <ShieldCheck size={12} color={Colors.dark.success} />
+              <Text style={styles.trustText}>
+                {trustBatch.charAt(0).toUpperCase() + trustBatch.slice(1)} trust - {privacyLabel}
+              </Text>
+            </View>
           </View>
         </View>
         <View style={styles.fareContainer}>
-          <Text style={styles.fare}>₹{ride.farePerSeat}</Text>
+          <View style={styles.fareRow}>
+            <IndianRupee size={18} color={Colors.dark.gold} strokeWidth={2.8} />
+            <Text style={styles.fare}>{ride.farePerSeat}</Text>
+          </View>
           <Text style={styles.perSeat}>per seat</Text>
           {ride.status === 'ongoing' && (
             <View style={styles.liveStatusBadge}>
@@ -112,7 +147,7 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime }: Rid
         >
           <MapPin size={14} color={Colors.dark.gold} />
           <Text style={styles.location} numberOfLines={expandedAddress ? undefined : 1}>
-            {expandedAddress ? ride.from : truncateAddress(ride.from)}
+            {expandedAddress ? from : truncateAddress(from)}
           </Text>
         </TouchableOpacity>
         <View style={styles.routeLine} />
@@ -123,7 +158,7 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime }: Rid
         >
           <MapPin size={14} color={Colors.dark.pink} />
           <Text style={styles.location} numberOfLines={expandedAddress ? undefined : 1}>
-            {expandedAddress ? ride.to : truncateAddress(ride.to)}
+            {expandedAddress ? to : truncateAddress(to)}
           </Text>
         </TouchableOpacity>
       </View>
@@ -131,17 +166,30 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime }: Rid
       <View style={styles.footer}>
         <View style={styles.infoItem}>
           <Clock size={14} color={Colors.dark.textSecondary} />
-          <Text style={styles.infoText}>{ride.departureTime}</Text>
+          <Text style={styles.infoText}>{readableDepartureTime}</Text>
         </View>
         <View style={styles.infoItem}>
           <Car size={14} color={Colors.dark.textSecondary} />
-          <Text style={styles.infoText}>{ride.vehicle.model}</Text>
+          <Text style={styles.infoText}>{vehicleModel}</Text>
         </View>
         <View style={styles.infoItem}>
           <Users size={14} color={Colors.dark.textSecondary} />
-          <Text style={styles.infoText}>{ride.availableSeats.length} seats</Text>
+          <Text style={styles.infoText}>{availableSeats.length} seats</Text>
         </View>
       </View>
+
+      {!isOwner && onHoldRequest && (
+        <TouchableOpacity
+          style={[styles.holdButton, holding && styles.holdButtonDisabled]}
+          onPress={() => onHoldRequest(ride.id)}
+          disabled={holding}
+          activeOpacity={0.78}>
+          <Hand size={15} color={Colors.dark.gold} />
+          <Text style={styles.holdButtonText}>
+            {holding ? 'Sending hold request...' : 'Ask driver to wait'}
+          </Text>
+        </TouchableOpacity>
+      )}
       
       <TimeExtensionPicker
         visible={showExtendPicker}
@@ -253,9 +301,25 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
+  trustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    gap: 4,
+  },
+  trustText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
   fareContainer: {
     alignItems: 'flex-end',
     justifyContent: 'center',
+  },
+  fareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
   fare: {
     color: Colors.dark.gold,
@@ -356,5 +420,25 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
     fontSize: 12,
     marginLeft: 4,
+  },
+  holdButton: {
+    marginTop: 12,
+    minHeight: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '55',
+    backgroundColor: Colors.dark.gold + '14',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  holdButtonDisabled: {
+    opacity: 0.6,
+  },
+  holdButtonText: {
+    color: Colors.dark.gold,
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

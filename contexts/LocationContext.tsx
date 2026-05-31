@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import * as Location from 'expo-location';
 import { Platform } from 'react-native';
 import { useAuth } from './AuthContext';
+import { getApiBaseUrl } from '@/lib/backendConfig';
 
 interface LocationData {
   latitude: number;
@@ -86,7 +87,8 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       }
 
       const currentLocation = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
+        accuracy: Location.Accuracy.BestForNavigation,
+        mayShowUserSettingsDialog: true,
       });
 
       const { latitude, longitude, accuracy } = currentLocation.coords;
@@ -117,11 +119,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         // Live ride tracking uses WebSocket (see lib/locationSocket.ts)
         // NO Google Maps API calls here - just backend storage
         try {
-          if (!process.env.EXPO_PUBLIC_API_URL) {
-            throw new Error('EXPO_PUBLIC_API_URL environment variable is required');
-          }
-          const API_URL = process.env.EXPO_PUBLIC_API_URL;
-          // const API_URL = 'http://localhost:5000'; // Local development URL
+          const API_URL = getApiBaseUrl();
           const locationUrl = `${API_URL}/api/users/location`;
           
           const locationPayload = {

@@ -4,10 +4,11 @@ import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
-import { getUserRides, cancelRide, getPassengerBookings, passengerConfirmRideOfferPickup, setAuthToken, submitRating, getPendingRatings } from '@/lib/api';  
+import { getUserRides, cancelRide, getPassengerBookings, passengerConfirmRideOfferPickup, setAuthToken, submitRating, getPendingRatings, cancelPendingApproval, activateSOS } from '@/lib/api';  
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
 import RideRequestModal from '@/components/RideRequestModal';
 import RatingModal from '@/components/RatingModal';
+import SOSButton from '@/components/SOSButton';
 import { 
   subscribeToRideAcceptance, 
   unsubscribeFromRideEvents, 
@@ -28,6 +29,7 @@ export default function TripsScreen() {
   const [rideRequestModalVisible, setRideRequestModalVisible] = useState(false);
   const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
   const [confirmingPickupFor, setConfirmingPickupFor] = useState<string | null>(null);
+  const [cancellingApprovalId, setCancellingApprovalId] = useState<string | null>(null);
   
   // Rating modal state
   const [ratingModalVisible, setRatingModalVisible] = useState(false);
@@ -141,7 +143,7 @@ export default function TripsScreen() {
       if (response.success && response.bookings && Array.isArray(response.bookings)) {
         setRideOfferBookings(response.bookings);
         console.log('✅ Ride offer bookings fetched:', response.bookings.length);
-        console.log('📊 Booking statuses:', response.bookings.map(b => ({
+        console.log('📊 Booking statuses:', response.bookings.map((b: any) => ({
           id: b._id,
           status: b.approvalStatus,
           from: b.rideOffer?.from,
@@ -152,9 +154,9 @@ export default function TripsScreen() {
         })));
         
         // Log detailed info for debugging active rides
-        const confirmedPickup = response.bookings.filter(b => b.hasConfirmedPickup);
+        const confirmedPickup = response.bookings.filter((b: any) => b.hasConfirmedPickup);
         if (confirmedPickup.length > 0) {
-          console.log('🚗 Bookings with confirmed pickup:', confirmedPickup.map(b => ({
+          console.log('🚗 Bookings with confirmed pickup:', confirmedPickup.map((b: any) => ({
             id: b._id,
             approvalStatus: b.approvalStatus,
             rideStatus: b.rideOffer?.status,
@@ -247,6 +249,51 @@ export default function TripsScreen() {
       showAlert('Error', 'Failed to cancel the ride. Please try again.', 'error');
     } finally {
       setCancellingRideId(null);
+    }
+  };
+
+  const handleCancelPendingApproval = (bookingId: string, rideName: string) => {
+    showAlert(
+      'Cancel Booking Request?',
+      `Are you sure you want to cancel your booking request for ${rideName}? The driver hasn't responded yet.`,
+      'warning',
+      [
+        {
+          text: 'Keep Waiting',
+          style: 'cancel',
+        },
+        {
+          text: 'Cancel Request',
+          style: 'destructive',
+          onPress: async () => {
+            await performCancelPendingApproval(bookingId);
+          },
+        },
+      ]
+    );
+  };
+
+  const performCancelPendingApproval = async (bookingId: string) => {
+    setCancellingApprovalId(bookingId);
+    try {
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      await cancelPendingApproval(bookingId);
+      
+      showAlert('Cancelled', 'Your booking request has been cancelled. You can try booking again.', 'success');
+      console.log('✅ Pending approval cancelled:', bookingId);
+      
+      // Refresh bookings to update the UI
+      await fetchPassengerBookings();
+    } catch (error: any) {
+      console.error('❌ Error cancelling pending approval:', error);
+      const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Failed to cancel the booking request. Please try again.';
+      showAlert('Error', errorMessage, 'error');
+    } finally {
+      setCancellingApprovalId(null);
     }
   };
 
@@ -510,6 +557,14 @@ export default function TripsScreen() {
                       )}
                     </View>
 
+                    {/* SOS Safety Button */}
+                    <SOSButton
+                      rideId={booking.rideOffer?._id || booking._id}
+                      onSOSActivated={activateSOS}
+                      driverName={booking.driver?.name || 'Driver'}
+                      driverPhone={booking.driver?.phone}
+                    />
+
                     <View style={styles.activeRideFooter}>
                       <Text style={styles.activeRideFooterText}>🎯 Traveling to destination...</Text>
                     </View>
@@ -701,7 +756,7 @@ export default function TripsScreen() {
             {pendingApprovalBookings.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>⏳ Pending Approval</Text>
-                <Text style={styles.sectionSubtitle}>Waiting for driver to approve</Text>
+                <Text style={styles.sectionSubtitle}>Waiting for driver to approve your request</Text>
                 {pendingApprovalBookings.map((booking) => (
                   <View key={booking._id} style={styles.tripCard}>
                     <View style={styles.tripHeader}>
@@ -717,6 +772,7 @@ export default function TripsScreen() {
                         </View>
                       </View>
                       <View style={[styles.statusBadge, styles.waitingBadge]}>
+                        <Clock size={12} color={Colors.dark.gold} />
                         <Text style={[styles.statusText, styles.waitingText]}>Pending</Text>
                       </View>
                     </View>
@@ -734,6 +790,7 @@ export default function TripsScreen() {
                       )}
                       {booking.seatNumbers && booking.seatNumbers.length > 0 && (
                         <View style={styles.detailRow}>
+                          <Users size={14} color={Colors.dark.textSecondary} />
                           <Text style={styles.detailText}>
                             Seat{booking.seatNumbers.length > 1 ? 's' : ''}: {booking.seatNumbers.join(', ')}
                           </Text>
@@ -745,7 +802,33 @@ export default function TripsScreen() {
                           <Text style={styles.detailText}>₹{booking.fare}</Text>
                         </View>
                       )}
+                      {booking.driver && (
+                        <View style={styles.detailRow}>
+                          <UserIcon size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>{booking.driver.name}</Text>
+                        </View>
+                      )}
                     </View>
+
+                    {/* Cancel Button */}
+                    <View style={styles.divider} />
+                    <TouchableOpacity 
+                      style={styles.cancelApprovalButton}
+                      onPress={() => handleCancelPendingApproval(
+                        booking._id, 
+                        `${booking.rideOffer?.from} → ${booking.rideOffer?.to}`
+                      )}
+                      disabled={cancellingApprovalId === booking._id}
+                    >
+                      {cancellingApprovalId === booking._id ? (
+                        <ActivityIndicator size="small" color={Colors.dark.pink} />
+                      ) : (
+                        <>
+                          <X size={16} color={Colors.dark.pink} />
+                          <Text style={styles.cancelApprovalText}>Cancel Request</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
                   </View>
                 ))}
               </View>
@@ -1369,12 +1452,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  driverName: {
-    color: Colors.dark.text,
-    fontSize: 15,
-    fontWeight: '600',
-    flex: 1,
-  },
   ratingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1550,4 +1627,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.dark.textSecondary,
   },
+  cancelApprovalButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.pink + '10',
+    borderWidth: 1,
+    borderColor: Colors.dark.pink + '30',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 8,
+  },
+  cancelApprovalText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.dark.pink,
+  },
 });
+

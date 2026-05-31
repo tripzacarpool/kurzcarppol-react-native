@@ -8,6 +8,7 @@ const ridePartnerStatusEnum = [
   'approved',
   'rejected',
 ];
+const driverPrivacyTypeEnum = ['full_detail', 'private_vehicle'];
 
 const withVerificationMeta = (fields) => ({
   ...fields,
@@ -32,6 +33,25 @@ const ridePartnerProfileSchema = new Schema(
       enum: ['personal', 'cab'],
       default: 'personal',
     },
+    driverPrivacyType: {
+      type: String,
+      enum: driverPrivacyTypeEnum,
+      default: 'private_vehicle',
+    },
+    publicDisclosure: {
+      showFullName: { type: Boolean, default: false },
+      showPhone: { type: Boolean, default: false },
+      showFullVehicleNumber: { type: Boolean, default: false },
+      showProfilePhoto: { type: Boolean, default: false },
+    },
+    trustBatch: {
+      type: String,
+      enum: ['new', 'community', 'trusted', 'featured'],
+      default: 'new',
+      index: true,
+    },
+    trustScore: { type: Number, min: 0, max: 100, default: 50 },
+    publicityScore: { type: Number, min: 0, max: 100, default: 40 },
     basicProfile: withVerificationMeta({
       fullName: { type: String, required: true },
       phone: { type: String, required: true },
@@ -116,6 +136,7 @@ const userProfileSchema = new Schema(
         bookingDetails: mongoose.Schema.Types.Mixed,
         paymentId: String,
         orderId: String,
+        idempotencyKey: String,
         timestamp: { type: Date, default: Date.now },
         transactionId: String,
       },
@@ -147,6 +168,33 @@ const userProfileSchema = new Schema(
     verificationCompletedAt: Date,
     verificationData: mongoose.Schema.Types.Mixed, // Store verification checks, attempts, etc.
     licenseNumber: { type: String, sparse: true },
+    // Women Safety Features
+    isFemale: { type: Boolean, default: false, index: true },
+    femaleSignup: { type: Boolean, default: false },
+    safetyFeatures: {
+      womenOnlyPreference: { type: Boolean, default: false },
+      autoShareTrip: { type: Boolean, default: true },
+      safetyAlertsEnabled: { type: Boolean, default: true },
+      primaryEmergencyContact: {
+        name: String,
+        phone: String,
+        relationship: String,
+      },
+      secondaryEmergencyContact: {
+        name: String,
+        phone: String,
+        relationship: String,
+      },
+      emergencyContacts: [
+        {
+          id: mongoose.Schema.Types.ObjectId,
+          name: String,
+          phone: String,
+          relationship: String,
+          addedAt: { type: Date, default: Date.now },
+        },
+      ],
+    },
   },
   { timestamps: true },
 );
@@ -154,6 +202,11 @@ const userProfileSchema = new Schema(
 // Indexes for performance
 userProfileSchema.index({ role: 1, createdAt: -1 });
 userProfileSchema.index({ email: 1, clerkId: 1 });
+userProfileSchema.index({ 'walletTransactions.paymentId': 1 }, { sparse: true });
+userProfileSchema.index(
+  { 'walletTransactions.idempotencyKey': 1 },
+  { sparse: true },
+);
 
 export const UserProfile = mongoose.model('UserProfile', userProfileSchema);
 
@@ -172,7 +225,7 @@ const rideRequestSchema = new Schema(
     passengers: { type: Number, required: true, min: 1, max: 4 },
     vehicleType: {
       type: String,
-      enum: ['two_wheeler', 'four_wheeler'],
+      enum: ['two_wheeler', 'three_wheeler', 'four_wheeler'],
       default: 'four_wheeler',
     },
     notes: String,
@@ -187,6 +240,42 @@ const rideRequestSchema = new Schema(
     dropoffCountry: String,
     offeredByDriver: { type: Boolean, default: false },
     fare: { type: Number, default: 0 },
+    requestedTotalFare: { type: Number, default: 0, min: 0 },
+    driverGuaranteedFare: { type: Number, default: 0, min: 0 },
+    maxSharedSeats: { type: Number, default: 4, min: 1, max: 6 },
+    fareSplit: {
+      totalFare: { type: Number, default: 0 },
+      totalSeats: { type: Number, default: 0 },
+      perSeatEstimate: { type: Number, default: 0 },
+      driverGuaranteedFare: { type: Number, default: 0 },
+      updatedAt: Date,
+      participants: [
+        {
+          clerkId: String,
+          userId: mongoose.Schema.Types.ObjectId,
+          name: String,
+          phone: String,
+          seatCount: { type: Number, default: 1 },
+          shareAmount: { type: Number, default: 0 },
+          joinedAt: { type: Date, default: Date.now },
+          role: {
+            type: String,
+            enum: ['requester', 'joiner'],
+            default: 'joiner',
+          },
+          paymentMethod: {
+            type: String,
+            enum: ['wallet', 'upi', 'cash', 'unknown'],
+            default: 'unknown',
+          },
+          status: {
+            type: String,
+            enum: ['pending', 'confirmed', 'cancelled'],
+            default: 'confirmed',
+          },
+        },
+      ],
+    },
     scheduledDeparture: Date,
     earliestDeparture: Date,
     latestDeparture: Date,
@@ -235,6 +324,37 @@ const rideRequestSchema = new Schema(
     createdAt: { type: Date, default: Date.now, index: true },
     updatedAt: { type: Date, default: Date.now },
     completedAt: Date,
+    // SOS Alert System Fields
+    sosActivated: { type: Boolean, default: false, index: true },
+    sosActivatedAt: Date,
+    sosActivatedBy: { type: String, index: true },
+    sosReason: String,
+    sosResolvedAt: Date,
+    sosResolution: String, // 'resolved_by_admin', 'resolved_by_driver', 'false_alarm', etc.
+    sosAdminNotes: String,
+    sosResponseTime: Number, // milliseconds from activation to resolution
+    // Women Safety Features
+    ridePreference: {
+      type: String,
+      enum: ['normal', 'women_only', 'women_preferred'],
+      default: 'normal',
+    },
+    tripSharedWith: [
+      {
+        contactId: String,
+        contactName: String,
+        contactPhone: String,
+        sharedAt: { type: Date, default: Date.now },
+        sharedVia: String, // 'whatsapp', 'sms', 'emergency_contact'
+      },
+    ],
+    safetyCheckpoints: [
+      {
+        timestamp: Date,
+        type: String, // 'trip_shared', 'emergency_call', 'sos_alert'
+        details: mongoose.Schema.Types.Mixed,
+      },
+    ],
   },
   { timestamps: true },
 );
@@ -245,6 +365,9 @@ rideRequestSchema.index({ userId: 1, createdAt: -1 });
 rideRequestSchema.index({ clerkId: 1, createdAt: -1 });
 rideRequestSchema.index({ scheduledDeparture: 1 });
 rideRequestSchema.index({ earliestDeparture: 1, latestDeparture: 1 });
+rideRequestSchema.index({ status: 1, scheduledDeparture: 1, createdAt: -1 });
+rideRequestSchema.index({ status: 1, from: 1, to: 1, scheduledDeparture: 1 });
+rideRequestSchema.index({ sosActivated: 1, sosActivatedAt: -1 });
 
 export const RideRequest = mongoose.model('RideRequest', rideRequestSchema);
 
@@ -274,6 +397,26 @@ const rideOfferSchema = new Schema(
       enum: ['commuter', 'daily', 'casual', 'professional'],
       default: 'commuter',
     },
+    driverPrivacyType: {
+      type: String,
+      enum: driverPrivacyTypeEnum,
+      default: 'private_vehicle',
+      index: true,
+    },
+    publicDisclosure: {
+      showFullName: { type: Boolean, default: false },
+      showPhone: { type: Boolean, default: false },
+      showFullVehicleNumber: { type: Boolean, default: false },
+      showProfilePhoto: { type: Boolean, default: false },
+    },
+    trustBatch: {
+      type: String,
+      enum: ['new', 'community', 'trusted', 'featured'],
+      default: 'new',
+      index: true,
+    },
+    trustScore: { type: Number, min: 0, max: 100, default: 50 },
+    publicityScore: { type: Number, min: 0, max: 100, default: 40 },
     notes: String,
     womenOnly: { type: Boolean, default: false },
     pickupLatitude: Number,
@@ -360,6 +503,21 @@ const rideOfferSchema = new Schema(
         customRequest: String,
       },
     ],
+    holdRequests: [
+      {
+        passengerClerkId: { type: String, required: true },
+        passengerName: String,
+        minutes: { type: Number, min: 1, max: 60, required: true },
+        status: {
+          type: String,
+          enum: ['pending', 'approved', 'rejected'],
+          default: 'pending',
+          index: true,
+        },
+        requestedAt: { type: Date, default: Date.now },
+        respondedAt: Date,
+      },
+    ],
     pickupStatus: {
       driverConfirmedAt: Date,
       confirmedPassengers: [String], // Array of passenger clerkIds
@@ -394,6 +552,15 @@ const rideOfferSchema = new Schema(
     createdAt: { type: Date, default: Date.now, index: true },
     updatedAt: { type: Date, default: Date.now },
     completedAt: Date,
+    // SOS Alert System Fields
+    sosActivated: { type: Boolean, default: false, index: true },
+    sosActivatedAt: Date,
+    sosActivatedBy: { type: String, index: true },
+    sosReason: String,
+    sosResolvedAt: Date,
+    sosResolution: String,
+    sosAdminNotes: String,
+    sosResponseTime: Number,
   },
   { timestamps: true },
 );
@@ -406,6 +573,14 @@ rideOfferSchema.index({ departureTime: 1 });
 rideOfferSchema.index({ scheduledDeparture: 1 });
 rideOfferSchema.index({ earliestDeparture: 1, latestDeparture: 1 });
 rideOfferSchema.index({ from: 1, to: 1, departureTime: 1 });
+rideOfferSchema.index({ status: 1, scheduledDeparture: 1, createdAt: -1 });
+rideOfferSchema.index({ status: 1, from: 1, to: 1, scheduledDeparture: 1 });
+rideOfferSchema.index({ driverId: 1, status: 1, scheduledDeparture: -1 });
+rideOfferSchema.index({
+  'holdRequests.status': 1,
+  'holdRequests.requestedAt': 1,
+});
+rideOfferSchema.index({ sosActivated: 1, sosActivatedAt: -1 });
 
 export const RideOffer = mongoose.model('RideOffer', rideOfferSchema);
 
@@ -472,6 +647,9 @@ rideBookingSchema.index({ rideId: 1, approvalStatus: 1 });
 rideBookingSchema.index({ passengerId: 1, approvalStatus: 1 });
 rideBookingSchema.index({ driverId: 1, approvalStatus: 1 });
 rideBookingSchema.index({ approvalRequestedAt: 1, approvalStatus: 1 });
+rideBookingSchema.index({ paymentId: 1 }, { sparse: true });
+rideBookingSchema.index({ driverId: 1, approvalStatus: 1, createdAt: -1 });
+rideBookingSchema.index({ passengerId: 1, approvalStatus: 1, createdAt: -1 });
 
 export const RideBooking = mongoose.model('RideBooking', rideBookingSchema);
 

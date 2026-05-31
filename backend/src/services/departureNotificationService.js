@@ -1,5 +1,7 @@
 import { RideOffer, UserProfile } from '../config/models.js';
-import { sendPushNotification } from '../controllers/notificationController.js';
+import { sendPushToToken } from './pushNotificationService.js';
+
+let departureNotificationInterval = null;
 
 /**
  * Check for rides departing in the next 5 minutes and send notifications to drivers
@@ -33,7 +35,7 @@ export async function checkDepartureNotifications() {
       try {
         // Get driver details
         const driver = await UserProfile.findOne({ clerkId: ride.clerkId });
-        if (!driver || !driver.expoPushToken) {
+        if (!driver || !driver.pushToken) {
           console.log(`⏭️ Skipping ride ${ride._id} - no driver push token`);
           continue;
         }
@@ -75,8 +77,8 @@ export async function checkDepartureNotifications() {
         }
 
         // Send push notification
-        await sendPushNotification({
-          expoPushToken: driver.expoPushToken,
+        await sendPushToToken({
+          pushToken: driver.pushToken,
           title,
           body,
           data,
@@ -106,16 +108,27 @@ export async function checkDepartureNotifications() {
  * Runs every minute to check for upcoming departures
  */
 export function startDepartureNotificationService() {
-  console.log('🚀 Starting departure notification service...');
+  if (departureNotificationInterval) {
+    return departureNotificationInterval;
+  }
 
-  // Run immediately on start
+  console.log('Starting departure notification service...');
+
   checkDepartureNotifications();
 
-  // Run every minute
-  const INTERVAL = 60 * 1000; // 1 minute
-  setInterval(checkDepartureNotifications, INTERVAL);
-
-  console.log(
-    '✅ Departure notification service started (checking every minute)',
+  const intervalMs = 60 * 1000;
+  departureNotificationInterval = setInterval(
+    checkDepartureNotifications,
+    intervalMs,
   );
+
+  console.log('Departure notification service started');
+  return departureNotificationInterval;
+}
+
+export function stopDepartureNotificationService() {
+  if (departureNotificationInterval) {
+    clearInterval(departureNotificationInterval);
+    departureNotificationInterval = null;
+  }
 }

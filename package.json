@@ -7,7 +7,21 @@
     "dev": "expo start",
     "build:web": "expo export --platform web",
     "lint": "expo lint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
+    "backend:arch": "node scripts/backend-architecture-guard.js",
+    "matching:check": "python -m compileall -q backend/services/matching-service/app",
+    "backend:check": "npm --prefix backend run check && npm run matching:check && npm run typecheck",
+    "services:kafka:health": "cd backend && npm run kafka:health",
+    "services:kafka:local": "powershell -ExecutionPolicy Bypass -File scripts/start-local-kafka.ps1",
+    "services:topics": "cd backend && npm run kafka:topics",
+    "services:up": "docker compose up --build -d",
+    "services:local:up": "powershell -ExecutionPolicy Bypass -File scripts/start-local-services.ps1",
+    "services:app:local": "powershell -ExecutionPolicy Bypass -File scripts/start-local-app-services.ps1",
+    "services:local:down": "powershell -ExecutionPolicy Bypass -File scripts/stop-local-services.ps1",
+    "services:verify": "powershell -ExecutionPolicy Bypass -File scripts/verify-services.ps1",
+    "services:down": "docker compose down",
+    "services:logs": "docker compose logs -f api worker matching-service",
+    "services:status": "docker compose ps",
     "android": "expo run:android",
     "ios": "expo run:ios"
   },
@@ -60,6 +74,8 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/react": "~19.1.10",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~10.0.0",
     "typescript": "~5.9.2"
   }
 }

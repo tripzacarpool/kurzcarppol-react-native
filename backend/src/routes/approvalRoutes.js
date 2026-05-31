@@ -11,9 +11,13 @@ import {
   handleExpiredApprovals,
   getApprovalAnalytics,
   getPassengerBookings,
+  cancelPendingApproval,
 } from '../controllers/approvalController.js';
+import { requireClerkAuth } from '../middleware/clerkAuth.js';
+import { requireRole } from '../middleware/requireRole.js';
 
 const router = express.Router();
+router.use(requireClerkAuth);
 
 /**
  * Booking creation with auto-approval logic
@@ -68,7 +72,7 @@ router.put('/rides/:rideId/approval-settings', updateRideApprovalSettings);
  * Handle expired approvals (auto-reject)
  * POST /api/approvals/handle-expired
  */
-router.post('/approvals/handle-expired', handleExpiredApprovals);
+router.post('/approvals/handle-expired', requireRole('admin'), handleExpiredApprovals);
 
 /**
  * Get approval analytics for driver
@@ -81,5 +85,11 @@ router.get('/drivers/:driverId/approval-analytics', getApprovalAnalytics);
  * GET /api/bookings/passenger/me
  */
 router.get('/bookings/passenger/me', getPassengerBookings);
+
+/**
+ * Cancel a pending approval request (passenger-initiated)
+ * DELETE /api/bookings/:bookingId/cancel-approval
+ */
+router.delete('/bookings/:bookingId/cancel-approval', cancelPendingApproval);
 
 export default router;

@@ -12,18 +12,34 @@ import {
   Platform,
   Keyboard,
 } from 'react-native';
-import { X, MapPin, Users, DollarSign, FileText, Navigation } from 'lucide-react-native';
+import { X, MapPin, Users, DollarSign, FileText, Navigation, Sparkles, CalendarDays } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimeSelectorAdvanced from './DateTimeSelectorAdvanced';
 import { useAuth, useUser } from '@/lib/clerkHooks';
 import { Colors } from '@/constants/Colors';
 import { GOOGLE_MAPS_API_KEY } from '@/config/googleMaps';
+import { getApiBaseUrl } from '@/lib/backendConfig';
 import { VEHICLE_TYPE_OPTIONS } from '@/constants/vehicleTypes';
-import { FESTIVAL_TYPES } from '@/constants/festivals';
+import {
+  ACTIVE_FESTIVAL_STORAGE_KEY,
+  DEFAULT_ACTIVE_FESTIVAL_CAMPAIGNS,
+  FESTIVALS,
+  type ActiveFestivalCampaign,
+} from '@/constants/festivals';
 import { createDriverRideOffer, createRideOffer, updateRideOffer, setAuthToken } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
+
+const MAPS_PROXY_BASE_URL = getApiBaseUrl();
+type FestivalToggleKey = 'longRoute' | 'discount' | 'groupBooking' | 'smartPricing';
+
+const FESTIVAL_TOGGLE_OPTIONS: { key: FestivalToggleKey; label: string }[] = [
+  { key: 'longRoute', label: 'Long route' },
+  { key: 'discount', label: 'Festival discount' },
+  { key: 'groupBooking', label: 'Group booking' },
+  { key: 'smartPricing', label: 'Smart pricing' },
+];
 
 interface DriverRideOfferModalProps {
   visible: boolean;
@@ -88,6 +104,8 @@ export default function DriverRideOfferModal({
   const [isRouteCalculated, setIsRouteCalculated] = useState(false);
   const [vehicleType, setVehicleType] = useState<'two_wheeler' | 'three_wheeler' | 'four_wheeler'>('four_wheeler');
   const [requiresManualApproval, setRequiresManualApproval] = useState(false);
+  const [driverPrivacyType, setDriverPrivacyType] = useState<'private_vehicle' | 'full_detail'>('private_vehicle');
+  const [activeFestivalCampaigns, setActiveFestivalCampaigns] = useState<ActiveFestivalCampaign[]>([]);
 
   // Festival special-pool state
   const [festivalType, setFestivalType] = useState<string>('');
@@ -107,10 +125,44 @@ export default function DriverRideOfferModal({
     type: AlertType;
   }>({ title: '', message: '', type: 'info' });
 
+  const toggleFestivalConfigOption = (key: FestivalToggleKey) => {
+    setFestivalConfig((config) => ({
+      ...config,
+      [key]: !config[key],
+    }));
+  };
+
   // Load recent searches on mount
   useEffect(() => {
     loadRecentSearches();
   }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+
+    const loadActiveFestivals = async () => {
+      try {
+        const saved = await AsyncStorage.getItem(ACTIVE_FESTIVAL_STORAGE_KEY);
+        const campaigns: ActiveFestivalCampaign[] = saved
+          ? JSON.parse(saved)
+          : DEFAULT_ACTIVE_FESTIVAL_CAMPAIGNS;
+        setActiveFestivalCampaigns(campaigns.filter((campaign) => campaign.enabled));
+      } catch (error) {
+        console.warn('Could not load active festival campaigns:', error);
+        setActiveFestivalCampaigns([]);
+      }
+    };
+
+    loadActiveFestivals();
+  }, [visible]);
+
+  useEffect(() => {
+    if (!festivalType) return;
+    const stillActive = activeFestivalCampaigns.some((campaign) => campaign.id === festivalType);
+    if (!stillActive) {
+      setFestivalType('');
+    }
+  }, [activeFestivalCampaigns, festivalType]);
 
   // Load editing data when modal opens with editingOffer
   useEffect(() => {
@@ -208,7 +260,10 @@ export default function DriverRideOfferModal({
   // Geocode address to get coordinates
   const geocodeAddress = async (address: string) => {
     try {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_MAPS_API_KEY}`;
+      const encodedAddress = encodeURIComponent(address);
+      const url = MAPS_PROXY_BASE_URL
+        ? `${MAPS_PROXY_BASE_URL}/api/maps/geocode?address=${encodedAddress}`
+        : `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${GOOGLE_MAPS_API_KEY}`;
       const response = await fetch(url);
       const data = await response.json();
       
@@ -567,6 +622,21 @@ export default function DriverRideOfferModal({
         notes: notes.trim(),
         womenOnly,
         requiresManualApproval,
+        driverPrivacyType,
+        publicDisclosure:
+          driverPrivacyType === 'full_detail'
+            ? {
+                showFullName: true,
+                showPhone: true,
+                showFullVehicleNumber: true,
+                showProfilePhoto: true,
+              }
+            : {
+                showFullName: false,
+                showPhone: false,
+                showFullVehicleNumber: false,
+                showProfilePhoto: false,
+              },
         departureTime: departureTime.toISOString(),
         pickupLatitude: fromLocation?.latitude,
         pickupLongitude: fromLocation?.longitude,
@@ -685,99 +755,66 @@ export default function DriverRideOfferModal({
           <ScrollView
             style={styles.content}
             showsVerticalScrollIndicator={false}>
-            <View style={styles.section}>
-              <View style={styles.inputGroup}>
-                <View style={styles.inputLabel}>
-                  <MapPin size={16} color={Colors.dark.gold} />
-                  <Text style={styles.label}>From</Text>
+            <View style={styles.routePanel}>
+              <Text style={styles.routePanelTitle}>Route</Text>
+              <Text style={styles.routePanelSubtitle}>
+                Pick exact pickup and drop-off points. Distance can be estimated after both are selected.
+              </Text>
+              <View style={styles.routeRows}>
+                <View style={styles.routeRail}>
+                  <View style={[styles.routeDot, styles.pickupDot]} />
+                  <View style={styles.routeLine} />
+                  <View style={[styles.routeDot, styles.dropoffDot]} />
+                  <View style={styles.routeLine} />
+                  <View style={[styles.routeDot, styles.timeDot]} />
                 </View>
-                <View style={styles.locationInputContainer}>
-                  <TextInput
-                    style={[styles.input, styles.locationInput]}
-                    placeholder="Pickup location"
-                    placeholderTextColor={Colors.dark.textSecondary}
-                    value={from}
-                    onChangeText={setFrom}
-                    onFocus={() => setFromFocused(true)}
-                    onBlur={() => setTimeout(() => setFromFocused(false), 300)}
-                    autoCapitalize="words"
-                  />
+                <View style={styles.routeInputs}>
                   <TouchableOpacity
-                    style={styles.mapButton}
+                    style={styles.routeField}
                     onPress={() => openLocationPicker('from')}
-                  >
-                    <Navigation size={20} color={Colors.dark.gold} />
+                    activeOpacity={0.75}>
+                    <View style={styles.routeFieldCopy}>
+                      <Text style={styles.routeLabel}>Pickup</Text>
+                      <Text
+                        style={[styles.routeValue, !from && styles.routePlaceholder]}
+                        numberOfLines={1}>
+                        {from || 'Where will passengers board?'}
+                      </Text>
+                    </View>
+                    <Navigation size={18} color={Colors.dark.gold} />
                   </TouchableOpacity>
-                </View>
-                {/* Recent Searches Dropdown for From */}
-                {fromFocused && recentSearches.length > 0 && (
-                  <View style={styles.recentDropdown}>
-                    {recentSearches.slice(0, 5).map((search, index) => (
-                      <TouchableOpacity
-                        key={index}
-                        style={styles.recentDropdownItem}
-                        activeOpacity={0.7}
-                        onPress={() => handleRecentSearchSelect(search, 'from')}
-                      >
-                        <MapPin size={16} color={Colors.dark.gold} />
-                        <Text style={styles.recentDropdownText}>{search}</Text>
-                        <TouchableOpacity
-                          style={styles.recentLocationIcon}
-                          onPress={() => handleRecentSearchSelect(search, 'from')}
-                        >
-                          <Navigation size={14} color={Colors.dark.gold} />
-                        </TouchableOpacity>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
-              </View>
 
-              <View style={styles.inputGroup}>
-                <View style={styles.inputLabel}>
-                  <MapPin size={16} color={Colors.dark.gold} />
-                  <Text style={styles.label}>To</Text>
-                </View>
-                <View style={styles.locationInputContainer}>
-                  <TextInput
-                    style={[styles.input, styles.locationInput]}
-                    placeholder="Dropoff location"
-                    placeholderTextColor={Colors.dark.textSecondary}
-                    value={to}
-                    onChangeText={setTo}
-                    onFocus={() => setToFocused(true)}
-                    onBlur={() => setTimeout(() => setToFocused(false), 300)}
-                    autoCapitalize="words"
-                  />
                   <TouchableOpacity
-                    style={styles.mapButton}
+                    style={styles.routeField}
                     onPress={() => openLocationPicker('to')}
-                  >
-                    <Navigation size={20} color={Colors.dark.gold} />
+                    activeOpacity={0.75}>
+                    <View style={styles.routeFieldCopy}>
+                      <Text style={styles.routeLabel}>Drop-off</Text>
+                      <Text
+                        style={[styles.routeValue, !to && styles.routePlaceholder]}
+                        numberOfLines={1}>
+                        {to || 'Where are you going?'}
+                      </Text>
+                    </View>
+                    <MapPin size={18} color={Colors.dark.pink} />
                   </TouchableOpacity>
-                </View>
-                {/* Recent Searches Dropdown for To */}
-                {toFocused && recentSearches.length > 0 && (
-                  <View style={styles.recentDropdown}>
-                    {recentSearches.slice(0, 5).map((search, index) => (
-                      <TouchableOpacity
-                        key={index}
-                        style={styles.recentDropdownItem}
-                        activeOpacity={0.7}
-                        onPress={() => handleRecentSearchSelect(search, 'to')}
-                      >
-                        <MapPin size={16} color={Colors.dark.gold} />
-                        <Text style={styles.recentDropdownText}>{search}</Text>
-                        <TouchableOpacity
-                          style={styles.recentLocationIcon}
-                          onPress={() => handleRecentSearchSelect(search, 'to')}
-                        >
-                          <Navigation size={14} color={Colors.dark.gold} />
-                        </TouchableOpacity>
-                      </TouchableOpacity>
-                    ))}
+
+                  <View style={[styles.routeField, styles.routeFieldLast]}>
+                    <View style={styles.routeFieldCopy}>
+                      <Text style={styles.routeLabel}>Departure</Text>
+                      <Text style={styles.routeValue} numberOfLines={1}>
+                        {departureTime.toLocaleString('en-IN', {
+                          weekday: 'short',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                          day: 'numeric',
+                          month: 'short',
+                        })}
+                      </Text>
+                    </View>
+                    <Navigation size={18} color={Colors.dark.gold} />
                   </View>
-                )}
+                </View>
               </View>
 
               {/* Recent Searches */}
@@ -812,7 +849,7 @@ export default function DriverRideOfferModal({
 
             {/* Route Information - Optional */}
             {fromLocation && toLocation && (
-              <View style={styles.section}>
+              <View style={styles.routeSummarySection}>
                 <RouteInfo
                   pickupLocation={fromLocation}
                   dropoffLocation={toLocation}
@@ -826,7 +863,7 @@ export default function DriverRideOfferModal({
 
             {/* Show message when locations are not set */}
             {(!fromLocation || !toLocation) && from && to && (
-              <View style={styles.section}>
+              <View style={styles.routeSummarySection}>
                 <Text style={styles.locationHint}>
                   📍 Please select locations from the map to calculate route
                 </Text>
@@ -842,8 +879,14 @@ export default function DriverRideOfferModal({
             />
 
             {/* Vehicle Type Selection */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Vehicle Type</Text>
+            <View style={styles.formSection}>
+              <View style={styles.sectionHeadingRow}>
+                <Text style={styles.sectionTitle}>Vehicle and seats</Text>
+                <Text style={styles.sectionStep}>2</Text>
+              </View>
+              <Text style={styles.sectionHint}>
+                Choose the vehicle first. Passenger seats adjust automatically and can be edited.
+              </Text>
               <View style={styles.vehicleTypeList}>
                 {VEHICLE_TYPE_OPTIONS.map((option) => (
                   <TouchableOpacity
@@ -878,72 +921,91 @@ export default function DriverRideOfferModal({
               </View>
             </View>
 
-            {/* Festival Special Pool */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Festival Special Pool</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-                {FESTIVAL_TYPES.map((option) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.vehicleTypeButton,
-                      festivalType === option.value && styles.vehicleTypeButtonActive,
-                    ]}
-                    onPress={() => setFestivalType(option.value)}>
-                    <Text
-                      style={[
-                        styles.vehicleTypeText,
-                        festivalType === option.value && styles.vehicleTypeTextActive,
-                      ]}>
-                      {option.label}
+            {activeFestivalCampaigns.length > 0 && (
+              <View style={styles.festivalSection}>
+                <View style={styles.festivalHeader}>
+                  <View style={styles.festivalHeaderCopy}>
+                    <View style={styles.festivalTitleRow}>
+                      <Sparkles size={17} color={Colors.dark.gold} />
+                      <Text style={styles.sectionTitle}>Festival pool</Text>
+                    </View>
+                    <Text style={styles.sectionHint}>
+                      Optional. Only admin-enabled seasons are shown here.
                     </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              {festivalType && festivalType !== '' && (
-                <View style={{ marginTop: 8 }}>
-                  <Text style={styles.label}>Festival Pool Options</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginVertical: 8 }}>
-                    <TouchableOpacity
-                      style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
-                      onPress={() => setFestivalConfig((c) => ({ ...c, longRoute: !c.longRoute }))}>
-                      <Switch value={festivalConfig.longRoute} onValueChange={() => setFestivalConfig((c) => ({ ...c, longRoute: !c.longRoute }))} />
-                      <Text style={{ marginLeft: 4 }}>Long Route</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
-                      onPress={() => setFestivalConfig((c) => ({ ...c, discount: !c.discount }))}>
-                      <Switch value={festivalConfig.discount} onValueChange={() => setFestivalConfig((c) => ({ ...c, discount: !c.discount }))} />
-                      <Text style={{ marginLeft: 4 }}>Discount</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
-                      onPress={() => setFestivalConfig((c) => ({ ...c, groupBooking: !c.groupBooking }))}>
-                      <Switch value={festivalConfig.groupBooking} onValueChange={() => setFestivalConfig((c) => ({ ...c, groupBooking: !c.groupBooking }))} />
-                      <Text style={{ marginLeft: 4 }}>Group Booking</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
-                      onPress={() => setFestivalConfig((c) => ({ ...c, smartPricing: !c.smartPricing }))}>
-                      <Switch value={festivalConfig.smartPricing} onValueChange={() => setFestivalConfig((c) => ({ ...c, smartPricing: !c.smartPricing }))} />
-                      <Text style={{ marginLeft: 4 }}>Smart Pricing</Text>
-                    </TouchableOpacity>
                   </View>
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={styles.label}>Tier (Optional)</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g., Gold, Silver, Platinum"
-                      value={festivalConfig.tier}
-                      onChangeText={(text) => setFestivalConfig((c) => ({ ...c, tier: text }))}
-                    />
-                  </View>
+                  {festivalType ? (
+                    <TouchableOpacity onPress={() => setFestivalType('')} style={styles.clearFestivalButton}>
+                      <Text style={styles.clearFestivalText}>Clear</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
-              )}
-            </View>
+
+                <View style={styles.festivalList}>
+                  {activeFestivalCampaigns.map((campaign) => {
+                    const meta = FESTIVALS[campaign.id];
+                    const isSelected = festivalType === campaign.id;
+
+                    return (
+                      <TouchableOpacity
+                        key={campaign.id}
+                        style={[
+                          styles.festivalOption,
+                          isSelected && styles.festivalOptionActive,
+                        ]}
+                        onPress={() => {
+                          setFestivalType(campaign.id);
+                          setFestivalConfig((config) => ({
+                            ...config,
+                            discount: true,
+                            smartPricing: true,
+                            tier: config.tier || 'Tier 1',
+                          }));
+                        }}
+                        activeOpacity={0.8}>
+                        <View style={styles.festivalOptionTop}>
+                          <Text style={styles.festivalEmoji}>{meta.emoji}</Text>
+                          <View style={styles.festivalOptionCopy}>
+                            <Text style={styles.festivalOptionTitle}>{campaign.label}</Text>
+                            <Text style={styles.festivalOptionNote} numberOfLines={2}>
+                              {campaign.note}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.festivalOptionMeta}>
+                          <CalendarDays size={13} color={Colors.dark.textSecondary} />
+                          <Text style={styles.festivalOptionMetaText}>
+                            {campaign.startsAt} to {campaign.endsAt}
+                          </Text>
+                          <Text style={styles.festivalDiscountText}>
+                            {meta.discountPercentage}% promo
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {festivalType ? (
+                  <View style={styles.festivalToggles}>
+                    {FESTIVAL_TOGGLE_OPTIONS.map(({ key, label }) => (
+                      <TouchableOpacity
+                        key={key}
+                        style={styles.festivalToggle}
+                        onPress={() => toggleFestivalConfigOption(key)}>
+                        <Switch
+                          value={festivalConfig[key]}
+                          onValueChange={() => toggleFestivalConfigOption(key)}
+                        />
+                        <Text style={styles.festivalToggleText}>{label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            )}
 
             {/* Max Passengers */}
-            <View style={styles.section}>
+            <View style={styles.formSectionCompact}>
               <View style={styles.inputGroup}>
                 <View style={styles.inputLabel}>
                   <Users size={16} color={Colors.dark.gold} />
@@ -964,7 +1026,7 @@ export default function DriverRideOfferModal({
             {renderSeatSelection()}
 
             {/* Fare */}
-            <View style={styles.section}>
+            <View style={styles.formSectionCompact}>
               <View style={styles.inputGroup}>
                 <View style={styles.inputLabel}>
                   <DollarSign size={16} color={Colors.dark.gold} />
@@ -987,7 +1049,14 @@ export default function DriverRideOfferModal({
             </View>
 
             {/* Notes */}
-            <View style={styles.section}>
+            <View style={styles.formSection}>
+              <View style={styles.sectionHeadingRow}>
+                <Text style={styles.sectionTitle}>Preferences</Text>
+                <Text style={styles.sectionStep}>3</Text>
+              </View>
+              <Text style={styles.sectionHint}>
+                Add notes and booking rules only when they help passengers decide.
+              </Text>
               <View style={styles.inputGroup}>
                 <View style={styles.inputLabel}>
                   <FileText size={16} color={Colors.dark.gold} />
@@ -1022,6 +1091,50 @@ export default function DriverRideOfferModal({
                   thumbColor={Colors.dark.text}
                 />
               </View>
+
+              <View style={styles.switchContainer}>
+                <View style={styles.switchLabel}>
+                  <Text style={styles.switchText}>Driver public profile</Text>
+                  <Text style={styles.switchSubtext}>
+                    Private vehicle hides full identity and vehicle number from passengers
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.approvalModeOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.approvalModeButton,
+                    driverPrivacyType === 'private_vehicle' && styles.approvalModeButtonActive,
+                  ]}
+                  onPress={() => setDriverPrivacyType('private_vehicle')}>
+                  <Text style={[
+                    styles.approvalModeButtonText,
+                    driverPrivacyType === 'private_vehicle' && styles.approvalModeButtonTextActive,
+                  ]}>
+                    Private vehicle
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.approvalModeButton,
+                    driverPrivacyType === 'full_detail' && styles.approvalModeButtonActive,
+                  ]}
+                  onPress={() => setDriverPrivacyType('full_detail')}>
+                  <Text style={[
+                    styles.approvalModeButtonText,
+                    driverPrivacyType === 'full_detail' && styles.approvalModeButtonTextActive,
+                  ]}>
+                    Full details
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.approvalModeDescription}>
+                {driverPrivacyType === 'private_vehicle'
+                  ? 'Passengers see limited public details. Admin still keeps verification data separately.'
+                  : 'Passengers can see your full public driver and vehicle details.'}
+              </Text>
 
               <View style={styles.switchContainer}>
                 <View style={styles.switchLabel}>
@@ -1183,6 +1296,96 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.dark.text,
   },
+  routePanel: {
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 20,
+  },
+  routePanelTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    marginBottom: 4,
+  },
+  routePanelSubtitle: {
+    color: Colors.dark.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  routeSummarySection: {
+    marginBottom: 14,
+  },
+  routeRows: {
+    flexDirection: 'row',
+  },
+  routeRail: {
+    width: 22,
+    alignItems: 'center',
+    paddingTop: 19,
+  },
+  routeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+  },
+  pickupDot: {
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold,
+  },
+  dropoffDot: {
+    borderColor: Colors.dark.pink,
+    backgroundColor: Colors.dark.pink,
+  },
+  timeDot: {
+    borderColor: Colors.dark.textSecondary,
+    backgroundColor: Colors.dark.card,
+  },
+  routeLine: {
+    width: 1,
+    height: 54,
+    backgroundColor: Colors.dark.border,
+  },
+  routeInputs: {
+    flex: 1,
+    marginLeft: 8,
+  },
+  routeField: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+    paddingVertical: 8,
+    gap: 10,
+  },
+  routeFieldLast: {
+    borderBottomWidth: 0,
+  },
+  routeFieldCopy: {
+    flex: 1,
+  },
+  routeLabel: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  routeValue: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 3,
+  },
+  routePlaceholder: {
+    color: Colors.dark.textSecondary,
+    fontWeight: '500',
+  },
   input: {
     backgroundColor: Colors.dark.card,
     borderRadius: 12,
@@ -1262,6 +1465,154 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.dark.text,
     marginBottom: 8,
+  },
+  formSection: {
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 14,
+  },
+  formSectionCompact: {
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 14,
+  },
+  sectionHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  sectionStep: {
+    minWidth: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: Colors.dark.gold + '22',
+    color: Colors.dark.gold,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 26,
+    textAlign: 'center',
+    overflow: 'hidden',
+  },
+  sectionHint: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  festivalSection: {
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '55',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 14,
+  },
+  festivalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
+  festivalHeaderCopy: {
+    flex: 1,
+  },
+  festivalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  clearFestivalButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.background,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  clearFestivalText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  festivalList: {
+    gap: 10,
+  },
+  festivalOption: {
+    backgroundColor: Colors.dark.background,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    padding: 12,
+  },
+  festivalOptionActive: {
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '14',
+  },
+  festivalOptionTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  festivalEmoji: {
+    fontSize: 24,
+  },
+  festivalOptionCopy: {
+    flex: 1,
+  },
+  festivalOptionTitle: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  festivalOptionNote: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 3,
+  },
+  festivalOptionMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  festivalOptionMetaText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+  },
+  festivalDiscountText: {
+    color: Colors.dark.gold,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  festivalToggles: {
+    marginTop: 12,
+    gap: 10,
+  },
+  festivalToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.dark.background,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  festivalToggleText: {
+    color: Colors.dark.text,
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+    marginLeft: 8,
   },
   vehicleTypeContainer: {
     flexDirection: 'row',

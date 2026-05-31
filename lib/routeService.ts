@@ -8,13 +8,10 @@
 
 import { GOOGLE_MAPS_API_KEY } from '@/config/googleMaps';
 import { Platform } from 'react-native';
+import { getApiBaseUrl } from '@/lib/backendConfig';
 
 const IS_WEB = Platform.OS === 'web';
-if (!process.env.EXPO_PUBLIC_API_URL) {
-  throw new Error('EXPO_PUBLIC_API_URL environment variable is required');
-}
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
-// const API_BASE_URL = 'http://localhost:5000'; // Local development URL
+const API_BASE_URL = getApiBaseUrl();
 
 export interface RouteCoordinate {
   latitude: number;
@@ -29,6 +26,27 @@ export interface DirectionsResponse {
   durationValue: number; // Duration in seconds
   success: boolean;
   error?: string;
+  source?: 'google' | 'estimate';
+}
+
+function buildEstimatedRoute(
+  origin: RouteCoordinate,
+  destination: RouteCoordinate,
+  error?: string,
+): DirectionsResponse {
+  const distanceKm = calculateDistance(origin, destination);
+  const distanceValue = Math.round(distanceKm * 1000);
+
+  return {
+    routes: [origin, destination],
+    distance: `${distanceKm.toFixed(distanceKm < 10 ? 1 : 0)} km`,
+    duration: estimateETA(distanceKm),
+    distanceValue,
+    durationValue: Math.round((distanceKm / 30) * 60 * 60),
+    success: true,
+    error,
+    source: 'estimate',
+  };
 }
 
 /**
@@ -65,16 +83,8 @@ export async function fetchRouteFromGoogle(
     console.log('📍 Routes length:', data.routes?.length);
 
     if (data.status !== 'OK' || !data.routes || data.routes.length === 0) {
-      console.error('❌ Google Directions API error:', data.status);
-      return {
-        routes: [],
-        distance: 'Unknown',
-        duration: 'Unknown',
-        distanceValue: 0,
-        durationValue: 0,
-        success: false,
-        error: data.status || 'No route found',
-      };
+      console.warn('Google Directions unavailable, using estimated distance:', data.status);
+      return buildEstimatedRoute(origin, destination, data.status || 'No route found');
     }
 
     const route = data.routes[0];
@@ -96,18 +106,11 @@ export async function fetchRouteFromGoogle(
       distanceValue: leg.distance.value, // meters
       durationValue: leg.duration.value, // seconds
       success: true,
+      source: 'google',
     };
   } catch (error: any) {
-    console.error('❌ Error fetching route:', error);
-    return {
-      routes: [],
-      distance: 'Unknown',
-      duration: 'Unknown',
-      distanceValue: 0,
-      durationValue: 0,
-      success: false,
-      error: error.message,
-    };
+    console.warn('Route lookup unavailable, using estimated distance:', error?.message || error);
+    return buildEstimatedRoute(origin, destination, error?.message);
   }
 }
 

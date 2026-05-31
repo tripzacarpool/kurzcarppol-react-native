@@ -10,6 +10,17 @@ export interface FestivalMeta {
   expectedSurge: number; // multiplier
 }
 
+export interface ActiveFestivalCampaign {
+  id: Festival;
+  enabled: boolean;
+  label: string;
+  startsAt: string;
+  endsAt: string;
+  note: string;
+}
+
+export const ACTIVE_FESTIVAL_STORAGE_KEY = 'adminActiveFestivalCampaigns';
+
 export const FESTIVALS: Record<Festival, FestivalMeta> = {
   diwali: {
     title: 'Diwali',
@@ -79,8 +90,35 @@ export const RETURN_TRIP_DISCOUNT = 15; // 15% discount on return trip booking
 export const VERIFIED_LONG_ROUTE_DRIVER_BONUS = 50; // ₹50 bonus for verified drivers on long routes
 
 // UI-friendly festival list for dropdowns / buttons
-export const FESTIVAL_TYPES: Array<{ label: string; value: Festival }> =
+export const FESTIVAL_TYPES: { label: string; value: Festival }[] =
   Object.keys(FESTIVALS).map((k) => ({
     label: FESTIVALS[k as Festival].title,
     value: k as Festival,
   }));
+
+export const DEFAULT_ACTIVE_FESTIVAL_CAMPAIGNS: ActiveFestivalCampaign[] = [
+  {
+    id: 'diwali',
+    enabled: true,
+    label: FESTIVALS.diwali.title,
+    startsAt: '2026-10-30',
+    endsAt: '2026-11-18',
+    note: 'Long-route family travel and late-night returns',
+  },
+  {
+    id: 'wedding',
+    enabled: true,
+    label: FESTIVALS.wedding.title,
+    startsAt: '2026-11-01',
+    endsAt: '2027-02-15',
+    note: 'Group rides for venues, stations, and home towns',
+  },
+  {
+    id: 'chhath',
+    enabled: false,
+    label: FESTIVALS.chhath.title,
+    startsAt: '2026-11-12',
+    endsAt: '2026-11-20',
+    note: 'Bihar and NCR corridor demand',
+  },
+];

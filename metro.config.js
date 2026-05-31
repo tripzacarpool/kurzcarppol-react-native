@@ -6,6 +6,13 @@ const config = getDefaultConfig(__dirname);
 config.resolver.sourceExts = [...config.resolver.sourceExts, 'cjs'];
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === 'call-bind/callBound') {
+    return {
+      type: 'sourceFile',
+      filePath: require.resolve('call-bind/callBound'),
+    };
+  }
+
   // Redirect Node.js-specific engine.io-client imports to web versions
   if (moduleName.endsWith('.node.js')) {
     const webModule = moduleName.replace(/\.node\.js$/, '.js');

@@ -9,7 +9,6 @@ import {
   Switch,
   RefreshControl,
   ActivityIndicator,
-  Platform,
   Linking,
   Alert,
   TextInput,
@@ -17,7 +16,6 @@ import {
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import CustomAlert, { AlertType, AlertButton } from '@/components/CustomAlert';
-import * as Notifications from 'expo-notifications';
 import {
   Power,
   DollarSign,
@@ -34,6 +32,7 @@ import {
   List,
   BarChart3,
   ShieldCheck,
+  Bell,
   MessageSquare,
   User,
   Phone,
@@ -44,13 +43,15 @@ import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
 import type { DriverVerificationResult, DriverVerificationStatus } from '@/types';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
-import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, getRideOfferById, setAuthToken, getMyRideOffers, getPendingApprovals, getAllDriverPendingApprovals, approveBooking, rejectBooking, driverInitiatePickup } from '@/lib/api';
-import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket, subscribeToPickupConfirmed, unsubscribeFromPickupEvents } from '@/lib/locationSocket';
+import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, getRideOfferById, setAuthToken, getMyRideOffers, getPendingApprovals, getAllDriverPendingApprovals, approveBooking, rejectBooking, driverInitiatePickup, activateSOS, respondRideOfferHold } from '@/lib/api';
+import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket, joinUserSocketRoom, subscribeToPickupConfirmed, unsubscribeFromPickupEvents } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
 import ApprovalControlsDriver from '@/components/ApprovalControlsDriver';
 import VerificationBadge from '@/components/VerificationBadge';
 import ChatModal from '@/components/ChatModal';
 import PushNotificationDebug from '@/components/PushNotificationDebug';
+import SOSButton from '@/components/SOSButton';
+import { getBadgeCount, setBadgeCount } from '@/lib/notificationService';
 
 interface Ride {
   id: string;
@@ -59,6 +60,10 @@ interface Ride {
   to: string;
   passengers: number;
   fare?: number;
+  farePerSeat?: number;
+  driverGuaranteedFare?: number;
+  availableSeats?: number[];
+  fareSplit?: any;
   customRequest?: string;
   rating?: number;
   profileImage?: string;
@@ -82,7 +87,16 @@ interface DriverOffer {
   womenOnly?: boolean;
   createdAt?: string;
   departureTime?: string;
-  status?: 'live' | 'ongoing' | 'completed' | 'draft';
+  status?: 'waiting' | 'live' | 'ongoing' | 'booked' | 'completed' | 'cancelled' | 'draft';
+  lifecycleStatus?: 'live' | 'upcoming' | 'expired' | 'completed' | 'cancelled';
+  holdRequests?: Array<{
+    _id: string;
+    passengerName?: string;
+    passengerClerkId: string;
+    minutes: number;
+    status: 'pending' | 'approved' | 'rejected';
+    requestedAt?: string;
+  }>;
 }
 
 interface Conversation {
@@ -163,8 +177,10 @@ export default function DriverDashboard() {
   const [requiresManualApproval, setRequiresManualApproval] = useState(false);
   const [isFestivalRide, setIsFestivalRide] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [autoAcceptedBookings, setAutoAcceptedBookings] = useState<any[]>([]);
   const [expandedBookingId, setExpandedBookingId] = useState<string | null>(null);
   const [approvingBookingId, setApprovingBookingId] = useState<string | null>(null);
+  const [respondingHoldId, setRespondingHoldId] = useState<string | null>(null);
   const [approvalNotes, setApprovalNotes] = useState<string>('');
   const scrollViewRef = useRef<ScrollView>(null);
   const [currentActiveRide, setCurrentActiveRide] = useState<any | null>(null);
@@ -180,11 +196,7 @@ export default function DriverDashboard() {
 
   // Update app icon badge
   useEffect(() => {
-    if (Platform.OS === 'ios' || Platform.OS === 'android') {
-      Notifications.setBadgeCountAsync(totalUnreadMessages).catch(err => {
-        console.log('Failed to set badge count:', err);
-      });
-    }
+    setBadgeCount(totalUnreadMessages);
   }, [totalUnreadMessages]);
 
   const showAlert = (
@@ -219,17 +231,35 @@ export default function DriverDashboard() {
         const response = await getMyRideOffers(user.id);
         if (response.success && response.rideOffers && Array.isArray(response.rideOffers)) {
           // Transform backend data to match DriverOffer interface
-          const backendOffers: DriverOffer[] = response.rideOffers.map((offer: any) => ({
-            id: offer._id || offer.id,
-            from: offer.from,
-            to: offer.to,
-            seats: offer.availableSeats?.length || 0, // Show actual available seats
-            fare: offer.farePerSeat,
-            womenOnly: offer.womenOnly,
-            createdAt: offer.createdAt,
-            departureTime: offer.departureTime,
-            status: (offer.status === 'waiting' || offer.status === 'ongoing') ? 'live' : offer.status, // Map both waiting and ongoing to live
-          }));
+          const now = Date.now();
+          const backendOffers: DriverOffer[] = response.rideOffers.map((offer: any) => {
+            const departureMs = offer.departureTime ? new Date(offer.departureTime).getTime() : NaN;
+            const isPastDeparture = Number.isFinite(departureMs) && departureMs < now;
+            const lifecycleStatus =
+              offer.status === 'completed'
+                ? 'completed'
+                : offer.status === 'cancelled'
+                  ? 'cancelled'
+                  : isPastDeparture
+                    ? 'expired'
+                    : offer.status === 'ongoing'
+                      ? 'live'
+                      : 'upcoming';
+
+            return {
+              id: offer._id || offer.id,
+              from: offer.from,
+              to: offer.to,
+              seats: offer.availableSeats?.length || 0, // Show actual available seats
+              fare: offer.farePerSeat,
+              womenOnly: offer.womenOnly,
+              createdAt: offer.createdAt,
+              departureTime: offer.departureTime,
+              status: offer.status === 'waiting' && !isPastDeparture ? 'live' : offer.status,
+              lifecycleStatus,
+              holdRequests: offer.holdRequests || [],
+            };
+          });
           
           console.log('✅ Loaded offers from backend:', backendOffers.length);
           console.log('📊 Offers status mapping:', backendOffers.map(o => ({ 
@@ -390,6 +420,40 @@ export default function DriverDashboard() {
       }
     } catch (error) {
       console.error('Error loading pending approvals:', error);
+    }
+  };
+
+  const fetchAutoAcceptedBookings = async () => {
+    if (!user?.id) return;
+
+    try {
+      console.log('🔍 [APPROVAL] Fetching auto-accepted bookings from driver rides');
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      const response = await getMyRideOffers(user.id);
+      if (response?.success && Array.isArray(response.rideOffers)) {
+        const autoBookings: any[] = [];
+        response.rideOffers.forEach((ride: any) => {
+          if (Array.isArray(ride.bookings)) {
+            ride.bookings.forEach((b: any) => {
+              if (b.approvalStatus === 'auto_accepted') {
+                autoBookings.push({ ...b, rideInfo: { id: ride._id || ride.id, from: ride.from, to: ride.to } });
+              }
+            });
+          }
+        });
+
+        console.log(`✅ [APPROVAL] Found ${autoBookings.length} auto-accepted bookings`);
+        setAutoAcceptedBookings(autoBookings);
+      } else {
+        setAutoAcceptedBookings([]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching auto-accepted bookings:', error);
+      setAutoAcceptedBookings([]);
     }
   };
 
@@ -565,6 +629,7 @@ export default function DriverDashboard() {
     // Initialize location socket when component mounts
     if (user?.id) {
       initializeLocationSocket();
+      joinUserSocketRoom(user.id);
       driverGoesOnline(user.id);
       console.log('🟢 Location socket initialized');
       
@@ -595,6 +660,7 @@ export default function DriverDashboard() {
       fetchLiveRides();
       if (myOffers.length > 0) {
         fetchAllPendingApprovals();
+        fetchAutoAcceptedBookings();
         fetchCurrentActiveRide();
       }
       
@@ -603,6 +669,7 @@ export default function DriverDashboard() {
         fetchLiveRides();
         if (myOffers.length > 0) {
           fetchAllPendingApprovals();
+          fetchAutoAcceptedBookings();
           fetchCurrentActiveRide();
         }
       }, 60000);
@@ -624,10 +691,18 @@ export default function DriverDashboard() {
 
     const socket = getLocationSocket();
     
+    // Check if socket is available (returns null on web platform)
+    if (!socket) {
+      console.log('⚠️ [SOCKET] Socket not available (likely running on web platform)');
+      return;
+    }
+    
     console.log(`🔌 [SOCKET] Setting up socket listeners for driver: ${user.id}`);
     console.log(`🔌 [SOCKET] Socket connected: ${socket.connected}`);
     console.log(`🔌 [SOCKET] Socket ID: ${socket.id}`);
     console.log(`📡 [SOCKET] Will listen on: driver:booking-approval-request:${user.id}`);
+
+    joinUserSocketRoom(user.id);
 
     const handlePassengerPickup = (data: any) => {
       if (data.driverClerkId !== user.id || !activeRideId || data.rideId !== activeRideId) {
@@ -693,8 +768,8 @@ export default function DriverDashboard() {
 
       // Trigger local notification badge update
       try {
-        const currentBadgeCount = await Notifications.getBadgeCountAsync();
-        await Notifications.setBadgeCountAsync(currentBadgeCount + 1);
+        const currentBadgeCount = await getBadgeCount();
+        await setBadgeCount(currentBadgeCount + 1);
         console.log('📱 Badge count updated');
       } catch (err) {
         console.log('Badge update failed:', err);
@@ -703,19 +778,32 @@ export default function DriverDashboard() {
       // Refetch pending approvals
       if (activeRideId) {
         loadPendingApprovals(activeRideId);
+        fetchAutoAcceptedBookings();
       }
+    };
+
+    const handleHoldRequest = (data: any) => {
+      loadSavedOffers();
+      showAlert(
+        'Hold request',
+        `${data.passengerName || 'Passenger'} wants you to wait ${data.minutes} min. Review it on your ride card.`,
+        'info',
+      );
+      setSelectedTab('offers');
     };
 
     socket.on('ride:pickup-passenger', handlePassengerPickup);
     socket.on('ride:completed', handleRideCompleted);
     socket.on(`user:message:${user.id}`, handleNewMessage);
     socket.on(`driver:booking-approval-request:${user.id}`, handleBookingApprovalRequest);
+    socket.on(`driver:hold-request:${user.id}`, handleHoldRequest);
 
     return () => {
       socket.off('ride:pickup-passenger', handlePassengerPickup);
       socket.off('ride:completed', handleRideCompleted);
       socket.off(`user:message:${user.id}`, handleNewMessage);
       socket.off(`driver:booking-approval-request:${user.id}`, handleBookingApprovalRequest);
+      socket.off(`driver:hold-request:${user.id}`, handleHoldRequest);
     };
   }, [user?.id, activeRideId]);
 
@@ -726,6 +814,12 @@ export default function DriverDashboard() {
       // Poll for new messages every 10 seconds
       const interval = setInterval(loadConversations, 10000);
       return () => clearInterval(interval);
+    }
+  }, [user?.id, selectedTab]);
+
+  useEffect(() => {
+    if (user?.id && selectedTab === 'offers') {
+      loadSavedOffers();
     }
   }, [user?.id, selectedTab]);
 
@@ -753,6 +847,7 @@ export default function DriverDashboard() {
     if (selectedTab === 'live' && isLive && myOffers.length > 0) {
       console.log('🔄 Live tab selected - fetching pending approvals');
       fetchAllPendingApprovals();
+      fetchAutoAcceptedBookings();
     }
   }, [selectedTab, isLive, myOffers.length]);
 
@@ -769,6 +864,11 @@ export default function DriverDashboard() {
           from: ride.from,
           to: ride.to,
           passengers: ride.totalSeats,
+          fare: ride.requestedTotalFare || ride.fare || 0,
+          farePerSeat: ride.farePerSeat || ride.fareSplit?.perSeatEstimate || 0,
+          driverGuaranteedFare: ride.driverGuaranteedFare || ride.requestedTotalFare || ride.fare || 0,
+          availableSeats: ride.availableSeats || [],
+          fareSplit: ride.fareSplit,
           rating: ride.passenger?.rating || 5,
           profileImage: ride.passenger?.profileImage,
           createdAt: ride.createdAt,
@@ -1074,7 +1174,7 @@ export default function DriverDashboard() {
               // Stop location tracking
               stopSendingLocation();
               await signOut();
-              router.replace('/(auth)/login');
+              router.replace('/');
             } catch (error) {
               console.error('Logout error:', error);
               showAlert('Error', 'Failed to logout', 'error');
@@ -1190,6 +1290,79 @@ export default function DriverDashboard() {
     }
   };
 
+  const handleHoldResponse = async (
+    offerId: string,
+    requestId: string,
+    action: 'approve' | 'reject',
+  ) => {
+    if (!user?.id) return;
+
+    setRespondingHoldId(requestId);
+    try {
+      const response = await respondRideOfferHold(offerId, requestId, action, user.id);
+      if (response?.rideOffer) {
+        setMyOffers((current) =>
+          current.map((offer) =>
+            offer.id === offerId
+              ? {
+                  ...offer,
+                  departureTime: response.rideOffer.departureTime,
+                  holdRequests: response.rideOffer.holdRequests || offer.holdRequests,
+                }
+              : offer,
+          ),
+        );
+      }
+
+      showAlert(
+        action === 'approve' ? 'Hold approved' : 'Hold declined',
+        action === 'approve'
+          ? 'Departure time has been updated and the passenger was notified.'
+          : 'The passenger was notified.',
+        'success',
+      );
+    } catch (error: any) {
+      showAlert(
+        'Could not respond',
+        error?.response?.data?.error || 'Please try again.',
+        'error',
+      );
+    } finally {
+      setRespondingHoldId(null);
+    }
+  };
+
+  const dashboardPendingHoldCount = myOffers.reduce(
+    (total, offer) =>
+      total + (offer.holdRequests || []).filter((request) => request.status === 'pending').length,
+    0,
+  );
+  const driverNotificationCount = pendingApprovals.length + autoAcceptedBookings.length + dashboardPendingHoldCount;
+  const hasApprovalNotifications = pendingApprovals.length > 0 || autoAcceptedBookings.length > 0;
+  const hasHoldNotifications = dashboardPendingHoldCount > 0;
+
+  const handleDriverNotificationsPress = () => {
+    if (hasApprovalNotifications) {
+      const combined = [...autoAcceptedBookings, ...pendingApprovals];
+      setSelectedTab('live');
+      setExpandedBookingId(combined[0]?._id || null);
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({ y: 400, animated: true });
+      }, 100);
+      return;
+    }
+
+    if (hasHoldNotifications) {
+      setSelectedTab('offers');
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({ y: 260, animated: true });
+      }, 100);
+      return;
+    }
+
+    showAlert('No new driver notifications', 'Approval requests and hold requests will appear here when passengers need action.', 'info');
+  };
+
   const renderMyOffers = () => {
     if (offersLoading) {
       return (
@@ -1217,133 +1390,164 @@ export default function DriverDashboard() {
       );
     }
 
-    // Separate rides into active and upcoming
+    // Separate rides into bookable, future, and past buckets.
     const validOffers = myOffers.filter(offer => offer && offer.id && offer.from && offer.to && offer.seats != null);
-    
+    const now = Date.now();
+    const getOfferLifecycleStatus = (offer: DriverOffer): NonNullable<DriverOffer['lifecycleStatus']> => {
+      if (offer.lifecycleStatus) return offer.lifecycleStatus;
+      if (offer.status === 'completed') return 'completed';
+      if (offer.status === 'cancelled') return 'cancelled';
+
+      const departureMs = offer.departureTime ? new Date(offer.departureTime).getTime() : NaN;
+      if (Number.isFinite(departureMs) && departureMs < now) return 'expired';
+      if (offer.status === 'ongoing' || offer.status === 'live') return 'live';
+      return 'upcoming';
+    };
+
     const activeRides = validOffers.filter(offer => {
-      // Active: ride is live/ongoing and has available seats (available for booking)
-      // This includes both started rides and rides waiting for passengers
-      const isLiveStatus = offer.status === 'live' || offer.status === 'ongoing';
-      const hasSeats = offer.seats > 0;
-      
-      // Also include if departure time is within next 2 hours (imminent departure)
-      const departureTime = offer.departureTime ? new Date(offer.departureTime) : null;
-      const now = new Date();
-      const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-      const isDepartingSoon = departureTime && departureTime >= now && departureTime <= twoHoursFromNow;
-      
-      return isLiveStatus && (hasSeats || isDepartingSoon);
+      const lifecycle = getOfferLifecycleStatus(offer);
+      return lifecycle === 'live' && offer.seats > 0;
     });
 
     const upcomingRides = validOffers.filter(offer => {
-      // Upcoming: future rides not in active category, or completed rides
-      return !activeRides.includes(offer);
+      return getOfferLifecycleStatus(offer) === 'upcoming';
     });
 
+    const endedRides = validOffers.filter(offer => {
+      const lifecycle = getOfferLifecycleStatus(offer);
+      return lifecycle === 'expired' || lifecycle === 'completed' || lifecycle === 'cancelled';
+    });
+    const pendingHoldCount = dashboardPendingHoldCount;
+
     const renderOfferCard = (offer: DriverOffer) => {
-      const truncateAddr = (addr: string = '', max: number = 25) => {
+      const truncateAddr = (addr: string = '', max: number = 32) => {
         if (!addr) return '';
         return addr.length > max ? addr.substring(0, max) + '...' : addr;
       };
 
       const isActive = activeRides.includes(offer);
+      const status = offer.status || 'live';
+      const lifecycle = getOfferLifecycleStatus(offer);
+      const isCompleted = lifecycle === 'completed';
+      const isExpired = lifecycle === 'expired';
+      const isCancelled = lifecycle === 'cancelled';
+      const timeValue = offer.departureTime || offer.createdAt;
+      const timeLabel = offer.departureTime ? 'Departs' : 'Created';
+      const pendingHoldRequests = (offer.holdRequests || []).filter(
+        (request) => request.status === 'pending',
+      );
+      const formattedTime =
+        timeValue && typeof timeValue === 'string'
+          ? new Date(timeValue).toLocaleString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : 'Time not set';
 
       return (
-      <View key={offer.id} style={[styles.requestCard, styles.offerCard, isActive && styles.activeOfferCard]}>
-        {isActive && (
-          <View style={styles.activeRideBadge}>
-            <Text style={styles.activeRideBadgeText}>🚗 Active</Text>
-          </View>
-        )}
-        <View style={styles.requestHeader}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.passengerName} numberOfLines={1}>{truncateAddr(offer.from, 20)} → {truncateAddr(offer.to, 20)}</Text>
-            {offer.departureTime && typeof offer.departureTime === 'string' && (
-              <Text style={styles.offerTime}>
-                🚗 Departure: {new Date(offer.departureTime).toLocaleString('en-IN', {
-                  day: 'numeric',
-                  month: 'short',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
+        <View key={offer.id} style={[styles.driverOfferCard, isActive && styles.driverOfferCardActive]}>
+          <View style={styles.offerCardTop}>
+            <View style={styles.offerStatusPill}>
+              <View style={[styles.offerStatusDot, (isCompleted || isExpired || isCancelled) && styles.offerStatusDotMuted]} />
+              <Text style={styles.offerStatusText}>
+                {isCompleted ? 'Completed' : isCancelled ? 'Cancelled' : isExpired ? 'Expired' : isActive ? 'Live now' : 'Upcoming'}
               </Text>
-            )}
-            {!offer.departureTime && offer.createdAt && typeof offer.createdAt === 'string' && (
-              <Text style={styles.offerTime}>
-                Created: {new Date(offer.createdAt).toLocaleString('en-IN', {
-                  day: 'numeric',
-                  month: 'short',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </Text>
-            )}
+            </View>
+            {offer.fare != null && typeof offer.fare === 'number' ? (
+              <View style={styles.offerFarePill}>
+                <Text style={styles.offerFareAmount}>Rs {offer.fare}</Text>
+                <Text style={styles.offerFareUnit}>/seat</Text>
+              </View>
+            ) : null}
           </View>
-          <View style={styles.fareAndSeatsContainer}>
-            {offer.fare != null && typeof offer.fare === 'number' && (
-              <Text style={styles.requestFare}>₹{offer.fare}<Text style={styles.perSeatSmall}>/seat</Text></Text>
-            )}
-            {offer.seats != null && typeof offer.seats === 'number' && (
-              <Text style={styles.seatsCount}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
-            )}
-          </View>
-        </View>
 
-        <View style={styles.requestRoute}>
-          <View style={styles.routeRow}>
-            <MapPin size={14} color={Colors.dark.gold} />
-            <Text style={styles.routeText}>{offer.from || 'N/A'}</Text>
+          <View style={styles.offerRouteBlock}>
+            <View style={styles.offerRouteRail}>
+              <View style={[styles.offerRouteDot, styles.offerPickupDot]} />
+              <View style={styles.offerRouteLine} />
+              <View style={[styles.offerRouteDot, styles.offerDropoffDot]} />
+            </View>
+            <View style={styles.offerRouteCopy}>
+              <View style={styles.offerRoutePoint}>
+                <Text style={styles.offerRouteLabel}>Pickup</Text>
+                <Text style={styles.offerRouteText} numberOfLines={1}>
+                  {truncateAddr(offer.from) || 'N/A'}
+                </Text>
+              </View>
+              <View style={styles.offerRoutePoint}>
+                <Text style={styles.offerRouteLabel}>Drop-off</Text>
+                <Text style={styles.offerRouteText} numberOfLines={1}>
+                  {truncateAddr(offer.to) || 'N/A'}
+                </Text>
+              </View>
+            </View>
           </View>
-          <View style={styles.routeLine} />
-          <View style={styles.routeRow}>
-            <MapPin size={14} color={Colors.dark.pink} />
-            <Text style={styles.routeText}>{offer.to || 'N/A'}</Text>
-          </View>
-        </View>
 
-        <View style={styles.requestDetails}>
-          {offer.seats != null && typeof offer.seats === 'number' && (
-            <View style={styles.detailRow}>
-              <Users size={14} color={Colors.dark.textSecondary} />
-              <Text style={styles.detailText}>{offer.seats} {offer.seats === 1 ? 'seat' : 'seats'}</Text>
-            </View>
-          )}
-          {offer.womenOnly && (
-            <View style={styles.detailRow}>
-              <Star size={14} color={Colors.dark.pink} />
-              <Text style={styles.detailText}>Women only</Text>
-            </View>
-          )}
-          {offer.departureTime && typeof offer.departureTime === 'string' && (
-            <View style={styles.detailRow}>
-              <Clock size={14} color={Colors.dark.gold} />
-              <Text style={styles.detailText}>Departing {new Date(offer.departureTime).toLocaleString('en-IN', {
-                day: 'numeric',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit'
-              })}</Text>
-            </View>
-          )}
-          {!offer.departureTime && offer.createdAt && typeof offer.createdAt === 'string' && (
-            <View style={styles.detailRow}>
+          <View style={styles.offerMetaRow}>
+            <View style={styles.offerMetaItem}>
               <Clock size={14} color={Colors.dark.textSecondary} />
-              <Text style={styles.detailText}>Created {new Date(offer.createdAt).toLocaleString()}</Text>
+              <Text style={styles.offerMetaText}>{timeLabel}: {formattedTime}</Text>
+            </View>
+            <View style={styles.offerMetaItem}>
+              <Users size={14} color={Colors.dark.textSecondary} />
+              <Text style={styles.offerMetaText}>
+                {offer.seats ?? 0} {(offer.seats ?? 0) === 1 ? 'seat' : 'seats'}
+              </Text>
+            </View>
+            {offer.womenOnly && (
+              <View style={styles.offerMetaItem}>
+                <Star size={14} color={Colors.dark.pink} />
+                <Text style={styles.offerMetaText}>Women only</Text>
+              </View>
+            )}
+          </View>
+
+          {pendingHoldRequests.length > 0 && (
+            <View style={styles.holdRequestsPanel}>
+              <Text style={styles.holdRequestsTitle}>Hold requests</Text>
+              {pendingHoldRequests.map((request) => (
+                <View key={request._id} style={styles.holdRequestItem}>
+                  <View style={styles.holdRequestCopy}>
+                    <Text style={styles.holdRequestName}>
+                      {request.passengerName || 'Passenger'}
+                    </Text>
+                    <Text style={styles.holdRequestText}>
+                      wants you to wait {request.minutes} min
+                    </Text>
+                  </View>
+                  <View style={styles.holdRequestActions}>
+                    <TouchableOpacity
+                      style={[styles.holdRejectButton, respondingHoldId === request._id && styles.disabledButton]}
+                      onPress={() => handleHoldResponse(offer.id, request._id, 'reject')}
+                      disabled={respondingHoldId === request._id}
+                      activeOpacity={0.75}>
+                      <Text style={styles.holdRejectText}>No</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.holdApproveButton, respondingHoldId === request._id && styles.disabledButton]}
+                      onPress={() => handleHoldResponse(offer.id, request._id, 'approve')}
+                      disabled={respondingHoldId === request._id}
+                      activeOpacity={0.75}>
+                      {respondingHoldId === request._id ? (
+                        <ActivityIndicator size="small" color={Colors.dark.background} />
+                      ) : (
+                        <Text style={styles.holdApproveText}>Approve</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
             </View>
           )}
-        </View>
 
-        <View style={styles.offerStatusRow}>
-          <Text style={[styles.badgeText, styles.liveBadge]}>
-            {(offer.status || 'live') === 'completed' ? '✓ Completed' : '🔴 Live'}
-          </Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={styles.offerCardActions}>
             <TouchableOpacity
               style={styles.editButton}
               onPress={() => {
-                console.log('🔄 Editing offer with ID:', offer.id, 'Type:', typeof offer.id);
-                
-                // Check if it's a valid MongoDB ID (not a local temporary ID)
+                console.log('Editing offer with ID:', offer.id, 'Type:', typeof offer.id);
+
                 const isValidMongoId = (id: string) => {
                   return id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id) && !id.startsWith('local-');
                 };
@@ -1360,7 +1564,7 @@ export default function DriverDashboard() {
               <Text style={styles.editButtonText}>Edit</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.cancelButton]}
+              style={styles.cancelButton}
               onPress={() => handleCancelOffer(offer.id)}
               disabled={cancellingOfferId === offer.id}
               activeOpacity={0.7}>
@@ -1372,18 +1576,40 @@ export default function DriverDashboard() {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
       );
     };
 
     return (
       <View style={styles.requestsSection}>
-        {/* Active/Ongoing Rides Section */}
+        <View style={styles.offerSummaryBand}>
+          <View style={styles.offerSummaryItem}>
+            <Text style={styles.offerSummaryValue}>{activeRides.length}</Text>
+            <Text style={styles.offerSummaryLabel}>Live</Text>
+          </View>
+          <View style={styles.offerSummaryDivider} />
+          <View style={styles.offerSummaryItem}>
+              <Text style={styles.offerSummaryValue}>{upcomingRides.length}</Text>
+              <Text style={styles.offerSummaryLabel}>Upcoming</Text>
+            </View>
+            <View style={styles.offerSummaryDivider} />
+            <View style={styles.offerSummaryItem}>
+            <Text style={[styles.offerSummaryValue, pendingHoldCount > 0 && styles.offerSummaryWarning]}>
+              {pendingHoldCount}
+            </Text>
+            <Text style={styles.offerSummaryLabel}>Holds</Text>
+          </View>
+          <View style={styles.offerSummaryDivider} />
+          <View style={styles.offerSummaryItem}>
+            <Text style={styles.offerSummaryValue}>{endedRides.length}</Text>
+            <Text style={styles.offerSummaryLabel}>Past</Text>
+          </View>
+        </View>
+
         {activeRides.length > 0 && (
           <>
             <View style={styles.requestsHeader}>
               <View style={styles.sectionHeaderWithBadge}>
-                <Text style={styles.sectionTitle}>🔴 Live & Available</Text>
+                <Text style={styles.sectionTitle}>Live & Available</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{activeRides.length}</Text>
                 </View>
@@ -1400,7 +1626,6 @@ export default function DriverDashboard() {
           </>
         )}
 
-        {/* Upcoming/Created Rides Section */}
         {upcomingRides.length > 0 && (
           <>
             <View style={[styles.requestsHeader, activeRides.length > 0 && { marginTop: 20 }]}>
@@ -1419,13 +1644,29 @@ export default function DriverDashboard() {
                 </TouchableOpacity>
               )}
             </View>
-            <Text style={styles.sectionSubtitle}>All your created ride offers</Text>
+            <Text style={styles.sectionSubtitle}>Future rides that passengers can book when departure is still ahead</Text>
             {upcomingRides.map(renderOfferCard)}
+          </>
+        )}
+
+        {endedRides.length > 0 && (
+          <>
+            <View style={[styles.requestsHeader, (activeRides.length > 0 || upcomingRides.length > 0) && { marginTop: 20 }]}>
+              <View style={styles.sectionHeaderWithBadge}>
+                <Text style={styles.sectionTitle}>Past Rides</Text>
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{endedRides.length}</Text>
+                </View>
+              </View>
+            </View>
+            <Text style={styles.sectionSubtitle}>Completed, cancelled, or departure time passed</Text>
+            {endedRides.map(renderOfferCard)}
           </>
         )}
       </View>
     );
   };
+
 
   const renderInsights = () => (
     <View style={styles.insightsContainer}>
@@ -1522,28 +1763,25 @@ export default function DriverDashboard() {
           </View>
         </View>
         <View style={styles.headerActions}>
-          {/* Pending Approvals Bell */}
-          {pendingApprovals.length > 0 && (
-            <TouchableOpacity
-              onPress={() => {
-                if (pendingApprovals.length > 0) {
-                  setSelectedTab('live');
-                  setExpandedBookingId(pendingApprovals[0]._id);
-                  setTimeout(() => {
-                    scrollViewRef.current?.scrollTo({ y: 400, animated: true });
-                  }, 100);
-                }
-              }}
-              style={styles.notificationBellButton}
-              activeOpacity={0.7}>
-              <MessageSquare size={22} color={Colors.dark.gold} />
-              {pendingApprovals.length > 0 && (
-                <View style={styles.notificationBadge}>
-                  <Text style={styles.notificationBadgeText}>{pendingApprovals.length}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            onPress={handleDriverNotificationsPress}
+            style={[
+              styles.notificationBellButton,
+              driverNotificationCount === 0 && styles.notificationBellButtonIdle,
+            ]}
+            activeOpacity={0.75}>
+            <Bell
+              size={22}
+              color={driverNotificationCount > 0 ? Colors.dark.gold : Colors.dark.textSecondary}
+            />
+            {driverNotificationCount > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {driverNotificationCount > 99 ? '99+' : driverNotificationCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setDebugModalVisible(true)}
             style={[styles.createRideButton, { backgroundColor: Colors.dark.gold }]}
@@ -1877,6 +2115,15 @@ export default function DriverDashboard() {
                 <Text style={styles.activeRideHint}>
                   📍 Passengers waiting for pickup are shown above. Once they board and confirm, they'll be removed from this list.
                 </Text>
+
+                {/* SOS Safety Button for Driver */}
+                <View style={styles.driverSosContainer}>
+                  <SOSButton
+                    rideId={currentActiveRide._id || currentActiveRide.id}
+                    onSOSActivated={activateSOS}
+                    driverName="Emergency Services"
+                  />
+                </View>
               </View>
             )}
 
@@ -1921,12 +2168,31 @@ export default function DriverDashboard() {
                           </View>
 
                           <View style={styles.requestDetails}>
+                            {typeof ride.driverGuaranteedFare === 'number' && ride.driverGuaranteedFare > 0 && (
+                              <View style={styles.detailRow}>
+                                <DollarSign size={14} color={Colors.dark.textSecondary} />
+                                <Text style={styles.detailText}>
+                                  Driver payout Rs {ride.driverGuaranteedFare}
+                                  {ride.farePerSeat ? ` - approx Rs ${ride.farePerSeat}/seat now` : ''}
+                                </Text>
+                              </View>
+                            )}
                             <View style={styles.detailRow}>
                               <Users size={14} color={Colors.dark.textSecondary} />
                               <Text style={styles.detailText}>
-                                {ride.passengers} {ride.passengers === 1 ? 'passenger' : 'passengers'}
+                                {ride.passengers} max seats
+                                {ride.fareSplit?.totalSeats
+                                  ? ` - ${ride.fareSplit.totalSeats} requested`
+                                  : ''}
                               </Text>
                             </View>
+                            {Array.isArray(ride.availableSeats) && ride.availableSeats.length > 0 && (
+                              <View style={styles.detailRow}>
+                                <Text style={styles.detailText}>
+                                  {ride.availableSeats.length} seat(s) can still join and split the fare.
+                                </Text>
+                              </View>
+                            )}
                           </View>
 
                           <View style={styles.requestActions}>
@@ -1951,150 +2217,162 @@ export default function DriverDashboard() {
                   </>
                 )}
 
-                {/* PENDING APPROVAL REQUESTS */}
-                {pendingApprovals.length > 0 && (
+                {/* PENDING + AUTO-CONFIRMED APPROVALS */}
+                { (autoAcceptedBookings.length > 0 || pendingApprovals.length > 0) && (
                   <>
                     <View style={styles.requestsHeader}>
-                      <Text style={styles.sectionTitle}>Pending Approval Requests</Text>
+                      <Text style={styles.sectionTitle}>Approval Requests</Text>
                     </View>
-                    {pendingApprovals.map((booking) => (
-                      <View key={booking._id}>
-                        <TouchableOpacity
-                          style={styles.requestCard}
-                          onPress={() => setExpandedBookingId(expandedBookingId === booking._id ? null : booking._id)}
-                          activeOpacity={0.7}>
-                          <View style={styles.requestHeader}>
-                            <Text style={styles.passengerName}>
-                              {booking.userDetails?.name || 'Unknown Passenger'}
-                            </Text>
-                            <View style={styles.ratingBadge}>
-                              <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
-                              <Text style={styles.ratingText}>
-                                {booking.userDetails?.rating?.toFixed(1) || '5.0'}
-                              </Text>
-                            </View>
-                          </View>
-
-                          <View style={styles.requestRoute}>
-                            <View style={styles.routeRow}>
-                              <MapPin size={14} color={Colors.dark.gold} />
-                              <Text style={styles.routeText}>{booking.from || 'Pickup Location'}</Text>
-                            </View>
-                            <View style={styles.routeLine} />
-                            <View style={styles.routeRow}>
-                              <MapPin size={14} color={Colors.dark.pink} />
-                              <Text style={styles.routeText}>{booking.to || 'Drop Location'}</Text>
-                            </View>
-                          </View>
-
-                          <View style={styles.requestDetails}>
-                            <View style={styles.detailRow}>
-                              <Users size={14} color={Colors.dark.textSecondary} />
-                              <Text style={styles.detailText}>
-                                {booking.seatNumbers?.length || 1} {booking.seatNumbers?.length === 1 ? 'seat' : 'seats'}
-                              </Text>
-                            </View>
-                            {booking.fare && (
-                              <View style={styles.detailRow}>
-                                <DollarSign size={14} color={Colors.dark.textSecondary} />
-                                <Text style={styles.detailText}>₹{booking.fare}</Text>
-                              </View>
-                            )}
-                            {booking.customRequest && (
-                              <View style={styles.detailRow}>
-                                <Text style={[styles.detailText, { fontStyle: 'italic', color: Colors.dark.textSecondary }]}>
-                                  "{booking.customRequest}"
+                    {(() => {
+                      const combined = [...autoAcceptedBookings, ...pendingApprovals];
+                      return combined.map((booking) => {
+                        const isAuto = booking.approvalStatus === 'auto_accepted';
+                        return (
+                          <View key={booking._id}>
+                            <TouchableOpacity
+                              style={styles.requestCard}
+                              onPress={() => setExpandedBookingId(expandedBookingId === booking._id ? null : booking._id)}
+                              activeOpacity={0.7}>
+                              <View style={styles.requestHeader}>
+                                <Text style={styles.passengerName}>
+                                  {booking.userDetails?.name || booking.passengerName || 'Unknown Passenger'}
                                 </Text>
-                              </View>
-                            )}
-                          </View>
-
-                          {expandedBookingId === booking._id && (
-                            <View style={styles.expandedSection}>
-                              <View style={styles.expandedDivider} />
-                              
-                              {/* Additional booking details */}
-                              {booking.pickupTime && (
-                                <View style={styles.expandedRow}>
-                                  <Clock size={14} color={Colors.dark.textSecondary} />
-                                  <Text style={styles.expandedLabel}>Pickup Time:</Text>
-                                  <Text style={styles.expandedValue}>
-                                    {new Date(booking.pickupTime).toLocaleString()}
+                                <View style={styles.ratingBadge}>
+                                  <Star size={12} color={Colors.dark.gold} fill={Colors.dark.gold} />
+                                  <Text style={styles.ratingText}>
+                                    {booking.userDetails?.rating?.toFixed(1) || '5.0'}
                                   </Text>
                                 </View>
-                              )}
-                              
-                              {booking.userDetails?.phone && (
-                                <View style={styles.expandedRow}>
-                                  <Phone size={14} color={Colors.dark.textSecondary} />
-                                  <Text style={styles.expandedLabel}>Contact:</Text>
-                                  <Text style={styles.expandedValue}>{booking.userDetails.phone}</Text>
+                              </View>
+
+                              <View style={styles.requestRoute}>
+                                <View style={styles.routeRow}>
+                                  <MapPin size={14} color={Colors.dark.gold} />
+                                  <Text style={styles.routeText}>{booking.from || booking.rideInfo?.from || 'Pickup Location'}</Text>
+                                </View>
+                                <View style={styles.routeLine} />
+                                <View style={styles.routeRow}>
+                                  <MapPin size={14} color={Colors.dark.pink} />
+                                  <Text style={styles.routeText}>{booking.to || booking.rideInfo?.to || 'Drop Location'}</Text>
+                                </View>
+                              </View>
+
+                              <View style={styles.requestDetails}>
+                                <View style={styles.detailRow}>
+                                  <Users size={14} color={Colors.dark.textSecondary} />
+                                  <Text style={styles.detailText}>
+                                    {booking.seatNumbers?.length || 1} {booking.seatNumbers?.length === 1 ? 'seat' : 'seats'}
+                                  </Text>
+                                </View>
+                                {booking.fare && (
+                                  <View style={styles.detailRow}>
+                                    <DollarSign size={14} color={Colors.dark.textSecondary} />
+                                    <Text style={styles.detailText}>₹{booking.fare}</Text>
+                                  </View>
+                                )}
+                                {booking.customRequest && (
+                                  <View style={styles.detailRow}>
+                                    <Text style={[styles.detailText, { fontStyle: 'italic', color: Colors.dark.textSecondary }]}>
+                                      "{booking.customRequest}"
+                                    </Text>
+                                  </View>
+                                )}
+                              </View>
+
+                              {expandedBookingId === booking._id && (
+                                <View style={styles.expandedSection}>
+                                  <View style={styles.expandedDivider} />
+                                  {booking.pickupTime && (
+                                    <View style={styles.expandedRow}>
+                                      <Clock size={14} color={Colors.dark.textSecondary} />
+                                      <Text style={styles.expandedLabel}>Pickup Time:</Text>
+                                      <Text style={styles.expandedValue}>
+                                        {new Date(booking.pickupTime).toLocaleString()}
+                                      </Text>
+                                    </View>
+                                  )}
+                                  {booking.userDetails?.phone && (
+                                    <View style={styles.expandedRow}>
+                                      <Phone size={14} color={Colors.dark.textSecondary} />
+                                      <Text style={styles.expandedLabel}>Contact:</Text>
+                                      <Text style={styles.expandedValue}>{booking.userDetails.phone}</Text>
+                                    </View>
+                                  )}
+
+                                  <Text style={styles.notesLabel}>Approval Notes (Optional):</Text>
+                                  <TextInput
+                                    style={styles.notesInput}
+                                    placeholder="Add notes for this booking..."
+                                    placeholderTextColor={Colors.dark.textSecondary}
+                                    value={approvalNotes}
+                                    onChangeText={setApprovalNotes}
+                                    multiline
+                                    numberOfLines={3}
+                                    maxLength={200}
+                                  />
                                 </View>
                               )}
-                              
-                              {/* Approval Notes Input */}
-                              <Text style={styles.notesLabel}>Approval Notes (Optional):</Text>
-                              <TextInput
-                                style={styles.notesInput}
-                                placeholder="Add notes for this booking..."
-                                placeholderTextColor={Colors.dark.textSecondary}
-                                value={approvalNotes}
-                                onChangeText={setApprovalNotes}
-                                multiline
-                                numberOfLines={3}
-                                maxLength={200}
-                              />
-                            </View>
-                          )}
 
-                          <View style={styles.requestActions}>
-                            <TouchableOpacity
-                              style={styles.rejectButton}
-                              onPress={(e) => {
-                                e.stopPropagation();
-                                showAlert(
-                                  'Reject Booking',
-                                  'Why are you rejecting this booking?',
-                                  'warning',
-                                  [
-                                    { text: 'Cancel', style: 'cancel' },
-                                    {
-                                      text: 'Not Available',
-                                      onPress: () => handleRejectBooking(booking._id, 'Driver not available'),
-                                    },
-                                    {
-                                      text: 'Other Reason',
-                                      onPress: () => handleRejectBooking(booking._id, 'Rejected by driver'),
-                                    },
-                                  ]
-                                );
-                              }}
-                              activeOpacity={0.7}
-                              disabled={approvingBookingId === booking._id}>
-                              <X size={20} color={Colors.dark.error} />
-                              <Text style={styles.rejectButtonText}>Reject</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.acceptButton}
-                              onPress={(e) => {
-                                e.stopPropagation();
-                                handleApproveBooking(booking._id);
-                              }}
-                              activeOpacity={0.7}
-                              disabled={approvingBookingId === booking._id}>
-                              {approvingBookingId === booking._id ? (
-                                <ActivityIndicator size="small" color={Colors.dark.background} />
-                              ) : (
-                                <>
-                                  <Check size={20} color={Colors.dark.background} />
-                                  <Text style={styles.acceptButtonText}>Approve</Text>
-                                </>
-                              )}
+                              <View style={styles.requestActions}>
+                                {isAuto ? (
+                                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                                    <Text style={{ color: Colors.dark.textSecondary, fontSize: 13 }}>
+                                      Auto-confirmed by system — passenger notified
+                                    </Text>
+                                  </View>
+                                ) : (
+                                  <>
+                                    <TouchableOpacity
+                                      style={styles.rejectButton}
+                                      onPress={(e) => {
+                                        e.stopPropagation();
+                                        showAlert(
+                                          'Reject Booking',
+                                          'Why are you rejecting this booking?',
+                                          'warning',
+                                          [
+                                            { text: 'Cancel', style: 'cancel' },
+                                            {
+                                              text: 'Not Available',
+                                              onPress: () => handleRejectBooking(booking._id, 'Driver not available'),
+                                            },
+                                            {
+                                              text: 'Other Reason',
+                                              onPress: () => handleRejectBooking(booking._id, 'Rejected by driver'),
+                                            },
+                                          ]
+                                        );
+                                      }}
+                                      activeOpacity={0.7}
+                                      disabled={approvingBookingId === booking._id}>
+                                      <X size={20} color={Colors.dark.error} />
+                                      <Text style={styles.rejectButtonText}>Reject</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.acceptButton}
+                                      onPress={(e) => {
+                                        e.stopPropagation();
+                                        handleApproveBooking(booking._id);
+                                      }}
+                                      activeOpacity={0.7}
+                                      disabled={approvingBookingId === booking._id}>
+                                      {approvingBookingId === booking._id ? (
+                                        <ActivityIndicator size="small" color={Colors.dark.background} />
+                                      ) : (
+                                        <>
+                                          <Check size={20} color={Colors.dark.background} />
+                                          <Text style={styles.acceptButtonText}>Approve</Text>
+                                        </>
+                                      )}
+                                    </TouchableOpacity>
+                                  </>
+                                )}
+                              </View>
                             </TouchableOpacity>
                           </View>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
+                        );
+                      });
+                    })()}
                   </>
                 )}
               </View>
@@ -2105,8 +2383,17 @@ export default function DriverDashboard() {
                 <Users size={48} color={Colors.dark.textSecondary} />
                 <Text style={styles.emptyText}>Waiting for requests...</Text>
                 <Text style={styles.emptySubtext}>
-                  You'll see ride requests and approval requests here
+                  Ride requests appear here. Your created ride offers are in My rides.
                 </Text>
+                {myOffers.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.acceptButton, { marginTop: 16 }]}
+                    onPress={() => setSelectedTab('offers')}
+                    activeOpacity={0.8}>
+                    <List size={18} color={Colors.dark.background} />
+                    <Text style={styles.acceptButtonText}>View My Rides</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
@@ -2845,6 +3132,255 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  offerSummaryBand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    marginBottom: 14,
+  },
+  offerSummaryItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  offerSummaryValue: {
+    color: Colors.dark.text,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  offerSummaryWarning: {
+    color: Colors.dark.gold,
+  },
+  offerSummaryLabel: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+    marginTop: 3,
+    textTransform: 'uppercase',
+  },
+  offerSummaryDivider: {
+    width: 1,
+    height: 34,
+    backgroundColor: Colors.dark.border,
+  },
+  driverOfferCard: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  driverOfferCardActive: {
+    borderColor: Colors.dark.gold + '70',
+    backgroundColor: Colors.dark.card,
+  },
+  offerCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 14,
+  },
+  offerStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: Colors.dark.background,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  offerStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: Colors.dark.success,
+  },
+  offerStatusDotMuted: {
+    backgroundColor: Colors.dark.textSecondary,
+  },
+  offerStatusText: {
+    color: Colors.dark.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  offerFarePill: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: Colors.dark.gold + '16',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '40',
+  },
+  offerFareAmount: {
+    color: Colors.dark.gold,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  offerFareUnit: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 2,
+    marginLeft: 2,
+  },
+  offerRouteBlock: {
+    flexDirection: 'row',
+    backgroundColor: Colors.dark.background + 'cc',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    marginBottom: 12,
+  },
+  offerRouteRail: {
+    width: 18,
+    alignItems: 'center',
+    paddingTop: 5,
+  },
+  offerRouteDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
+  offerPickupDot: {
+    backgroundColor: Colors.dark.gold,
+  },
+  offerDropoffDot: {
+    backgroundColor: Colors.dark.pink,
+  },
+  offerRouteLine: {
+    width: 1,
+    height: 34,
+    backgroundColor: Colors.dark.border,
+    marginVertical: 3,
+  },
+  offerRouteCopy: {
+    flex: 1,
+    gap: 12,
+    marginLeft: 8,
+  },
+  offerRoutePoint: {
+    minHeight: 28,
+  },
+  offerRouteLabel: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  offerRouteText: {
+    color: Colors.dark.text,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  offerMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  offerMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.dark.background,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  offerMetaText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  holdRequestsPanel: {
+    backgroundColor: Colors.dark.gold + '12',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '35',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+    gap: 8,
+  },
+  holdRequestsTitle: {
+    color: Colors.dark.gold,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  holdRequestItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  holdRequestCopy: {
+    flex: 1,
+  },
+  holdRequestName: {
+    color: Colors.dark.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  holdRequestText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  holdRequestActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  holdRejectButton: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.background,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  holdApproveButton: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.gold,
+  },
+  holdRejectText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  holdApproveText: {
+    color: Colors.dark.background,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  offerCardActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
   requestCard: {
     backgroundColor: Colors.dark.card,
     borderRadius: 16,
@@ -3125,6 +3661,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   editButton: {
+    flex: 1,
     backgroundColor: Colors.dark.gold + '20',
     borderRadius: 8,
     paddingVertical: 8,
@@ -3136,6 +3673,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.gold,
     fontSize: 13,
     fontWeight: '600',
+    textAlign: 'center',
   },
   disabledButtonAlt: {
     backgroundColor: Colors.dark.textSecondary + '10',
@@ -3145,6 +3683,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
   },
   cancelButton: {
+    flex: 1,
     backgroundColor: Colors.dark.error + '15',
     borderRadius: 8,
     paddingVertical: 8,
@@ -3156,6 +3695,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.error,
     fontSize: 13,
     fontWeight: '600',
+    textAlign: 'center',
   },
   secondaryButton: {
     paddingHorizontal: 12,
@@ -3445,6 +3985,10 @@ const styles = StyleSheet.create({
     borderColor: Colors.dark.gold,
     position: 'relative',
   },
+  notificationBellButtonIdle: {
+    borderColor: Colors.dark.border,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
   notificationBadge: {
     position: 'absolute',
     top: -4,
@@ -3522,5 +4066,11 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     padding: 8,
     marginBottom: 10,
+  },
+  driverSosContainer: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.border + '30',
   },
 });

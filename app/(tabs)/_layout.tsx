@@ -1,9 +1,8 @@
 import { Tabs } from 'expo-router';
-import { Home, MapPin, Bell, Wallet, User, MessageSquare } from 'lucide-react-native';
+import { Home, MapPin, Wallet, User, MessageSquare } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { Platform, Animated } from 'react-native';
+import { Animated, Platform, View } from 'react-native';
 import { useEffect, useRef } from 'react';
-import { useNotifications } from '@/contexts/NotificationContext';
 import { useMessages } from '@/contexts/MessagesContext';
 
 function AnimatedTabIcon({ Icon, color, focused }: { Icon: any; color: string; focused: boolean }) {
@@ -25,14 +24,29 @@ function AnimatedTabIcon({ Icon, color, focused }: { Icon: any; color: string; f
   }, [focused]);
 
   return (
-    <Animated.View style={[{ transform: [{ scale: scaleAnim }], opacity: opacityAnim }]}>
-      <Icon size={24} color={color} />
+    <Animated.View
+      style={[
+        {
+          transform: [{ scale: scaleAnim }],
+          opacity: opacityAnim,
+        },
+      ]}>
+      <View
+        style={{
+          width: 34,
+          height: 32,
+          borderRadius: 10,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: focused ? Colors.dark.gold + '18' : 'transparent',
+        }}>
+        <Icon size={21} color={color} strokeWidth={focused ? 2.6 : 2.2} />
+      </View>
     </Animated.View>
   );
 }
 
 export default function TabLayout() {
-  const { unreadCount } = useNotifications();
   const { totalUnreadMessages } = useMessages();
 
   return (
@@ -45,14 +59,22 @@ export default function TabLayout() {
           backgroundColor: Colors.dark.backgroundSecondary,
           borderTopWidth: 1,
           borderTopColor: Colors.dark.border,
-          paddingBottom: 8,
-          paddingTop: 8,
-          height: 65,
-          elevation: 0,
+          borderTopLeftRadius: 18,
+          borderTopRightRadius: 18,
+          paddingBottom: Platform.OS === 'ios' ? 26 : 18,
+          paddingTop: 12,
+          height: Platform.OS === 'ios' ? 98 : 88,
+          elevation: 12,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.16,
+          shadowRadius: 10,
         },
         tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '600',
+          fontSize: 10,
+          lineHeight: 13,
+          fontWeight: '700',
+          marginTop: 2,
         },
         animation: 'fade',
         tabBarHideOnKeyboard: true,
@@ -77,17 +99,15 @@ export default function TabLayout() {
       <Tabs.Screen
         name="messages"
         options={{
-          title: 'Messages',
+          title: 'Chat',
           tabBarIcon: ({ color, focused }) => <AnimatedTabIcon Icon={MessageSquare} color={color} focused={focused} />,
-          tabBarBadge: totalUnreadMessages > 0 ? totalUnreadMessages : undefined,
+          tabBarBadge: totalUnreadMessages > 0 ? (totalUnreadMessages > 99 ? '99+' : totalUnreadMessages) : undefined,
         }}
       />
       <Tabs.Screen
         name="alerts"
         options={{
-          title: 'Alerts',
-          tabBarIcon: ({ color, focused }) => <AnimatedTabIcon Icon={Bell} color={color} focused={focused} />,
-          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
+          href: null,
         }}
       />
       <Tabs.Screen

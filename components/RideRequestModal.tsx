@@ -11,14 +11,15 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { X, MapPin, Users, Plus, Minus, Clock } from 'lucide-react-native';
+import { X, MapPin, Users, Plus, Minus, Clock, Navigation } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
-import { createRideRequest } from '@/lib/api';
+import { createRideRequest, setAuthToken } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
+import FareBreakdown from './FareBreakdown';
 import { VEHICLE_TYPE_OPTIONS, type RideVehicleType } from '@/constants/vehicleTypes';
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -64,7 +65,7 @@ export default function RideRequestModal({
   onClose,
   onRideCreated,
 }: RideRequestModalProps) {
-  const { user } = useAuth();
+  const { user, getAuthToken } = useAuth();
   const { location } = useLocation();
   const [loading, setLoading] = useState(false);
   const [pickupLocation, setPickupLocation] = useState<LocationData | null>(null);
@@ -73,6 +74,7 @@ export default function RideRequestModal({
   const [showDropoffPicker, setShowDropoffPicker] = useState(false);
   const [passengers, setPassengers] = useState(1);
   const [vehicleType, setVehicleType] = useState<RideVehicleType>('four_wheeler');
+  const [requestedFare, setRequestedFare] = useState('');
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
   const [error, setError] = useState('');
@@ -92,6 +94,17 @@ export default function RideRequestModal({
     message: string;
     type: AlertType;
   }>({ title: '', message: '', type: 'info' });
+
+  const [showFareBreakdown, setShowFareBreakdown] = useState(false);
+  const [fareDetails, setFareDetails] = useState({
+    baseFare: 50,
+    distanceCharge: 0,
+    distance: 0,
+    surgePricing: 0,
+    discount: 0,
+    taxes: 0,
+    totalFare: 50,
+  });
 
   const departureWindowStart = new Date(
     scheduledDeparture.getTime() - flexibilityMinutes * 60 * 1000,
@@ -212,6 +225,12 @@ export default function RideRequestModal({
       return;
     }
 
+    const parsedRequestedFare = Number.parseFloat(requestedFare);
+    if (!Number.isFinite(parsedRequestedFare) || parsedRequestedFare <= 0) {
+      setError('Please enter the total booking price you want the driver to accept');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -222,6 +241,11 @@ export default function RideRequestModal({
     }
 
     try {
+      const token = await getAuthToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
       const ridePayload = {
         clerkId: user.id,
         from: pickupLocation.address,
@@ -238,6 +262,13 @@ export default function RideRequestModal({
         pickupCountry: location?.country,
         scheduledDeparture: scheduledDeparture.toISOString(),
         timeFlexibilityMinutes: flexibilityMinutes,
+        requestedTotalFare: Math.round(parsedRequestedFare),
+        maxSharedSeats:
+          vehicleType === 'two_wheeler'
+            ? 1
+            : vehicleType === 'three_wheeler'
+              ? 3
+              : 4,
       };
 
       await createRideRequest(ridePayload);
@@ -252,6 +283,7 @@ export default function RideRequestModal({
       setDropoffLocation(null);
       setPassengers(1);
       setVehicleType('four_wheeler');
+      setRequestedFare('');
       setNotes('');
       setWomenOnly(false);
       resetScheduling();
@@ -300,44 +332,70 @@ export default function RideRequestModal({
             </View>
           ) : null}
 
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <MapPin size={20} color={Colors.dark.gold} />
-              <Text style={styles.sectionTitle}>Pickup Location</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.locationButton}
-              onPress={() => setShowPickupPicker(true)}
-              disabled={loading}>
-              <Text
-                style={[
-                  styles.locationButtonText,
-                  !pickupLocation && styles.locationPlaceholder,
-                ]}>
-                {pickupLocation?.address || 'Select pickup location'}
-              </Text>
-              <MapPin size={18} color={Colors.dark.gold} />
-            </TouchableOpacity>
-          </View>
+          <View style={styles.routePanel}>
+            <Text style={styles.routePanelTitle}>Plan your ride</Text>
+            <View style={styles.routeRows}>
+              <View style={styles.routeRail}>
+                <View style={[styles.routeDot, styles.pickupDot]} />
+                <View style={styles.routeLine} />
+                <View style={[styles.routeDot, styles.dropoffDot]} />
+                <View style={styles.routeLine} />
+                <View style={[styles.routeDot, styles.timeDot]} />
+              </View>
+              <View style={styles.routeInputs}>
+                <TouchableOpacity
+                  style={styles.routeField}
+                  onPress={() => setShowPickupPicker(true)}
+                  disabled={loading}
+                  activeOpacity={0.75}>
+                  <View style={styles.routeFieldCopy}>
+                    <Text style={styles.routeLabel}>Pickup</Text>
+                    <Text
+                      style={[
+                        styles.routeValue,
+                        !pickupLocation && styles.routePlaceholder,
+                      ]}
+                      numberOfLines={1}>
+                      {pickupLocation?.address || 'Where are you starting?'}
+                    </Text>
+                  </View>
+                  <Navigation size={18} color={Colors.dark.gold} />
+                </TouchableOpacity>
 
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <MapPin size={20} color={Colors.dark.pink} />
-              <Text style={styles.sectionTitle}>Dropoff Location</Text>
+                <TouchableOpacity
+                  style={styles.routeField}
+                  onPress={() => setShowDropoffPicker(true)}
+                  disabled={loading}
+                  activeOpacity={0.75}>
+                  <View style={styles.routeFieldCopy}>
+                    <Text style={styles.routeLabel}>Drop-off</Text>
+                    <Text
+                      style={[
+                        styles.routeValue,
+                        !dropoffLocation && styles.routePlaceholder,
+                      ]}
+                      numberOfLines={1}>
+                      {dropoffLocation?.address || 'Where do you want to go?'}
+                    </Text>
+                  </View>
+                  <MapPin size={18} color={Colors.dark.pink} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.routeField, styles.routeFieldLast]}
+                  onPress={openDatePicker}
+                  disabled={loading}
+                  activeOpacity={0.75}>
+                  <View style={styles.routeFieldCopy}>
+                    <Text style={styles.routeLabel}>Departure</Text>
+                    <Text style={styles.routeValue} numberOfLines={1}>
+                      {formatDepartureTime(scheduledDeparture)}
+                    </Text>
+                  </View>
+                  <Clock size={18} color={Colors.dark.gold} />
+                </TouchableOpacity>
+              </View>
             </View>
-            <TouchableOpacity
-              style={styles.locationButton}
-              onPress={() => setShowDropoffPicker(true)}
-              disabled={loading}>
-              <Text
-                style={[
-                  styles.locationButtonText,
-                  !dropoffLocation && styles.locationPlaceholder,
-                ]}>
-                {dropoffLocation?.address || 'Select dropoff location'}
-              </Text>
-              <MapPin size={18} color={Colors.dark.pink} />
-            </TouchableOpacity>
           </View>
 
           {pickupLocation && dropoffLocation && (
@@ -351,30 +409,37 @@ export default function RideRequestModal({
                 longitude: dropoffLocation.longitude,
               }}
               totalSeats={4}
+              onFareCalculated={(farePerSeat) => {
+                if (!requestedFare) {
+                  setRequestedFare(String(Math.max(1, Math.round(farePerSeat * 4))));
+                }
+              }}
             />
           )}
 
           <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Clock size={20} color={Colors.dark.gold} />
-              <Text style={styles.sectionTitle}>Preferred Departure Time</Text>
-            </View>
+            <Text style={styles.sectionTitle}>Booking price for driver</Text>
             <Text style={styles.sectionSubtitle}>
-              Pick when you would like to leave. Drivers within your flexibility window will see your request first.
+              This is the total driver payout. If more passengers join, this same amount is split between everyone.
             </Text>
-            <TouchableOpacity
-              style={styles.departureButton}
-              onPress={openDatePicker}
-              disabled={loading}
-              activeOpacity={0.7}>
-              <View>
-                <Text style={styles.departureLabel}>Leaving around</Text>
-                <Text style={styles.departureValue}>
-                  {formatDepartureTime(scheduledDeparture)}
-                </Text>
-              </View>
-              <Clock size={18} color={Colors.dark.gold} />
-            </TouchableOpacity>
+            <TextInput
+              style={styles.input}
+              placeholder="Total price, e.g. 400"
+              placeholderTextColor={Colors.dark.textSecondary}
+              value={requestedFare}
+              onChangeText={setRequestedFare}
+              keyboardType="numeric"
+              editable={!loading}
+            />
+            {!!requestedFare && Number(requestedFare) > 0 && (
+              <Text style={styles.hint}>
+                Current share: Rs {Math.ceil(Number(requestedFare) / Math.max(1, passengers))} per requested seat. More riders can reduce this after a driver accepts.
+              </Text>
+            )}
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Departure window</Text>
             <Text style={[styles.sectionSubtitle, styles.flexSubtitle]}>
               How flexible are you?
             </Text>
@@ -659,6 +724,86 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 24,
+  },
+  routePanel: {
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 20,
+  },
+  routePanelTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    marginBottom: 14,
+  },
+  routeRows: {
+    flexDirection: 'row',
+  },
+  routeRail: {
+    width: 22,
+    alignItems: 'center',
+    paddingTop: 19,
+  },
+  routeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+  },
+  pickupDot: {
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold,
+  },
+  dropoffDot: {
+    borderColor: Colors.dark.pink,
+    backgroundColor: Colors.dark.pink,
+  },
+  timeDot: {
+    borderColor: Colors.dark.textSecondary,
+    backgroundColor: Colors.dark.card,
+  },
+  routeLine: {
+    width: 1,
+    height: 54,
+    backgroundColor: Colors.dark.border,
+  },
+  routeInputs: {
+    flex: 1,
+    marginLeft: 8,
+  },
+  routeField: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+    paddingVertical: 8,
+    gap: 10,
+  },
+  routeFieldLast: {
+    borderBottomWidth: 0,
+  },
+  routeFieldCopy: {
+    flex: 1,
+  },
+  routeLabel: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  routeValue: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 3,
+  },
+  routePlaceholder: {
+    color: Colors.dark.textSecondary,
+    fontWeight: '500',
   },
   sectionHeader: {
     flexDirection: 'row',

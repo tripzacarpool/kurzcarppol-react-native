@@ -1,7 +1,5 @@
 import mongoose from 'mongoose';
-
-const MONGODB_URI = process.env.MONGODB_URI;
-const MONGODB_DB = process.env.MONGODB_DB || 'tripzaapp';
+import { env } from './env.js';
 
 let cached = {
   conn: null,
@@ -9,7 +7,7 @@ let cached = {
 };
 
 export async function connectToDatabase() {
-  if (!MONGODB_URI) {
+  if (!env.mongodbUri) {
     const err = new Error('MONGODB_URI not found in environment variables');
     console.error('❌', err.message);
     console.error('💡 Please check your backend/.env file');
@@ -17,7 +15,7 @@ export async function connectToDatabase() {
   }
 
   console.log('📡 Connecting to MongoDB...');
-  console.log('   Database:', MONGODB_DB);
+  console.log('   Database:', env.mongodbDb);
 
   if (cached.conn) {
     console.log('✅ Using cached MongoDB connection');
@@ -26,14 +24,14 @@ export async function connectToDatabase() {
 
   if (!cached.promise) {
     cached.promise = mongoose
-      .connect(MONGODB_URI, {
-        dbName: MONGODB_DB,
-        bufferCommands: true, // Buffer commands until connection is ready
-        maxPoolSize: 10,
-        minPoolSize: 5,
-        serverSelectionTimeoutMS: 10000, // Increased timeout
-        socketTimeoutMS: 45000,
-        family: 4, // Use IPv4
+      .connect(env.mongodbUri, {
+        dbName: env.mongodbDb,
+        bufferCommands: true,
+        maxPoolSize: env.mongodbMaxPoolSize,
+        minPoolSize: env.mongodbMinPoolSize,
+        serverSelectionTimeoutMS: env.mongodbServerSelectionTimeoutMs,
+        socketTimeoutMS: env.mongodbSocketTimeoutMs,
+        family: 4,
       })
       .then((mongoose) => {
         console.log('✅ MongoDB connected successfully');
@@ -56,6 +54,17 @@ export async function connectToDatabase() {
   }
 
   return cached.conn;
+}
+
+export async function disconnectDatabase() {
+  if (cached.conn || cached.promise) {
+    await mongoose.disconnect();
+  }
+
+  cached = {
+    conn: null,
+    promise: null,
+  };
 }
 
 export default connectToDatabase;

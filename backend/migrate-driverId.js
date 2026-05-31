@@ -8,16 +8,23 @@
 
 import './src/loadEnv.js';
 import mongoose from 'mongoose';
+import { env } from './src/config/env.js';
 import { RideOffer } from './src/config/models.js';
 
-const MONGODB_URI = process.env.MONGODB_URI;
+const connectOptions = {
+  dbName: env.mongodbDb,
+  maxPoolSize: env.mongodbMaxPoolSize,
+  minPoolSize: env.mongodbMinPoolSize,
+  serverSelectionTimeoutMS: env.mongodbServerSelectionTimeoutMs,
+  socketTimeoutMS: env.mongodbSocketTimeoutMs,
+};
 
 async function migrateDriverId() {
   try {
     console.log('🔄 Starting data migration...');
 
     // Connect to database
-    await mongoose.connect(MONGODB_URI);
+    await mongoose.connect(env.mongodbUri, connectOptions);
     console.log('✅ Connected to MongoDB');
 
     // Find all ride offers without driverId OR with invalid festivalConfig.tier

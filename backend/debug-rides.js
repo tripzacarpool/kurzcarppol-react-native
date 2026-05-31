@@ -1,8 +1,15 @@
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
+import './src/loadEnv.js';
+import { env } from './src/config/env.js';
 import { RideOffer } from './src/config/models.js';
 
-dotenv.config();
+const connectOptions = {
+  dbName: env.mongodbDb,
+  maxPoolSize: env.mongodbMaxPoolSize,
+  minPoolSize: env.mongodbMinPoolSize,
+  serverSelectionTimeoutMS: env.mongodbServerSelectionTimeoutMs,
+  socketTimeoutMS: env.mongodbSocketTimeoutMs,
+};
 
 /**
  * Debug script to check ride offers in database
@@ -12,7 +19,7 @@ dotenv.config();
 async function debugRides() {
   try {
     // Connect to MongoDB
-    await mongoose.connect(process.env.MONGO_URI);
+    await mongoose.connect(env.mongodbUri, connectOptions);
     console.log('✅ Connected to MongoDB');
 
     const now = new Date();

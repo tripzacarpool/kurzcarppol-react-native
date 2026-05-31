@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRef } from 'react';
 import {
   View,
@@ -19,7 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useSignUp } from '@/lib/clerkHooks';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import {
   ArrowLeft,
   User,
@@ -32,6 +32,7 @@ import {
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { RidePartnerApplicationPayload, submitRidePartnerApplication } from '@/lib/api';
+import { formatClerkError, isPasswordError, getPasswordStrengthTips } from '@/lib/clerkErrorHandler';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 
 interface DriverFormData {
@@ -114,6 +115,11 @@ export default function DriverSignupScreen() {
   const [capturedSelfieUri, setCapturedSelfieUri] = useState<string | null>(null);
   const [capturedSelfieBase64, setCapturedSelfieBase64] = useState<string | null>(null);
   const [isCapturingSelfie, setIsCapturingSelfie] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.removeItem('pending_driver_application').catch(() => {});
+  }, []);
+
   const updateField = (field: keyof DriverFormData, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
     setError('');
@@ -410,6 +416,7 @@ export default function DriverSignupScreen() {
       }
 
       await AsyncStorage.setItem('user_role_preference', 'ride_partner');
+      await AsyncStorage.removeItem('pending_driver_application').catch(() => {});
 
       const kycDetailsPayload = {
         selfiePhoto: formData.selfiePhoto,
@@ -453,36 +460,48 @@ export default function DriverSignupScreen() {
         kycDetails: kycDetailsPayload,
       };
 
-      await AsyncStorage.setItem(
-        'pending_driver_application',
-        JSON.stringify(driverApplicationData),
-      );
-
       await submitRidePartnerApplication(driverApplicationData);
 
-      await AsyncStorage.removeItem('pending_driver_application');
+      await AsyncStorage.removeItem('pending_driver_application').catch(() => {});
 
       setSuccess(true);
       setTimeout(() => {
         router.replace('/(tabs)');
       }, 2000);
     } catch (err: any) {
-      const errorCode = err?.errors?.[0]?.code;
-      const errorMsg = err?.errors?.[0]?.message || err?.message;
+      console.error('❌ Signup error details:', {
+        message: err?.message,
+        code: err?.code,
+        errors: err?.errors,
+        status: err?.status,
+        response: err?.response?.data,
+      });
 
+      const errorCode = err?.errors?.[0]?.code;
+      const formattedError = formatClerkError(err);
+
+      // Handle session_exists - user already signed in
       if (errorCode === 'session_exists') {
+        console.log('ℹ️ User already has a session, redirecting...');
         setSuccess(true);
         setTimeout(() => {
           router.replace('/(tabs)');
         }, 500);
+        setLoading(false);
         return;
       }
 
-      const displayError =
-        errorMsg || err?.response?.data?.error || 'Failed to complete signup. Please check your details and try again.';
+      // Handle password errors with specific guidance
+      if (isPasswordError(err)) {
+        console.warn('⚠️ Password validation error:', errorCode);
+        const passwordTips = getPasswordStrengthTips();
+        const tipsText = passwordTips.join('\n');
+        setError(`${formattedError}\n\nPassword Requirements:\n${tipsText}`);
+      } else {
+        setError(formattedError);
+      }
 
-      setError(displayError);
-    } finally {
+      console.error('🔴 Full signup error:', err);
       setLoading(false);
     }
   };
@@ -512,7 +531,12 @@ export default function DriverSignupScreen() {
     return String(Math.floor(10 ** 11 + Math.random() * 9 * 10 ** 11));
   };
 
+  const generateStrongPassword = () => {
+    return `Tripza!${Date.now()}Qx${Math.floor(1000 + Math.random() * 9000)}#`;
+  };
+
   const fillTestData = () => {
+    const strongPassword = generateStrongPassword();
     const sampleProfile = 'data:image/jpeg;base64,UFJPRklMRS1UQUc=';
     const sampleLicense = 'data:image/jpeg;base64,TElDRU5TRS1UQUc=';
     const sampleVehicle = 'data:image/jpeg;base64,VEVTVC1WRUhJQ0xF';
@@ -521,8 +545,8 @@ export default function DriverSignupScreen() {
     setFormData((prev) => ({
       ...prev,
       email: generateRandomEmail(),
-      password: 'Password123!',
-      confirmPassword: 'Password123!',
+      password: strongPassword,
+      confirmPassword: strongPassword,
       firstName: 'Test',
       lastName: `Driver${Math.floor(Math.random() * 1000)}`,
       phone: generateRandomPhone(),

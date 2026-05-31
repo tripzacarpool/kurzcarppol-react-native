@@ -7,13 +7,10 @@ import {
   Platform,
   ScrollView,
   Modal,
-  Dimensions,
-  FlatList,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Calendar, Clock, X, Check, Mic } from 'lucide-react-native';
+import { Calendar, Clock, X, Check, Zap, Timer, Sunrise, CalendarClock } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { LinearGradient } from 'expo-linear-gradient';
 
 interface DateTimeSelectorAdvancedProps {
   value: Date;
@@ -32,7 +29,7 @@ const QUICK_TIME_OPTIONS = [
       now.setMinutes(now.getMinutes() + 1);
       return now;
     },
-    icon: '⚡',
+    icon: 'zap',
   },
   {
     id: '30min',
@@ -43,7 +40,7 @@ const QUICK_TIME_OPTIONS = [
       time.setMinutes(time.getMinutes() + 30);
       return time;
     },
-    icon: '⏱️',
+    icon: 'timer',
   },
   {
     id: '1hour',
@@ -54,7 +51,7 @@ const QUICK_TIME_OPTIONS = [
       time.setHours(time.getHours() + 1);
       return time;
     },
-    icon: '🕐',
+    icon: 'clock',
   },
   {
     id: '2hours',
@@ -65,7 +62,7 @@ const QUICK_TIME_OPTIONS = [
       time.setHours(time.getHours() + 2);
       return time;
     },
-    icon: '🕑',
+    icon: 'clock',
   },
   {
     id: 'tomorrow',
@@ -77,7 +74,7 @@ const QUICK_TIME_OPTIONS = [
       time.setHours(8, 0, 0, 0);
       return time;
     },
-    icon: '🌅',
+    icon: 'sunrise',
   },
 ];
 
@@ -157,18 +154,26 @@ export default function DateTimeSelectorAdvanced({
     });
   };
 
+  const renderQuickIcon = (icon: string) => {
+    const iconProps = { size: 20, color: Colors.dark.gold };
+    if (icon === 'zap') return <Zap {...iconProps} />;
+    if (icon === 'timer') return <Timer {...iconProps} />;
+    if (icon === 'sunrise') return <Sunrise {...iconProps} />;
+    return <Clock {...iconProps} />;
+  };
+
   const getTimeStatus = () => {
     const now = new Date();
     const diffInMinutes = (value.getTime() - now.getTime()) / (1000 * 60);
 
     if (diffInMinutes < 30) {
-      return { text: '🔴 Departing soon', color: Colors.dark.error };
+      return { text: 'Departing soon', color: Colors.dark.error };
     } else if (diffInMinutes < 120) {
-      return { text: '🟡 Within 2 hours', color: Colors.dark.gold };
+      return { text: 'Within 2 hours', color: Colors.dark.gold };
     } else if (diffInMinutes < 1440) {
-      return { text: '🟢 Today', color: Colors.dark.success };
+      return { text: 'Today', color: Colors.dark.success };
     } else {
-      return { text: '⚪ Future', color: Colors.dark.textSecondary };
+      return { text: 'Scheduled ahead', color: Colors.dark.textSecondary };
     }
   };
 
@@ -184,23 +189,19 @@ export default function DateTimeSelectorAdvanced({
         onPress={() => setShowModal(true)}
         activeOpacity={0.8}
       >
-        <LinearGradient
-          colors={['#1a1a1a', '#2a2a2a']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.gradientButton}
-        >
-          <View style={styles.mainButtonContent}>
-            <View style={styles.mainButtonLeft}>
-              <Clock size={28} color={Colors.dark.gold} />
-              <View style={styles.mainButtonText}>
-                <Text style={styles.mainTime}>{formatDateDisplay(value)}</Text>
-                <Text style={styles.mainTimeValue}>{formatTimeDisplay(value)}</Text>
-              </View>
-            </View>
-            <Text style={styles.chevron}>›</Text>
+        <View style={styles.mainButtonContent}>
+          <View style={styles.mainIconBox}>
+            <CalendarClock size={22} color={Colors.dark.gold} />
           </View>
-        </LinearGradient>
+          <View style={styles.mainButtonText}>
+            <Text style={styles.mainTime}>Departure</Text>
+            <View style={styles.mainDateRow}>
+              <Text style={styles.mainDateValue}>{formatDateDisplay(value)}</Text>
+              <Text style={styles.mainTimeValue}>{formatTimeDisplay(value)}</Text>
+            </View>
+          </View>
+          <Text style={styles.changeText}>Change</Text>
+        </View>
       </TouchableOpacity>
 
       {/* Status Indicator */}
@@ -243,18 +244,15 @@ export default function DateTimeSelectorAdvanced({
                       onPress={() => handleQuickSelect(option.getTime)}
                       activeOpacity={0.7}
                     >
-                      <LinearGradient
-                        colors={['#2d5f2e', '#1a3a1b']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.quickSelectGradient}
-                      >
-                        <Text style={styles.quickSelectEmoji}>{option.icon}</Text>
+                      <View style={styles.quickSelectContent}>
+                        <View style={styles.quickIconBox}>
+                          {renderQuickIcon(option.icon)}
+                        </View>
                         <Text style={styles.quickSelectLabel}>{option.label}</Text>
                         <Text style={styles.quickSelectSubtitle}>
                           {option.subtitle}
                         </Text>
-                      </LinearGradient>
+                      </View>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -388,15 +386,8 @@ export default function DateTimeSelectorAdvanced({
                 onPress={() => setShowModal(false)}
                 activeOpacity={0.8}
               >
-                <LinearGradient
-                  colors={['#d4af37', '#f0e68c']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.confirmButtonGradient}
-                >
-                  <Check size={20} color="#000" />
-                  <Text style={styles.confirmButtonText}>Confirm Departure Time</Text>
-                </LinearGradient>
+                <Check size={20} color={Colors.dark.background} />
+                <Text style={styles.confirmButtonText}>Confirm Departure Time</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -438,46 +429,58 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   mainButton: {
-    borderRadius: 14,
-    overflow: 'hidden',
-    marginBottom: 12,
-  },
-  gradientButton: {
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.dark.border,
+    padding: 14,
+    marginBottom: 12,
   },
   mainButtonContent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  mainButtonLeft: {
-    flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    flex: 1,
+  },
+  mainIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.gold + '18',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '35',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   mainButtonText: {
     flex: 1,
   },
   mainTime: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.dark.textSecondary,
     textTransform: 'uppercase',
-    fontWeight: '500',
+    fontWeight: '700',
+  },
+  mainDateRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  mainDateValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.dark.text,
   },
   mainTimeValue: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
     color: Colors.dark.gold,
-    marginTop: 2,
   },
-  chevron: {
-    fontSize: 28,
+  changeText: {
     color: Colors.dark.gold,
-    fontWeight: '300',
+    fontSize: 12,
+    fontWeight: '700',
   },
   statusPill: {
     flexDirection: 'row',
@@ -539,29 +542,36 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   quickSelectGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
   quickSelectButton: {
-    borderRadius: 12,
-    overflow: 'hidden',
+    flexBasis: '47%',
+    flexGrow: 1,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
   },
-  quickSelectGradient: {
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+  quickSelectContent: {
+    padding: 12,
+    minHeight: 104,
+  },
+  quickIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.gold + '14',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.dark.success,
-  },
-  quickSelectEmoji: {
-    fontSize: 28,
-    marginBottom: 6,
+    marginBottom: 10,
   },
   quickSelectLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.dark.success,
-    marginBottom: 2,
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    marginBottom: 4,
   },
   quickSelectSubtitle: {
     fontSize: 11,
@@ -626,7 +636,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   timeSlotButton: {
-    flex: 0.45,
+    minWidth: '22%',
+    flexGrow: 1,
     paddingVertical: 12,
     paddingHorizontal: 16,
     backgroundColor: Colors.dark.card,
@@ -646,13 +657,11 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.dark.border,
   },
   confirmButton: {
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  confirmButtonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: Colors.dark.gold,
+    borderRadius: 8,
     paddingVertical: 14,
     paddingHorizontal: 20,
     gap: 10,

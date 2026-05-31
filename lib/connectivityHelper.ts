@@ -1,3 +1,5 @@
+import { backendEndpoints, fetchBackendReadiness, getApiBaseUrl } from '@/lib/backendConfig';
+
 export async function testBackendConnectivity(
   apiUrl: string,
 ): Promise<boolean> {
@@ -29,17 +31,27 @@ export async function testBackendConnectivity(
   }
 }
 
-export async function getAvailableBackendUrl(): Promise<string> {
-  if (!process.env.EXPO_PUBLIC_API_URL) {
-    throw new Error('EXPO_PUBLIC_API_URL environment variable is required');
+export async function testBackendReadiness(): Promise<boolean> {
+  try {
+    const readiness = await fetchBackendReadiness();
+    const ok = readiness.status === 'ready';
+    if (ok) {
+      console.log('Backend services are ready:', readiness.checks);
+    } else {
+      console.warn('Backend services are not ready:', readiness.checks);
+    }
+    return ok;
+  } catch (err) {
+    console.warn(
+      'Backend readiness test failed:',
+      err instanceof Error ? err.message : 'Unknown error',
+    );
+    return false;
   }
+}
 
-  const urls = [
-    process.env.EXPO_PUBLIC_API_URL,
-    // Local development URLs (uncomment to use):
-    // 'http://10.0.2.2:5000', // Android emulator default
-    // 'http://10.238.194.123:5000', // Local development
-  ];
+export async function getAvailableBackendUrl(): Promise<string> {
+  const urls = [getApiBaseUrl()];
 
   for (const url of urls) {
     console.log(`🧪 Trying URL: ${url}`);
@@ -50,6 +62,9 @@ export async function getAvailableBackendUrl(): Promise<string> {
   }
 
   console.warn('⚠️ No backend URL worked, using default');
-  return process.env.EXPO_PUBLIC_API_URL;
-  // return 'http://10.238.194.123:5000'; // Local development URL
+  return getApiBaseUrl();
+}
+
+export function getHealthUrl(): string {
+  return backendEndpoints.health();
 }

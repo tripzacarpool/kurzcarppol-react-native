@@ -1,0 +1,151 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: tripza-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - tripza-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    container_name: tripza-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: tripza-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,EXTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://127.0.0.1:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - tripza-kafka-data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+
+  matching-service:
+    build:
+      context: ./backend/services/matching-service
+    container_name: tripza-matching-service
+    restart: unless-stopped
+    ports:
+      - "7001:7001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7001/health', timeout=2).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: ./backend
+    container_name: tripza-api
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      matching-service:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: development
+      PORT: "5000"
+      MONGODB_URI: mongodb://mongo:27017/tripza
+      MONGODB_DB: tripzaapp
+      MONGODB_MAX_POOL_SIZE: "20"
+      MONGODB_MIN_POOL_SIZE: "2"
+      MONGODB_SERVER_SELECTION_TIMEOUT_MS: "10000"
+      MONGODB_SOCKET_TIMEOUT_MS: "45000"
+      ALLOWED_ORIGINS: http://localhost:8081,http://localhost:5000,http://127.0.0.1:5000
+      TRUST_PROXY: "false"
+      ENABLE_BACKGROUND_TASKS: "false"
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CLIENT_ID: tripza-api
+      EVENT_BUS_STRICT: "false"
+      REDIS_URL: redis://redis:6379
+      MATCHING_SERVICE_URL: http://matching-service:7001
+      MATCHING_SERVICE_REQUIRED: "true"
+      MATCHING_SERVICE_TIMEOUT_MS: "1500"
+      REQUEST_BODY_LIMIT: 1mb
+      RATE_LIMIT_WINDOW_MS: "900000"
+      RATE_LIMIT_MAX: "300"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+
+  worker:
+    build:
+      context: ./backend
+    container_name: tripza-background-worker
+    restart: unless-stopped
+    command: ["npm", "run", "worker"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      matching-service:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      MONGODB_URI: mongodb://mongo:27017/tripza
+      MONGODB_DB: tripzaapp
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CLIENT_ID: tripza-worker
+      EVENT_BUS_STRICT: "false"
+      REDIS_URL: redis://redis:6379
+      MATCHING_SERVICE_URL: http://matching-service:7001
+      MATCHING_SERVICE_REQUIRED: "false"
+      SERVER_SHUTDOWN_TIMEOUT_MS: "10000"
+
+volumes:
+  tripza-mongo-data:
+  tripza-kafka-data:

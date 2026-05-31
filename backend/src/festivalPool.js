@@ -1,8 +1,8 @@
 // Festival Special Pool backend logic (skeleton)
-const FESTIVAL_POOL_TYPES = ['Diwali', 'Holi', 'Eid', 'Chhath', 'Wedding'];
+export const FESTIVAL_POOL_TYPES = ['Diwali', 'Holi', 'Eid', 'Chhath', 'Wedding'];
 
 // Example: Add special pool ride offer
-function createFestivalPoolOffer(offer) {
+export function createFestivalPoolOffer(offer) {
   if (!FESTIVAL_POOL_TYPES.includes(offer.festivalType)) {
     throw new Error('Invalid festival type');
   }
@@ -10,5 +10,3 @@ function createFestivalPoolOffer(offer) {
   // ...
   return { ...offer, isFestivalPool: true };
 }
-
-module.exports = { createFestivalPoolOffer };

@@ -1,23 +1,22 @@
 // Delete ALL conversations and messages from the database
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import './src/loadEnv.js';
+import { env } from './src/config/env.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-dotenv.config({ path: join(__dirname, '.env') });
-
-const MONGODB_URI = process.env.MONGODB_URI;
-const MONGODB_DB = process.env.MONGODB_DB || 'kruzapp';
+const connectOptions = {
+  dbName: env.mongodbDb,
+  maxPoolSize: env.mongodbMaxPoolSize,
+  minPoolSize: env.mongodbMinPoolSize,
+  serverSelectionTimeoutMS: env.mongodbServerSelectionTimeoutMs,
+  socketTimeoutMS: env.mongodbSocketTimeoutMs,
+};
 
 async function deleteAllConversations() {
   try {
     console.log('🔌 Connecting to MongoDB...');
-    console.log('   Database:', MONGODB_DB);
+    console.log('   Database:', env.mongodbDb);
 
-    await mongoose.connect(MONGODB_URI, { dbName: MONGODB_DB });
+    await mongoose.connect(env.mongodbUri, connectOptions);
 
     console.log('✅ Connected to database:', mongoose.connection.name);
 

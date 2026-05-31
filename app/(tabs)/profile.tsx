@@ -5,6 +5,7 @@ import { Colors } from '@/constants/Colors';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
+import { useNotifications } from '@/contexts/NotificationContext';
 import { getUserProfile } from '@/lib/ipService';
 import ForceLogoutButton from '@/components/ForceLogoutButton';
 import CustomAlert, { AlertType } from '@/components/CustomAlert';
@@ -13,7 +14,8 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
   const { location, hasPermission, requestPermission, updateLocation } = useLocation();
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const { enablePushNotifications } = useNotifications();
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [locationEnabled, setLocationEnabled] = useState(hasPermission);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -85,7 +87,7 @@ export default function ProfileScreen() {
               console.log('⏳ Waiting for state to update...');
               await new Promise(resolve => setTimeout(resolve, 500));
               console.log('🔄 Redirecting to login...');
-              router.replace('/(auth)/login');
+              router.replace('/');
             } catch (error) {
               console.error('❌ Logout error:', error);
               showAlert('Error', 'Failed to logout. Please try again.', 'error');
@@ -108,6 +110,25 @@ export default function ProfileScreen() {
       }
     } else {
       setLocationEnabled(false);
+    }
+  };
+
+  const handleNotificationToggle = async (value: boolean) => {
+    if (!value) {
+      setNotificationsEnabled(false);
+      return;
+    }
+
+    const enabled = await enablePushNotifications();
+    setNotificationsEnabled(enabled);
+    if (enabled) {
+      showAlert('Success', 'Notifications enabled!', 'success');
+    } else {
+      showAlert(
+        'Notifications Off',
+        'You can enable notifications later from your device settings.',
+        'info',
+      );
     }
   };
 
@@ -239,7 +260,7 @@ export default function ProfileScreen() {
             <Text style={styles.menuText}>Notifications</Text>
             <Switch
               value={notificationsEnabled}
-              onValueChange={setNotificationsEnabled}
+              onValueChange={handleNotificationToggle}
               trackColor={{ false: Colors.dark.border, true: Colors.dark.gold }}
               thumbColor={Colors.dark.text}
             />

@@ -1,15 +1,25 @@
-import { Link, Stack } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
+import { Colors } from '@/constants/Colors';
 
 export default function NotFoundScreen() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      router.replace('/');
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [router]);
+
   return (
     <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
+      <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.container}>
-        <Text style={styles.text}>This screen doesn't exist.</Text>
-        <Link href="/" style={styles.link}>
-          <Text>Go to home screen!</Text>
-        </Link>
+        <ActivityIndicator size="large" color={Colors.dark.gold} />
+        <Text style={styles.text}>Opening Tripza...</Text>
       </View>
     </>
   );
@@ -21,13 +31,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
+    backgroundColor: Colors.dark.background,
   },
   text: {
-    fontSize: 20,
-    fontWeight: 600,
-  },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
+    marginTop: 16,
+    color: Colors.dark.textSecondary,
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

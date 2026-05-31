@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { X, Check, MapPin, MessageSquare, Armchair, Navigation, CheckCircle2, ArrowLeft, Wallet as WalletIcon, CreditCard, ShieldCheck, UserCheck, Clock, AlertCircle, Star } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
+import { MAP_CONFIG } from '@/config/googleMaps';
 import { Ride } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { RazorpayWebView } from './RazorpayWebView';
@@ -35,6 +36,7 @@ import {
   setAuthToken,
   bookRideOffer,
   confirmBookingPayment,
+  joinRideRequest,
 } from '@/lib/api';
 
 interface BookingModalProps {
@@ -350,6 +352,16 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     return null;
   }, [ride]);
 
+  const trackingPickupLocation = pickupLocation || {
+    latitude: MAP_CONFIG.DEFAULT_REGION.latitude,
+    longitude: MAP_CONFIG.DEFAULT_REGION.longitude,
+  };
+
+  const trackingDropoffLocation = dropoffLocation || {
+    latitude: trackingPickupLocation.latitude + 0.01,
+    longitude: trackingPickupLocation.longitude + 0.01,
+  };
+
   const handlePayment = useCallback(async () => {
     if (!paymentMethod || !user?.id || !ride) return;
     
@@ -374,6 +386,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     setProcessingPayment(true);
 
     try {
+      const token = await getAuthToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
       if (paymentMethod === 'wallet') {
         // Process wallet payment
         const result = await processWalletPayment(user.id, totalAmount, {
@@ -389,6 +406,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           if (token) {
             setAuthToken(token);
             console.log('🔑 Token set for booking confirmation');
+          } else if ((ride as any).clerkId && (ride as any).clerkId !== user.id) {
+            console.log('Joining shared ride request:', ride.id);
+            await joinRideRequest(ride.id, {
+              seatCount: selectedSeats.length || 1,
+              paymentMethod: 'upi',
+            });
           } else {
             console.warn('⚠️ No token available');
           }
@@ -404,6 +427,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                 paymentMethod: 'wallet',
                 customRequest: customRequest || undefined,
               });
+            } else if ((ride as any).clerkId && (ride as any).clerkId !== user.id) {
+              console.log('Joining shared ride request:', ride.id);
+              await joinRideRequest(ride.id, {
+                seatCount: selectedSeats.length || 1,
+                paymentMethod: 'wallet',
+              });
             } else {
               console.log('📦 Booking ride request:', ride.id);
               await confirmRideBooking(ride.id, {
@@ -416,6 +445,9 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           } else {
             // Booking already created (after driver approval), now confirm payment
             console.log('✅ Confirming payment for booking:', currentBookingId);
+            if (!result.transactionId) {
+              throw new Error('Wallet payment succeeded without a transaction id');
+            }
             await confirmBookingPayment(currentBookingId, result.transactionId, 'wallet');
           }
           setBookingConfirmed(true);
@@ -459,6 +491,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       if (!ride) return;
       setShowRazorpay(false);
       setProcessingPayment(true);
+
+      const token = await getAuthToken();
+      if (token) {
+        setAuthToken(token);
+      }
 
       const verified = await verifyPayment(orderId, paymentId, signature);
       
@@ -545,7 +582,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         console.warn('⚠️ No token available');
       }
       
-      await passengerConfirmPickup(ride.id);
+      await passengerConfirmPickup(ride.id, user?.id);
       setPickupConfirmed(true);
       setTrackingActive(true);
       setShowTrackingMap(true);
@@ -557,7 +594,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } finally {
       setPickupActionLoading(false);
     }
-  }, [ride, pickupConfirmed, showAlert, getAuthToken]);
+  }, [ride, pickupConfirmed, user?.id, showAlert, getAuthToken]);
 
   const handleDropConfirmation = useCallback(async () => {
     if (!ride) return;
@@ -618,6 +655,24 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         setAuthToken(token);
       }
 
+      if (ride.rideType !== 'offer') {
+        await joinRideRequest(ride.id, {
+          seatCount: selectedSeats.length || 1,
+          paymentMethod: 'unknown',
+        });
+        setBookingConfirmed(true);
+        setApprovalStatus('approved');
+        showAlert(
+          'Joined shared ride',
+          'Your seat is confirmed and the fare split has been updated for everyone.',
+          'success',
+        );
+        setTimeout(() => {
+          setStep('boarding');
+        }, 1200);
+        return;
+      }
+
       // Create booking with pending_approval status
       const response = await bookRideOffer(ride.id, {
         seatNumbers: selectedSeats,
@@ -626,10 +681,32 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
 
       if (response.success && response.booking) {
         setCurrentBookingId(response.booking._id || response.booking.id);
-        setApprovalStatus('pending');
-        setApprovalCountdown(300); // 5 minutes
-        setStep('approval-waiting');
-        console.log('✅ Booking created, waiting for driver approval:', response.booking._id);
+        
+        // Check if booking was auto-approved or requires manual approval
+        const bookingStatus = response.booking.approvalStatus;
+        console.log('📋 Booking status:', bookingStatus);
+        
+        if (bookingStatus === 'auto_accepted') {
+          // Auto-approved! Skip approval waiting and go directly to boarding
+          console.log('✅ Booking auto-approved! Going to boarding step.');
+          setBookingConfirmed(true);
+          setApprovalStatus('approved');
+          showAlert(
+            '✅ Booking Confirmed!', 
+            'Your booking was instantly confirmed. The driver will pick you up at the scheduled time.',
+            'success'
+          );
+          setTimeout(() => {
+            setStep('boarding');
+          }, 1500);
+        } else {
+          // Requires manual approval - wait for driver
+          console.log('📬 Booking requires driver approval');
+          setApprovalStatus('pending');
+          setApprovalCountdown(300); // 5 minutes
+          setStep('approval-waiting');
+          console.log('✅ Booking created, waiting for driver approval:', response.booking._id);
+        }
       } else {
         showAlert('Booking Failed', response.message || 'Could not create booking', 'error');
       }
@@ -639,7 +716,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } finally {
       setCreatingBooking(false);
     }
-  }, [ride?.id, selectedSeats, getAuthToken, customRequest]);
+  }, [ride?.id, selectedSeats, getAuthToken, customRequest, showAlert]);
 
   const handleRequestContinue = useCallback(() => {
     setStep('seats');
@@ -1562,7 +1639,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         />
       )}
 
-      {showTrackingMap && pickupLocation && dropoffLocation && (
+      {showTrackingMap && (
         <Modal
           visible={showTrackingMap}
           animationType="slide"
@@ -1572,8 +1649,8 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             rideId={ride.id}
             driverName={ride.driver?.name || 'Driver'}
             driverRating={ride.driver?.rating || 5}
-            pickupLocation={pickupLocation}
-            dropoffLocation={dropoffLocation}
+            pickupLocation={trackingPickupLocation}
+            dropoffLocation={trackingDropoffLocation}
             onClose={() => setShowTrackingMap(false)}
           />
         </Modal>

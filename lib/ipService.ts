@@ -1,4 +1,4 @@
-import Constants from 'expo-constants';
+import { getApiBaseUrl } from '@/lib/backendConfig';
 
 export async function fetchAndStoreUserIP(
   userId: string,
@@ -11,11 +11,7 @@ export async function fetchAndStoreUserIP(
     console.log('✅ Got IP:', ipAddress);
 
     if (ipAddress) {
-      const API_URL =
-        process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
-      if (!API_URL) {
-        throw new Error('API URL not configured');
-      }
+      const API_URL = getApiBaseUrl();
       const ipUrl = `${API_URL}/api/users/ip`;
       console.log('💾 Storing IP to:', ipUrl);
 
@@ -55,11 +51,7 @@ export async function fetchAndStoreUserIP(
 
 export async function getUserProfile(userId: string) {
   try {
-    const API_URL =
-      process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
-    if (!API_URL) {
-      throw new Error('API URL not configured');
-    }
+    const API_URL = getApiBaseUrl();
     console.log('👤 Fetching profile from:', `${API_URL}/api/users/${userId}`);
     const response = await fetch(`${API_URL}/api/users/${userId}`, {
       method: 'GET',

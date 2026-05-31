@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useRef } from 'r
 import { useAuth } from '@/contexts/AuthContext';
 import { getUserConversations, setAuthToken } from '@/lib/api';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
-import { initializeLocationSocket, getLocationSocket } from '@/lib/locationSocket';
+import { initializeLocationSocket, getLocationSocket, joinUserSocketRoom } from '@/lib/locationSocket';
 
 interface Conversation {
   _id: string;
@@ -89,7 +89,15 @@ export const MessagesProvider: React.FC<{ children: React.ReactNode }> = ({
     
     // Initialize socket connection
     initializeLocationSocket();
+    joinUserSocketRoom(user.id);
     const socket = getLocationSocket();
+    
+    // Check if socket is available (returns null on web platform)
+    if (!socket) {
+      console.log('⚠️ [MessagesContext] Socket not available (likely running on web platform)');
+      return;
+    }
+    
     socketInitialized.current = true;
 
     const handleNewMessage = (data: any) => {

@@ -22,6 +22,11 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+*.log
+hs_err_pid*
+replay_pid*
+.tripza-services/
+.local-infra/
 
 # macos
 .DS_Store
@@ -33,3 +38,10 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/

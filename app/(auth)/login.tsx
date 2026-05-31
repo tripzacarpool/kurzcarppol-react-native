@@ -35,8 +35,8 @@ export default function LoginScreen() {
   // Redirect to home if already signed in
   useEffect(() => {
     if (isSignedIn) {
-      console.log('✅ Already signed in, redirecting to driver dashboard...');
-      router.replace('/driver/dashboard');
+      console.log('✅ Already signed in, redirecting to role router...');
+      router.replace('/redirect');
     }
   }, [isSignedIn]);
 
@@ -114,9 +114,9 @@ export default function LoginScreen() {
           console.log('⚠️ Could not send welcome notification:', notifError);
         }
         
-        // Redirect directly to driver dashboard after login
-        console.log('🚀 Redirecting to driver dashboard...');
-        router.replace('/driver/dashboard');
+        // Redirect directly to role router after login
+        console.log('🚀 Redirecting to role router...');
+        router.replace('/redirect');
       } else if (result?.status === 'needs_second_factor') {
         setError('Two-factor authentication required');
       } else {
@@ -126,8 +126,8 @@ export default function LoginScreen() {
     } catch (err: any) {
       // Ignore "session_exists" error - user is already logged in
       if (err?.errors?.[0]?.code === 'session_exists') {
-        console.log('✅ Session already exists, redirecting to driver dashboard...');
-        router.replace('/driver/dashboard');
+        console.log('✅ Session already exists, redirecting to role router...');
+        router.replace('/redirect');
         return;
       }
       
@@ -164,15 +164,15 @@ export default function LoginScreen() {
       if (createdSessionId) {
         await setActive?.({ session: createdSessionId });
         console.log('✅ Google sign-in successful');
-        router.replace('/driver/dashboard');
+        router.replace('/redirect');
       } else {
         throw new Error('No session created');
       }
     } catch (err: any) {
       // Ignore "session_exists" error
       if (err?.errors?.[0]?.code === 'session_exists') {
-        console.log('✅ Session already exists, redirecting to driver dashboard...');
-        router.replace('/driver/dashboard');
+        console.log('✅ Session already exists, redirecting to role router...');
+        router.replace('/redirect');
         return;
       }
       setError(err?.errors?.[0]?.message || 'Google sign-in failed');

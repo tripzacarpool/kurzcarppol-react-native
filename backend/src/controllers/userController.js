@@ -1,367 +1,224 @@
-import { UserProfile } from '../config/models.js';
 import {
-  checkDatabaseConnection,
-  validateEmail,
-  validateClerkId,
-  sanitizeUser,
-  formatUserResponse,
-} from '../utils/validation.js';
+  emailExists,
+  getCurrentUserProfile,
+  getFullUserProfile,
+  getUserRoleStats,
+  markUserLoggedOut,
+  syncClerkUser,
+  updateDriverVerificationForUser,
+  updateUserIpById,
+  updateUserLocationById,
+  updateUserRoleByClerkId,
+} from '../services/userProfileService.js';
+import {
+  registerPushTokenForUser,
+  sendUserTestPush,
+} from '../services/userNotificationService.js';
+import {
+  getAdminDriverList,
+  getAdminPlatformOverview,
+  updateAdminDriverProfile,
+} from '../services/adminService.js';
+
+const sendServiceError = (req, res, error, fallbackCode = 'USER_PROFILE_ERROR') => {
+  if (error.status) {
+    return res.status(error.status).json({
+      error: error.message,
+      details: error.details,
+      code: error.code || fallbackCode,
+      debug: error.debug,
+      requestId: req.requestId,
+    });
+  }
+
+  return res.status(500).json({
+    error: 'User profile request failed',
+    details: error.message,
+    code: fallbackCode,
+    requestId: req.requestId,
+  });
+};
+
+export const syncUser = async (req, res) => {
+  try {
+    const result = await syncClerkUser(req.auth?.userId, req.body);
+    return res.status(result.isNewUser ? 201 : 200).json({
+      success: true,
+      message: result.isNewUser
+        ? 'User created successfully'
+        : 'User updated successfully',
+      action: result.isNewUser ? 'created' : 'updated',
+      user: result.user,
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'SYNC_ERROR');
+  }
+};
+
+export const getUserProfile = async (req, res) => {
+  try {
+    const user = await getFullUserProfile(req.params.clerkId);
+    return res.json({ success: true, user });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'FETCH_ERROR');
+  }
+};
+
+export const updateUserRole = async (req, res) => {
+  try {
+    const user = await updateUserRoleByClerkId(req.params.clerkId, req.body.role);
+    return res.json({
+      success: true,
+      message: 'Role updated successfully',
+      user,
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'UPDATE_ERROR');
+  }
+};
+
+export const updateUserLocation = async (req, res) => {
+  try {
+    const user = await updateUserLocationById(req.body);
+    return res.json({
+      success: true,
+      message: 'Location updated successfully',
+      user,
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'LOCATION_UPDATE_ERROR');
+  }
+};
+
+export const updateUserIP = async (req, res) => {
+  try {
+    const user = await updateUserIpById(req.body);
+    return res.json({
+      success: true,
+      message: 'IP address updated successfully',
+      user,
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'IP_UPDATE_ERROR');
+  }
+};
+
+export const getProfile = async (req, res) => {
+  try {
+    const user = await getCurrentUserProfile(req.auth?.userId);
+    return res.status(200).json(user);
+  } catch (error) {
+    return sendServiceError(req, res, error, 'PROFILE_FETCH_ERROR');
+  }
+};
+
+export const checkEmailExists = async (req, res) => {
+  try {
+    const result = await emailExists(req.query.email);
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'CHECK_EMAIL_ERROR');
+  }
+};
+
+export const updatePushToken = async (req, res) => {
+  try {
+    const result = await registerPushTokenForUser({
+      clerkId: req.auth?.userId || req.body.clerkId,
+      pushToken: req.body.pushToken,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Push token updated successfully',
+      clerkId: result.clerkId,
+      pushTokenUpdatedAt: result.pushTokenUpdatedAt,
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'PUSH_TOKEN_UPDATE_ERROR');
+  }
+};
+
+export const testPushNotification = async (req, res) => {
+  try {
+    const result = await sendUserTestPush(req.body.clerkId);
+    return res.status(200).json({
+      success: true,
+      message: 'Test push notification sent',
+      results: result.results,
+      debug: result.debug,
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'TEST_PUSH_ERROR');
+  }
+};
+
+export const updateDriverVerification = async (req, res) => {
+  try {
+    const result = await updateDriverVerificationForUser(
+      req.auth?.userId,
+      req.body,
+    );
+
+    return res.json({
+      success: true,
+      message: 'Driver verification updated successfully',
+      user: result.user,
+      verificationBatch: result.verificationBatch,
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'UPDATE_ERROR');
+  }
+};
+
+export const logoutUser = async (req, res) => {
+  try {
+    const result = await markUserLoggedOut(req.body.clerkId);
+    return res.status(200).json({
+      success: true,
+      message: result.found
+        ? 'User logged out successfully'
+        : 'User not found, but logout processed',
+      clerkId: result.clerkId,
+      timestamp: result.timestamp,
+      code: result.found ? undefined : 'USER_NOT_FOUND',
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'LOGOUT_ERROR');
+  }
+};
 
 /**
  * Sync user from Clerk to MongoDB
  * POST /api/users/sync
  * Requires Clerk authentication
  */
-export const syncUser = async (req, res, next) => {
-  try {
-    // 1. Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        details: 'MongoDB is not connected. Please try again later.',
-        code: 'DB_CONNECTION_ERROR',
-      });
-    }
-
-    // 2. Get authenticated user ID from Clerk middleware
-    const clerkId = req.auth?.userId;
-
-    if (!clerkId) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        details: 'Valid Clerk authentication required',
-        code: 'NO_AUTH_USER',
-      });
-    }
-
-    // 3. Get user data from request body
-    const { email, firstName, lastName, profileImage, role } = req.body;
-
-    if (!email) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        details: 'email is required',
-        code: 'MISSING_FIELDS',
-      });
-    }
-
-    // 4. Validate Email Format
-    if (!validateEmail(email)) {
-      return res.status(400).json({
-        error: 'Invalid email format',
-        details: 'Please provide a valid email address',
-        code: 'INVALID_EMAIL',
-      });
-    }
-
-    // 5. Sanitize Input
-    const sanitized = sanitizeUser({
-      clerkId,
-      email,
-      firstName,
-      lastName,
-      profileImage,
-    });
-
-    // 6. Check if Email is Already Used by Another User
-    const existingEmailUser = await UserProfile.findOne({
-      email: sanitized.email,
-      clerkId: { $ne: sanitized.clerkId },
-    });
-
-    if (existingEmailUser) {
-      return res.status(400).json({
-        error: 'Email already in use',
-        details: `This email is associated with another user`,
-        code: 'EMAIL_ALREADY_EXISTS',
-      });
-    }
-
-    // 7. Check if User Exists
-    let user = await UserProfile.findOne({ clerkId: sanitized.clerkId });
-    let isNewUser = !user;
-
-    if (!user) {
-      // Create new user
-      try {
-        // Use provided role or default to 'passenger'
-        const userRole =
-          role &&
-          ['passenger', 'ride_partner', 'driver', 'admin'].includes(role)
-            ? role
-            : 'passenger';
-
-        user = await UserProfile.create({
-          clerkId: sanitized.clerkId,
-          email: sanitized.email,
-          firstName: sanitized.firstName,
-          lastName: sanitized.lastName,
-          profileImage: sanitized.profileImage || null,
-          role: userRole,
-          isActive: true,
-        });
-        console.log(
-          `✅ New user created: ${sanitized.email} (${sanitized.clerkId}) with role: ${userRole}`,
-        );
-      } catch (createError) {
-        if (createError.code === 11000) {
-          return res.status(400).json({
-            error: 'User already exists',
-            details: 'This Clerk ID or email is already registered',
-            code: 'DUPLICATE_USER',
-          });
-        }
-        throw createError;
-      }
-    } else {
-      // Update existing user
-      try {
-        user = await UserProfile.findOneAndUpdate(
-          { clerkId: sanitized.clerkId },
-          {
-            email: sanitized.email,
-            firstName: sanitized.firstName || user.firstName,
-            lastName: sanitized.lastName || user.lastName,
-            profileImage: sanitized.profileImage || user.profileImage,
-            isActive: true,
-          },
-          { new: true, runValidators: true },
-        );
-        console.log(
-          `✅ User updated: ${sanitized.email} (${sanitized.clerkId})`,
-        );
-      } catch (updateError) {
-        if (updateError.code === 11000) {
-          return res.status(400).json({
-            error: 'Email conflict',
-            details: 'This email cannot be used for this account',
-            code: 'EMAIL_CONFLICT',
-          });
-        }
-        throw updateError;
-      }
-    }
-
-    // 8. Return Success Response
-    res.status(isNewUser ? 201 : 200).json({
-      success: true,
-      message: isNewUser
-        ? 'User created successfully'
-        : 'User updated successfully',
-      action: isNewUser ? 'created' : 'updated',
-      user: formatUserResponse(user),
-    });
-  } catch (error) {
-    console.error('❌ Sync error:', {
-      message: error.message,
-      name: error.name,
-      code: error.code,
-    });
-
-    // Handle specific MongoDB errors
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({
-        error: 'Validation error',
-        details: Object.values(error.errors).map((e) => e.message),
-        code: 'VALIDATION_ERROR',
-      });
-    }
-
-    res.status(500).json({
-      error: 'Failed to sync user',
-      details: error.message,
-      code: 'SYNC_ERROR',
-    });
-  }
-};
-
 /**
  * Get user profile by Clerk ID
  * GET /api/users/:clerkId
  */
-export const getUserProfile = async (req, res, next) => {
-  try {
-    const { clerkId } = req.params;
-
-    // Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        code: 'DB_CONNECTION_ERROR',
-      });
-    }
-
-    // Validate Clerk ID
-    if (!validateClerkId(clerkId)) {
-      return res.status(400).json({
-        error: 'Invalid Clerk ID format',
-        code: 'INVALID_CLERK_ID',
-      });
-    }
-
-    const user = await UserProfile.findOne({ clerkId });
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        details: `No user found with Clerk ID: ${clerkId}`,
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    // Return comprehensive profile data for the profile page
-    const fullProfile = {
-      id: user._id,
-      clerkId: user.clerkId,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      full_name:
-        `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User',
-      profileImage: user.profileImage,
-      role: user.role,
-      rating: user.rating || 4.8,
-      total_trips: user.totalTrips || 0,
-      walletBalance: user.walletBalance || 0,
-      phone: user.phone,
-      isWomenOnly: user.isWomenOnly,
-      ip_address: user.ipAddress,
-      ipUpdatedAt: user.ipUpdatedAt,
-      location: user.location || null,
-      last_location_update: user.location?.updatedAt,
-      vehicleInfo: user.vehicleInfo || null,
-      driverVerified: user.driverVerified || false,
-      verificationStatus: user.verificationStatus,
-      ridePartnerProfile: user.ridePartnerProfile || null,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    };
-
-    res.json({
-      success: true,
-      user: fullProfile,
-    });
-  } catch (error) {
-    console.error('❌ Get user error:', error.message);
-    res.status(500).json({
-      error: 'Failed to fetch user',
-      details: error.message,
-      code: 'FETCH_ERROR',
-    });
-  }
-};
-
 /**
- * Update user role (admin/driver/passenger)
+ * Update user role (admin/ride_partner/passenger)
  * PATCH /api/users/:clerkId/role
  */
-export const updateUserRole = async (req, res, next) => {
-  try {
-    const { clerkId } = req.params;
-    const { role } = req.body;
-
-    // Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        code: 'DB_CONNECTION_ERROR',
-      });
-    }
-
-    // Validate Clerk ID
-    if (!validateClerkId(clerkId)) {
-      return res.status(400).json({
-        error: 'Invalid Clerk ID format',
-        code: 'INVALID_CLERK_ID',
-      });
-    }
-
-    // Validate role
-    const validRoles = ['passenger', 'driver', 'admin'];
-    if (!role || !validRoles.includes(role)) {
-      return res.status(400).json({
-        error: 'Invalid role',
-        details: `Role must be one of: ${validRoles.join(', ')}`,
-        code: 'INVALID_ROLE',
-      });
-    }
-
-    const user = await UserProfile.findOneAndUpdate(
-      { clerkId },
-      { role },
-      { new: true, runValidators: true },
-    );
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    console.log(`✅ User role updated: ${clerkId} → ${role}`);
-
-    res.json({
-      success: true,
-      message: 'Role updated successfully',
-      user: formatUserResponse(user),
-    });
-  } catch (error) {
-    console.error('❌ Update role error:', error.message);
-    res.status(500).json({
-      error: 'Failed to update role',
-      details: error.message,
-      code: 'UPDATE_ERROR',
-    });
-  }
-};
-
 /**
  * Get user stats (total users by role)
  * GET /api/users/stats
  */
 export const getUserStats = async (req, res, next) => {
   try {
-    // Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        code: 'DB_CONNECTION_ERROR',
-      });
-    }
-
-    const stats = await UserProfile.aggregate([
-      {
-        $group: {
-          _id: '$role',
-          count: { $sum: 1 },
-        },
-      },
-      {
-        $sort: { _id: 1 },
-      },
-    ]);
-
-    const total = await UserProfile.countDocuments();
-
+    const stats = await getUserRoleStats();
     res.json({
       success: true,
-      stats: {
-        total,
-        byRole: stats,
-        activeUsers: await UserProfile.countDocuments({ isActive: true }),
-      },
+      stats,
     });
   } catch (error) {
-    console.error('❌ Get stats error:', error.message);
-    res.status(500).json({
-      error: 'Failed to fetch stats',
-      details: error.message,
-      code: 'STATS_ERROR',
+    const status = error.status || 500;
+    res.status(status).json({
+      error: status === 503 ? error.message : 'Failed to fetch stats',
+      details: status === 503 ? undefined : error.message,
+      code: error.code || 'STATS_ERROR',
+      requestId: req.requestId,
     });
   }
 };
@@ -370,570 +227,80 @@ export const getUserStats = async (req, res, next) => {
  * Update user location
  * PUT /api/users/location
  */
-export const updateUserLocation = async (req, res, next) => {
-  try {
-    const { userId, latitude, longitude, city, country } = req.body;
-
-    if (!userId || latitude === undefined || longitude === undefined) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        details: 'userId, latitude, and longitude are required',
-        code: 'MISSING_FIELDS',
-      });
-    }
-
-    // Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        code: 'DB_CONNECTION_ERROR',
-      });
-    }
-
-    const user = await UserProfile.findOneAndUpdate(
-      { clerkId: userId },
-      {
-        location: {
-          latitude,
-          longitude,
-          city: city || null,
-          country: country || null,
-          updatedAt: new Date(),
-        },
-      },
-      { new: true },
-    );
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Location updated successfully',
-      user: formatUserResponse(user),
-    });
-  } catch (error) {
-    console.error('❌ Location update error:', error.message);
-    res.status(500).json({
-      error: 'Failed to update location',
-      details: error.message,
-      code: 'LOCATION_UPDATE_ERROR',
-    });
-  }
-};
-
 /**
  * Update user IP address
  * PUT /api/users/ip
  */
-export const updateUserIP = async (req, res, next) => {
-  try {
-    const { userId, ipAddress } = req.body;
-
-    if (!userId || !ipAddress) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        details: 'userId and ipAddress are required',
-        code: 'MISSING_FIELDS',
-      });
-    }
-
-    // Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        code: 'DB_CONNECTION_ERROR',
-      });
-    }
-
-    const user = await UserProfile.findOneAndUpdate(
-      { clerkId: userId },
-      {
-        ipAddress,
-        ipUpdatedAt: new Date(),
-      },
-      { new: true },
-    );
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'IP address updated successfully',
-      user: formatUserResponse(user),
-    });
-  } catch (error) {
-    console.error('❌ IP update error:', error.message);
-    res.status(500).json({
-      error: 'Failed to update IP address',
-      details: error.message,
-      code: 'IP_UPDATE_ERROR',
-    });
-  }
-};
-
 /**
  * Get current user profile
  * GET /api/users/profile
  * Requires Clerk authentication
  */
-export const getProfile = async (req, res, next) => {
-  try {
-    const clerkId = req.auth?.userId;
-
-    if (!clerkId) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        details: 'Valid Clerk authentication required',
-        code: 'NO_AUTH_USER',
-      });
-    }
-
-    // Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        details: 'MongoDB is not connected',
-        code: 'DB_CONNECTION_ERROR',
-      });
-    }
-
-    // Find user
-    const user = await UserProfile.findOne({ clerkId });
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        details: 'User profile does not exist',
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    console.log(
-      `📋 Retrieved profile for user: ${clerkId}, role: ${user.role}`,
-    );
-    res.status(200).json(formatUserResponse(user));
-  } catch (error) {
-    console.error('❌ Get profile error:', error.message);
-    next(error);
-  }
-};
-
 /**
  * Logout user - Invalidate session on backend
  * POST /api/users/logout
  */
-export const logoutUser = async (req, res, next) => {
-  try {
-    const { clerkId } = req.body;
-
-    if (!clerkId) {
-      return res.status(400).json({
-        error: 'Missing required field',
-        details: 'clerkId is required',
-        code: 'MISSING_CLERK_ID',
-      });
-    }
-
-    if (!validateClerkId(clerkId)) {
-      return res.status(400).json({
-        error: 'Invalid Clerk ID format',
-        details: 'Clerk ID must be a non-empty string',
-        code: 'INVALID_CLERK_ID',
-      });
-    }
-
-    console.log(`🚪 Processing logout for user: ${clerkId}`);
-
-    // Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      console.warn(
-        '⚠️ Database not connected, but logout proceeding (user will be logged out on client)',
-      );
-      // Don't fail logout if DB is down - client-side logout is still important
-      return res.status(200).json({
-        success: true,
-        message: 'Logout processed (database unavailable)',
-        code: 'LOGOUT_NO_DB',
-      });
-    }
-
-    // Find user
-    const user = await UserProfile.findOne({ clerkId });
-    if (!user) {
-      console.log(`ℹ️ User not found in database: ${clerkId}`);
-      return res.status(200).json({
-        success: true,
-        message: 'User not found, but logout processed',
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    // Update user status if tracking active sessions
-    // You can add logic here to track last_logout, active_sessions, etc.
-    user.lastLogout = new Date();
-    await user.save();
-
-    console.log(`✅ Logout successful for user: ${clerkId}`);
-    res.status(200).json({
-      success: true,
-      message: 'User logged out successfully',
-      clerkId,
-      timestamp: new Date(),
-    });
-  } catch (error) {
-    console.error('❌ Logout error:', error.message);
-    next(error);
-  }
-};
-
 /**
  * Update user push notification token
  * POST /api/users/push-token
  */
-export const updatePushToken = async (req, res, next) => {
-  try {
-    const clerkId = req.auth?.userId || req.body.clerkId;
-    const { pushToken } = req.body;
-
-    if (!clerkId) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        details: 'clerkId is required',
-        code: 'NO_AUTH_USER',
-      });
-    }
-
-    if (!pushToken) {
-      return res.status(400).json({
-        error: 'Invalid request',
-        details: 'pushToken is required',
-        code: 'MISSING_PUSH_TOKEN',
-      });
-    }
-
-    // Find and update user
-    const user = await UserProfile.findOne({ clerkId });
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        details: 'No user profile found for this clerkId',
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    user.pushToken = pushToken;
-    user.pushTokenUpdatedAt = new Date();
-    await user.save();
-
-    console.log(`📱 Push token updated for user ${clerkId}`);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Push token updated successfully',
-      clerkId,
-    });
-  } catch (error) {
-    console.error('❌ Error updating push token:', error);
-    next(error);
-  }
-};
-
 /**
  * Test push notification
  * POST /api/users/test-push
  */
-export const testPushNotification = async (req, res, next) => {
-  try {
-    const { clerkId } = req.body;
-
-    if (!clerkId) {
-      return res.status(400).json({
-        error: 'Missing clerkId',
-        details: 'clerkId is required to test push notification',
-        code: 'MISSING_CLERK_ID',
-      });
-    }
-
-    console.log(`📱 Testing push notification for user: ${clerkId}`);
-
-    const user = await UserProfile.findOne({ clerkId });
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        details: 'No user profile found for this clerkId',
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    if (!user.pushToken) {
-      return res.status(400).json({
-        error: 'No push token',
-        details: 'User does not have a push token registered',
-        code: 'NO_PUSH_TOKEN',
-        debug: {
-          clerkId,
-          hasPushToken: !!user.pushToken,
-          profileExists: true,
-        },
-      });
-    }
-
-    console.log(
-      `📱 Found push token for ${clerkId}: ${user.pushToken.substring(0, 30)}...`,
-    );
-
-    const { Expo } = await import('expo-server-sdk');
-    const expo = new Expo();
-
-    // Validate push token format
-    if (!Expo.isExpoPushToken(user.pushToken)) {
-      return res.status(400).json({
-        error: 'Invalid push token format',
-        details: 'The stored push token is not in the correct format',
-        code: 'INVALID_TOKEN_FORMAT',
-        debug: {
-          tokenPrefix: user.pushToken.substring(0, 20),
-          expectedPrefix: 'ExponentPushToken[',
-        },
-      });
-    }
-
-    const messages = [
-      {
-        to: user.pushToken,
-        sound: 'default',
-        title: '🧪 Test Push Notification',
-        body: 'This is a test notification. If you see this, push notifications are working!',
-        badge: 1,
-        data: {
-          type: 'test',
-          timestamp: new Date().toISOString(),
-        },
-        priority: 'high',
-      },
-    ];
-
-    console.log('📤 Sending test push notification...');
-
-    const chunks = expo.chunkPushNotifications(messages);
-    let notificationResults = [];
-
-    for (const chunk of chunks) {
-      try {
-        const result = await expo.sendPushNotificationsAsync(chunk);
-        console.log('📡 Test push notification result:', result);
-        notificationResults.push(...result);
-
-        // Check for errors
-        result.forEach((receipt, index) => {
-          if (receipt.status === 'error') {
-            console.error('📱 Test push notification error:', receipt.message);
-            console.error('📱 Error details:', receipt.details);
-          } else if (receipt.status === 'ok') {
-            console.log('✅ Test push notification sent successfully');
-          }
-        });
-      } catch (sendError) {
-        console.error('❌ Error sending test push notification:', sendError);
-        return res.status(500).json({
-          error: 'Failed to send push notification',
-          details: sendError.message,
-          code: 'SEND_ERROR',
-        });
-      }
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: 'Test push notification sent',
-      results: notificationResults,
-      debug: {
-        clerkId,
-        tokenValid: true,
-        messagesSent: messages.length,
-      },
-    });
-  } catch (error) {
-    console.error('❌ Error updating push token:', error.message);
-    next(error);
-  }
-};
-
 /**
  * Update driver verification status and assign batch
  * POST /api/users/driver-verification
  * Requires Clerk authentication
  */
-export const updateDriverVerification = async (req, res, next) => {
+// Check if email exists in database
+export const getAdminOverview = async (req, res) => {
   try {
-    // Check Database Connection
-    const dbConnected = await checkDatabaseConnection();
-    if (!dbConnected) {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        code: 'DB_CONNECTION_ERROR',
-      });
-    }
-
-    // Get authenticated user ID from Clerk middleware
-    const clerkId = req.auth?.userId;
-
-    if (!clerkId) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        details: 'Valid Clerk authentication required',
-        code: 'NO_AUTH_USER',
-      });
-    }
-
-    const {
-      verificationStatus,
-      verificationScore,
-      verificationData,
-      licenseNumber,
-    } = req.body;
-
-    // Validate required fields
-    if (!verificationStatus || verificationScore === undefined) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        details: 'verificationStatus and verificationScore are required',
-        code: 'MISSING_FIELDS',
-      });
-    }
-
-    // Validate verification status
-    const validStatuses = [
-      'pending',
-      'auto_approved',
-      'manual_review',
-      'rejected',
-    ];
-    if (!validStatuses.includes(verificationStatus)) {
-      return res.status(400).json({
-        error: 'Invalid verification status',
-        details: `Status must be one of: ${validStatuses.join(', ')}`,
-        code: 'INVALID_STATUS',
-      });
-    }
-
-    // Find the user
-    const user = await UserProfile.findOne({ clerkId });
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        details: 'No user profile found for this clerkId',
-        code: 'USER_NOT_FOUND',
-      });
-    }
-
-    // Generate batch number if auto-approved or manual_review with high score
-    const shouldVerify =
-      verificationStatus === 'auto_approved' ||
-      (verificationStatus === 'manual_review' && verificationScore >= 85);
-
-    let verificationBatch = user.verificationBatch;
-
-    if (shouldVerify && !user.driverVerified) {
-      // Generate new batch number for MongoDB
-      const year = new Date().getFullYear();
-      const verifiedCount = await UserProfile.countDocuments({
-        driverVerified: true,
-      });
-      const batchNumber = verifiedCount + 1;
-      verificationBatch = `BATCH-${year}-${String(batchNumber).padStart(4, '0')}`;
-
-      console.log(
-        `🎫 Generated batch number: ${verificationBatch} (Total verified drivers: ${verifiedCount})`,
-      );
-    }
-
-    // Update user verification details
-    const updateData = {
-      verificationStatus,
-      verificationScore,
-      verificationData: verificationData || user.verificationData,
-      licenseNumber: licenseNumber || user.licenseNumber,
-    };
-
-    if (shouldVerify) {
-      updateData.driverVerified = true;
-      updateData.verificationBatch = verificationBatch;
-      updateData.verificationCompletedAt = new Date();
-    }
-
-    const updatedUser = await UserProfile.findOneAndUpdate(
-      { clerkId },
-      updateData,
-      { new: true, runValidators: true },
-    );
-
-    console.log(
-      `✅ Driver verification updated: ${clerkId} → ${verificationStatus}${
-        verificationBatch ? ` (${verificationBatch})` : ''
-      }`,
-    );
-
-    res.json({
+    const overview = await getAdminPlatformOverview();
+    return res.json({
       success: true,
-      message: 'Driver verification updated successfully',
-      user: formatUserResponse(updatedUser),
-      verificationBatch: verificationBatch || null,
+      overview,
     });
   } catch (error) {
-    console.error('❌ Update driver verification error:', error.message);
-    res.status(500).json({
-      error: 'Failed to update driver verification',
+    return res.status(500).json({
+      error: 'Failed to fetch admin overview',
       details: error.message,
-      code: 'UPDATE_ERROR',
+      code: 'ADMIN_OVERVIEW_ERROR',
+      requestId: req.requestId,
     });
   }
 };
 
-// Check if email exists in database
-export const checkEmailExists = async (req, res) => {
+export const getAdminDrivers = async (req, res) => {
   try {
-    const { email } = req.query;
-
-    if (!email) {
-      return res.status(400).json({
-        error: 'Email is required',
-        code: 'MISSING_EMAIL',
-      });
-    }
-
-    // Sanitize email
-    const sanitizedEmail = email.trim().toLowerCase();
-
-    // Check if email exists in database
-    const existingUser = await UserProfile.findOne({ email: sanitizedEmail });
-
-    res.json({
-      exists: !!existingUser,
-      email: sanitizedEmail,
+    const drivers = await getAdminDriverList(req.query);
+    return res.json({
+      success: true,
+      drivers,
     });
   } catch (error) {
-    console.error('❌ Check email exists error:', error.message);
-    res.status(500).json({
-      error: 'Failed to check email',
+    return res.status(500).json({
+      error: 'Failed to fetch admin drivers',
       details: error.message,
-      code: 'CHECK_ERROR',
+      code: 'ADMIN_DRIVERS_ERROR',
+      requestId: req.requestId,
+    });
+  }
+};
+
+export const updateAdminDriver = async (req, res) => {
+  try {
+    const driver = await updateAdminDriverProfile(req.params.clerkId, req.body);
+    return res.json({
+      success: true,
+      driver,
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({
+      error: error.status === 404 ? error.message : 'Failed to update driver',
+      details: error.status === 404 ? undefined : error.message,
+      code: error.code || 'ADMIN_DRIVER_UPDATE_ERROR',
+      requestId: req.requestId,
     });
   }
 };

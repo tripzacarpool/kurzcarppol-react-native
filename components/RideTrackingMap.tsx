@@ -1,21 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  Dimensions,
-  TouchableOpacity,
-  SafeAreaView,
   Alert,
+  Dimensions,
+  Linking,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { MapView, Marker, Polyline, PROVIDER_GOOGLE, checkMapAvailability, MapPlaceholder } from './ConditionalMap';
-import { MapPin, Phone, MessageCircle, X, Navigation } from 'lucide-react-native';
+import { MapPlaceholder, MapView, Marker, Polyline, PROVIDER_GOOGLE, checkMapAvailability } from './ConditionalMap';
+import { MapPin, MessageCircle, Navigation, Phone, Shield, X } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { MAP_CONFIG } from '@/config/googleMaps';
+import SafetyToolkit from './SafetyToolkit';
+import ShareTrip from './ShareTrip';
+import { activateSOS } from '@/lib/api';
 import {
-  fetchRouteFromGoogle,
   calculateDistance,
   estimateETA,
+  fetchRouteFromGoogle,
   type RouteCoordinate,
 } from '@/lib/routeService';
 import {
@@ -51,214 +55,244 @@ export default function RideTrackingMap({
   const mapRef = useRef<any>(null);
   const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
   const [routePath, setRoutePath] = useState<DriverLocation[]>([]);
-  const [plannedRoute, setPlannedRoute] = useState<RouteCoordinate[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [eta, setEta] = useState<string>('Calculating...');
+  const [plannedRoute, setPlannedRoute] = useState<RouteCoordinate[]>([
+    pickupLocation,
+    dropoffLocation,
+  ]);
+  const [eta, setEta] = useState<string>('Waiting');
   const [distanceRemaining, setDistanceRemaining] = useState<string>('--');
+  const [showSafetyToolkit, setShowSafetyToolkit] = useState(false);
+  const [showShareTrip, setShowShareTrip] = useState(false);
+  const [tripShared, setTripShared] = useState(false);
 
-  // Fetch planned route from Google Directions API - ONLY ONCE!
+  const mapCenter = driverLocation || pickupLocation;
+
   useEffect(() => {
-    console.log('🗺️ Fetching initial route from Google Directions API (ONE-TIME)');
-    
     fetchRouteFromGoogle(pickupLocation, dropoffLocation).then((result) => {
       if (result.success && result.routes.length > 0) {
         setPlannedRoute(result.routes);
-        console.log('✅ Initial route loaded from Google');
       } else {
-        console.error('❌ Failed to fetch route:', result.error);
-        // Fallback: draw straight line
         setPlannedRoute([pickupLocation, dropoffLocation]);
       }
     });
-  }, []);
+  }, [
+    pickupLocation.latitude,
+    pickupLocation.longitude,
+    dropoffLocation.latitude,
+    dropoffLocation.longitude,
+  ]);
 
   useEffect(() => {
-    console.log('🗺️ Subscribing to ride location via WebSocket (NOT Google API)');
+    subscribeToRideLocation(rideId, (location: DriverLocation) => {
+      setDriverLocation(location);
 
-    // Subscribe to driver location updates from BACKEND (not Google!)
-    subscribeToRideLocation(
-      rideId,
-      (location: DriverLocation) => {
-        console.log('📍 Driver location from WebSocket:', location);
-        setDriverLocation(location);
-        setIsLoading(false);
+      const distance = calculateDistance(
+        { latitude: location.latitude, longitude: location.longitude },
+        dropoffLocation,
+      );
+      setDistanceRemaining(`${distance.toFixed(1)} km`);
+      setEta(estimateETA(distance));
+      setRoutePath((prev) => [...prev.slice(-49), location]);
 
-        // Calculate ETA and distance remaining (without Google API calls)
-        const distance = calculateDistance(
-          { latitude: location.latitude, longitude: location.longitude },
-          dropoffLocation
-        );
-        setDistanceRemaining(`${distance.toFixed(1)} km`);
-        setEta(estimateETA(distance));
-
-        // Add to route path (keep last 50 points for performance)
-        setRoutePath((prev) => [...prev.slice(-49), location]);
-
-        // Animate map camera to follow driver
-        if (mapRef.current) {
-          mapRef.current.animateCamera({
-            center: {
-              latitude: location.latitude,
-              longitude: location.longitude,
-            },
-            zoom: 15,
-          }, { duration: MAP_CONFIG.MAP_ANIMATION_DURATION });
-        }
-      }
-    );
+      mapRef.current?.animateCamera(
+        {
+          center: {
+            latitude: location.latitude,
+            longitude: location.longitude,
+          },
+          zoom: 15,
+        },
+        { duration: MAP_CONFIG.MAP_ANIMATION_DURATION },
+      );
+    });
 
     return () => {
-      console.log('🛑 Unsubscribing from ride location WebSocket');
       unsubscribeFromRideLocation(rideId);
     };
   }, [rideId, dropoffLocation.latitude, dropoffLocation.longitude]);
 
-  const handleCall = () => {
-    Alert.alert('Call Driver', `Calling ${driverName}...`);
-  };
-
-  const handleMessage = () => {
-    Alert.alert('Message', `Send a message to ${driverName}`);
-  };
-
-  if (isLoading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Waiting for driver location...</Text>
-        </View>
-      </SafeAreaView>
+  const handleOpenSOS = async () => {
+    Alert.alert(
+      'Activate SOS Alert?',
+      `This will immediately alert ${driverName} and nearby emergency contacts that you need help.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Yes, Activate SOS',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await activateSOS(rideId);
+              Alert.alert('SOS Activated', 'Emergency alert has been sent.');
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to activate SOS.');
+            }
+          },
+        },
+      ],
     );
-  }
+  };
+
+  const handleEmergencyCall = () => {
+    Linking.openURL('tel:112').catch(() => {
+      Alert.alert('Error', 'Unable to initiate call. Please dial 112 manually.');
+    });
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       {checkMapAvailability() && MapView ? (
-        <>
-          <MapView
-            ref={mapRef}
-            provider={PROVIDER_GOOGLE}
-            style={styles.map}
-            customMapStyle={MAP_CONFIG.MAP_STYLE}
-            initialRegion={{
-              latitude: driverLocation?.latitude || pickupLocation.latitude,
-              longitude: driverLocation?.longitude || pickupLocation.longitude,
-              latitudeDelta: MAP_CONFIG.DEFAULT_REGION.latitudeDelta,
-              longitudeDelta: MAP_CONFIG.DEFAULT_REGION.longitudeDelta,
-            }}>
-            
-            {/* Planned route polyline (from Google Directions API - fetched once) */}
-            {plannedRoute.length > 0 && Polyline && (
-              <Polyline
-                coordinates={plannedRoute}
-                strokeColor={Colors.dark.gold + '60'}
-                strokeWidth={4}
-                lineDashPattern={[1]}
-              />
-            )}
+        <MapView
+          ref={mapRef}
+          provider={PROVIDER_GOOGLE}
+          style={styles.map}
+          customMapStyle={MAP_CONFIG.MAP_STYLE}
+          initialRegion={{
+            latitude: mapCenter.latitude,
+            longitude: mapCenter.longitude,
+            latitudeDelta: MAP_CONFIG.DEFAULT_REGION.latitudeDelta,
+            longitudeDelta: MAP_CONFIG.DEFAULT_REGION.longitudeDelta,
+          }}>
+          {plannedRoute.length > 0 && Polyline && (
+            <Polyline
+              coordinates={plannedRoute}
+              strokeColor={Colors.dark.gold + '70'}
+              strokeWidth={4}
+            />
+          )}
 
-            {/* Pickup location marker */}
-            {Marker && (
-              <Marker
-                coordinate={pickupLocation}
-                title="Pickup Location"
-                pinColor={Colors.dark.gold}>
-                <View style={styles.markerContainer}>
-                  <MapPin size={20} color={Colors.dark.gold} />
-                </View>
-              </Marker>
-            )}
+          {Marker && (
+            <Marker coordinate={pickupLocation} title="Pickup Location">
+              <View style={styles.markerContainer}>
+                <MapPin size={20} color={Colors.dark.gold} />
+              </View>
+            </Marker>
+          )}
 
-            {/* Dropoff location marker */}
-            {Marker && (
-              <Marker
-                coordinate={dropoffLocation}
-                title="Dropoff Location"
-                pinColor={Colors.dark.pink}>
-                <View style={styles.markerContainer}>
-                  <MapPin size={20} color={Colors.dark.pink} />
-                </View>
-              </Marker>
-            )}
+          {Marker && (
+            <Marker coordinate={dropoffLocation} title="Dropoff Location">
+              <View style={[styles.markerContainer, styles.dropoffMarker]}>
+                <MapPin size={20} color={Colors.dark.pink} />
+              </View>
+            </Marker>
+          )}
 
-            {/* Driver location marker (updated via WebSocket) */}
-            {driverLocation && Marker && (
-              <Marker
-                coordinate={{
-                  latitude: driverLocation.latitude,
-                  longitude: driverLocation.longitude,
-                }}
-                title={driverName}
-                pinColor={Colors.dark.success}>
-                <View style={styles.driverMarker}>
-                  <Navigation
-                    size={16}
-                    color={Colors.dark.background}
-                    fill={Colors.dark.success}
-                  />
-                </View>
-              </Marker>
-            )}
+          {driverLocation && Marker && (
+            <Marker
+              coordinate={{
+                latitude: driverLocation.latitude,
+                longitude: driverLocation.longitude,
+              }}
+              title={driverName}>
+              <View style={styles.driverMarker}>
+                <Navigation
+                  size={16}
+                  color={Colors.dark.background}
+                  fill={Colors.dark.success}
+                />
+              </View>
+            </Marker>
+          )}
 
-            {/* Driver's traveled path (from WebSocket updates, not Google) */}
-            {routePath.length > 1 && Polyline && (
-              <Polyline
-                coordinates={routePath.map((loc) => ({
-                  latitude: loc.latitude,
-                  longitude: loc.longitude,
-                }))}
-                strokeColor={Colors.dark.success}
-                strokeWidth={3}
-              />
-            )}
-          </MapView>
-        </>
+          {routePath.length > 1 && Polyline && (
+            <Polyline
+              coordinates={routePath.map((loc) => ({
+                latitude: loc.latitude,
+                longitude: loc.longitude,
+              }))}
+              strokeColor={Colors.dark.success}
+              strokeWidth={3}
+            />
+          )}
+        </MapView>
       ) : (
-        <MapPlaceholder message="Ride tracking requires a development build" />
+        <MapPlaceholder message="Ride tracking map requires a development build. Tracking details are still available here." />
       )}
 
-      {/* Driver Info Card */}
+      <View style={styles.statusBanner}>
+        <View style={driverLocation ? styles.statusDot : styles.statusDotPending} />
+        <Text style={styles.statusText}>
+          {driverLocation
+            ? `${eta} away - ${distanceRemaining}`
+            : 'Waiting for driver live location'}
+        </Text>
+      </View>
+
       <View style={styles.driverCard}>
-        <View style={styles.driverInfo}>
-          <View style={styles.driverDetails}>
-            <Text style={styles.driverName}>{driverName}</Text>
-            <View style={styles.ratingContainer}>
-              <Text style={styles.ratingText}>⭐ {driverRating.toFixed(1)}</Text>
-            </View>
-          </View>
+        <View style={styles.driverDetails}>
+          <Text style={styles.driverName}>{driverName}</Text>
+          <Text style={styles.ratingText}>Rating {driverRating.toFixed(1)}</Text>
         </View>
 
         <View style={styles.actions}>
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={handleCall}
-            activeOpacity={0.7}>
+            onPress={() => Alert.alert('Call Driver', `Calling ${driverName}...`)}>
             <Phone size={18} color={Colors.dark.background} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={handleMessage}
-            activeOpacity={0.7}>
+            onPress={() => Alert.alert('Message', `Send a message to ${driverName}`)}>
             <MessageCircle size={18} color={Colors.dark.background} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, styles.closeButton]}
-            onPress={onClose}
-            activeOpacity={0.7}>
+            onPress={onClose}>
             <X size={18} color={Colors.dark.error} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Location Status with real-time ETA (calculated locally, no Google API) */}
-      {driverLocation && (
-        <View style={styles.statusBanner}>
-          <View style={styles.statusDot} />
-          <Text style={styles.statusText}>
-            {eta} away • {distanceRemaining}
-          </Text>
-        </View>
-      )}
+      <View style={styles.sosContainer}>
+        <TouchableOpacity
+          style={styles.safetyButton}
+          onPress={() => setShowSafetyToolkit(true)}>
+          <Shield size={24} color={Colors.dark.background} />
+          <Text style={styles.safetyButtonText}>Safety</Text>
+        </TouchableOpacity>
+      </View>
+
+      <SafetyToolkit
+        visible={showSafetyToolkit}
+        onClose={() => setShowSafetyToolkit(false)}
+        onShareTrip={() => {
+          setShowSafetyToolkit(false);
+          setShowShareTrip(true);
+        }}
+        onOpenSOS={() => {
+          setShowSafetyToolkit(false);
+          handleOpenSOS();
+        }}
+        onEmergencyCall={() => {
+          setShowSafetyToolkit(false);
+          handleEmergencyCall();
+        }}
+        onReportIssue={() => {
+          setShowSafetyToolkit(false);
+          Alert.alert('Report Issue', 'Your report has been sent to support.');
+        }}
+        hasTripShared={tripShared}
+      />
+
+      <ShareTrip
+        visible={showShareTrip}
+        onClose={() => setShowShareTrip(false)}
+        tripDetails={{
+          driverName,
+          driverPhone: 'Not available',
+          vehicleNumber: 'Not available',
+          pickupLocation: `${pickupLocation.latitude.toFixed(5)}, ${pickupLocation.longitude.toFixed(5)}`,
+          dropoffLocation: `${dropoffLocation.latitude.toFixed(5)}, ${dropoffLocation.longitude.toFixed(5)}`,
+          currentLocation: driverLocation || undefined,
+          eta,
+        }}
+        emergencyContacts={[]}
+        googleMapsLink={`https://www.google.com/maps/dir/?api=1&origin=${pickupLocation.latitude},${pickupLocation.longitude}&destination=${dropoffLocation.latitude},${dropoffLocation.longitude}`}
+        onTripShared={() => {
+          setTripShared(true);
+          setShowShareTrip(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -270,18 +304,8 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
-    width: width,
-    height: height,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    fontSize: 16,
-    color: Colors.dark.text,
-    marginBottom: 20,
+    width,
+    height,
   },
   markerContainer: {
     width: 32,
@@ -293,6 +317,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: Colors.dark.gold,
   },
+  dropoffMarker: {
+    borderColor: Colors.dark.pink,
+  },
   driverMarker: {
     width: 36,
     height: 36,
@@ -302,6 +329,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 2,
     borderColor: Colors.dark.background,
+  },
+  statusBanner: {
+    position: 'absolute',
+    top: 60,
+    left: 16,
+    right: 16,
+    backgroundColor: Colors.dark.success,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.dark.background,
+    marginRight: 8,
+  },
+  statusDotPending: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.dark.gold,
+    marginRight: 8,
+  },
+  statusText: {
+    flex: 1,
+    color: Colors.dark.background,
+    fontSize: 14,
+    fontWeight: '600',
   },
   driverCard: {
     position: 'absolute',
@@ -317,11 +376,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.dark.border,
   },
-  driverInfo: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   driverDetails: {
     flex: 1,
   },
@@ -330,10 +384,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.dark.text,
     marginBottom: 4,
-  },
-  ratingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
   },
   ratingText: {
     fontSize: 13,
@@ -356,28 +406,25 @@ const styles = StyleSheet.create({
   closeButton: {
     backgroundColor: Colors.dark.error + '20',
   },
-  statusBanner: {
+  sosContainer: {
     position: 'absolute',
-    top: 60,
+    bottom: 24,
     left: 16,
     right: 16,
-    backgroundColor: Colors.dark.success,
+  },
+  safetyButton: {
+    backgroundColor: Colors.dark.gold,
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.dark.background,
-    marginRight: 8,
-  },
-  statusText: {
+  safetyButtonText: {
     color: Colors.dark.background,
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });

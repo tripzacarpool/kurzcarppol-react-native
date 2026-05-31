@@ -1,32 +1,16 @@
 import axios from 'axios';
-import { Platform } from 'react-native';
-import Constants from 'expo-constants';
 import type { RideVehicleType } from '@/types';
+import {
+  fetchBackendReadiness,
+  getApiBaseUrl,
+  type BackendReadiness,
+} from '@/lib/backendConfig';
 import {
   RidePartnerMode,
   RidePartnerVehicleType,
   RidePartnerProfile,
   RidePartnerApplicationStatus,
 } from '@/types';
-
-// Create axios instance with proper base URL
-// Automatically detects if running on emulator or physical device
-const getApiBaseUrl = () => {
-  // Try environment variable first (for development)
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
-  }
-
-  // Fallback to app.json extra config (for production builds)
-  const apiUrl = Constants.expoConfig?.extra?.apiUrl;
-  if (apiUrl) {
-    return apiUrl;
-  }
-
-  throw new Error(
-    'API URL not configured. Set EXPO_PUBLIC_API_URL environment variable or configure extra.apiUrl in app.json',
-  );
-};
 
 const API_BASE_URL = getApiBaseUrl();
 console.log('🌐 API Base URL:', API_BASE_URL);
@@ -38,6 +22,10 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+export async function getBackendServiceStatus(): Promise<BackendReadiness> {
+  return fetchBackendReadiness();
+}
 
 // Request interceptor to log outgoing requests
 apiClient.interceptors.request.use(
@@ -66,10 +54,14 @@ apiClient.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error(
-      `❌ ${error.response?.status || 'Error'} ${error.config?.url}`,
-      error.response?.data,
-    );
+    const status = error.response?.status || 'Error';
+    const url = error.config?.url || 'unknown-url';
+    const details =
+      error.response?.data ||
+      error.message ||
+      (error.request ? 'No response from server' : 'Unknown request error');
+
+    console.error(`Error ${status} ${url}`, details);
     return Promise.reject(error);
   },
 );
@@ -162,11 +154,7 @@ export async function syncUserToDatabase_Safe(userData: {
 
 // Check if email already exists in database
 export async function checkEmailExists(email: string): Promise<boolean> {
-  const API_URL =
-    process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
-  if (!API_URL) {
-    throw new Error('API URL not configured');
-  }
+  const API_URL = getApiBaseUrl();
   try {
     console.log('📡 Checking email in database:', email);
     const response = await axios.get(`${API_URL}/api/users/check-email`, {
@@ -186,11 +174,7 @@ export async function checkEmailExists(email: string): Promise<boolean> {
 
 // Backend logout - invalidate session on server
 export async function logoutUserFromBackend(clerkId: string) {
-  const API_URL =
-    process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
-  if (!API_URL) {
-    throw new Error('API URL not configured');
-  }
+  const API_URL = getApiBaseUrl();
   try {
     console.log('🔗 Calling backend logout for:', clerkId);
     console.log('📍 Backend URL:', `${API_URL}/api/users/logout`);
@@ -324,6 +308,45 @@ export async function updateRidePartnerStatus(
   );
   return response.data as { success: boolean; profile: RidePartnerProfile };
 }
+
+export async function getAdminOverview(): Promise<any> {
+  const response = await apiClient.get('/api/users/admin/overview');
+  return response.data;
+}
+
+export async function getAdminDrivers(params?: {
+  status?: string;
+  privacyType?: string;
+  q?: string;
+}): Promise<any> {
+  const response = await apiClient.get('/api/users/admin/drivers', { params });
+  return response.data;
+}
+
+export async function updateAdminDriver(
+  clerkId: string,
+  payload: {
+    status?: string;
+    isActive?: boolean;
+    driverPrivacyType?: 'full_detail' | 'private_vehicle';
+    publicDisclosure?: {
+      showFullName?: boolean;
+      showPhone?: boolean;
+      showFullVehicleNumber?: boolean;
+      showProfilePhoto?: boolean;
+    };
+    trustBatch?: 'new' | 'community' | 'trusted' | 'featured';
+    trustScore?: number;
+    publicityScore?: number;
+    note?: string;
+  },
+): Promise<any> {
+  const response = await apiClient.patch(
+    `/api/users/admin/drivers/${clerkId}`,
+    payload,
+  );
+  return response.data;
+}
 // Create ride request API
 export async function createRideRequest(rideData: {
   clerkId: string;
@@ -343,6 +366,8 @@ export async function createRideRequest(rideData: {
   dropoffCountry?: string;
   scheduledDeparture: string;
   timeFlexibilityMinutes?: number;
+  requestedTotalFare?: number;
+  maxSharedSeats?: number;
 }) {
   try {
     const response = await apiClient.post('/api/rides/create', rideData);
@@ -378,6 +403,7 @@ export async function getAvailableRides(
   options?: {
     targetTime?: string;
     windowMinutes?: number;
+    joinable?: boolean;
   },
 ) {
   try {
@@ -389,6 +415,9 @@ export async function getAvailableRides(
     }
     if (typeof options?.windowMinutes === 'number') {
       params.windowMinutes = options.windowMinutes;
+    }
+    if (options?.joinable) {
+      params.joinable = 'true';
     }
     const response = await apiClient.get('/api/rides/available', { params });
     return response.data;
@@ -408,6 +437,26 @@ export async function acceptRide(rideId: string) {
   } catch (error: any) {
     console.error(
       'Error accepting ride:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+export async function joinRideRequest(
+  rideId: string,
+  payload: {
+    seatCount?: number;
+    passengerPhone?: string;
+    paymentMethod?: 'wallet' | 'upi' | 'cash' | 'unknown';
+  } = {},
+) {
+  try {
+    const response = await apiClient.post(`/api/rides/${rideId}/join`, payload);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      'Error joining ride request:',
       error.response?.data || error.message,
     );
     throw error;
@@ -547,11 +596,11 @@ export async function driverConfirmPickup(rideId: string) {
   }
 }
 
-export async function passengerConfirmPickup(rideId: string) {
+export async function passengerConfirmPickup(rideId: string, clerkId?: string) {
   try {
     const response = await apiClient.post(
       `/api/rides/${rideId}/pickup/passenger`,
-      {},
+      clerkId ? { clerkId } : {},
     );
     return response.data;
   } catch (error: any) {
@@ -629,6 +678,121 @@ export async function extendRideTime(
   } catch (error: any) {
     console.error(
       '❌ Error extending ride time:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Activate SOS alert for safety during ride
+ */
+export async function activateSOS(
+  rideId: string,
+  reason?: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(`/api/rides/${rideId}/sos`, {
+      reason: reason || 'User activated SOS alert',
+    });
+    console.log('🚨 SOS alert activated for ride:', rideId);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error activating SOS:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get all active SOS alerts (Admin)
+ */
+export async function getActiveSOSAlerts(): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/rides/sos/alerts/active');
+    console.log('📊 Active SOS alerts fetched:', response.data.count);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching SOS alerts:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Resolve SOS alert (Admin)
+ */
+export async function resolveSOSAlert(
+  rideId: string,
+  resolution: string,
+  notes?: string,
+  responseTime?: number,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(`/api/rides/${rideId}/sos/resolve`, {
+      resolution,
+      notes,
+      responseTime,
+    });
+    console.log('✅ SOS alert resolved:', rideId);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error resolving SOS alert:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Dispatch emergency services (Admin)
+ */
+export async function dispatchEmergencyServices(
+  rideId: string,
+  serviceType: 'police' | 'ambulance' | 'fire' | 'disaster',
+  notes?: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      `/api/rides/${rideId}/sos/dispatch-emergency`,
+      {
+        serviceType,
+        notes,
+      },
+    );
+    console.log('✅ Emergency services dispatched:', serviceType);
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error dispatching emergency services:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get SOS history and analytics (Admin)
+ */
+export async function getSOSHistory(
+  limit: number = 50,
+  skip: number = 0,
+  status: 'active' | 'resolved' = 'resolved',
+): Promise<any> {
+  try {
+    const response = await apiClient.get('/api/rides/sos/history', {
+      params: { limit, skip, status },
+    });
+    console.log('📊 SOS history fetched:', response.data.count, 'records');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error fetching SOS history:',
       error.response?.data || error.message,
     );
     throw error;
@@ -761,7 +925,13 @@ export async function updateRideOffer(
 export async function getAvailableRideOffers(params?: {
   from?: string;
   to?: string;
+  q?: string;
   minSeats?: number;
+  page?: number;
+  limit?: number;
+  lat?: number;
+  lng?: number;
+  distanceTo?: 'pickup' | 'dropoff';
 }): Promise<any> {
   try {
     const response = await apiClient.get('/api/ride-offers/available', {
@@ -843,6 +1013,34 @@ export async function extendRideOfferTime(
     );
     throw error;
   }
+}
+
+export async function requestRideOfferHold(
+  offerId: string,
+  minutes: number,
+  clerkId?: string,
+): Promise<any> {
+  const response = await apiClient.post(`/api/ride-offers/${offerId}/hold-requests`, {
+    minutes,
+    ...(clerkId ? { clerkId } : {}),
+  });
+  return response.data;
+}
+
+export async function respondRideOfferHold(
+  offerId: string,
+  requestId: string,
+  action: 'approve' | 'reject',
+  clerkId?: string,
+): Promise<any> {
+  const response = await apiClient.post(
+    `/api/ride-offers/${offerId}/hold-requests/${requestId}/respond`,
+    {
+      action,
+      ...(clerkId ? { clerkId } : {}),
+    },
+  );
+  return response.data;
 }
 
 /**
@@ -1127,17 +1325,42 @@ export async function markMessagesAsRead(data: {
  * Get user's conversations
  */
 export async function getUserConversations(userId: string): Promise<any> {
-  try {
-    const response = await apiClient.get(`/api/chat/conversations/${userId}`);
-    console.log('✅ Conversations retrieved');
-    return response.data;
-  } catch (error: any) {
-    console.error(
-      '❌ Error getting conversations:',
-      error.response?.data || error.message,
-    );
-    return { success: true, conversations: [], count: 0 };
+  const endpoint = `/api/chat/conversations/${userId}`;
+  const maxAttempts = 2;
+  let lastError: any = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await apiClient.get(endpoint);
+      console.log('✅ Conversations retrieved');
+      return response.data;
+    } catch (error: any) {
+      lastError = error;
+      const status = error?.response?.status;
+
+      // Retry only for network failures (no HTTP response)
+      if (!status && attempt < maxAttempts) {
+        console.warn(
+          `⚠️ Conversations fetch failed (attempt ${attempt}/${maxAttempts}), retrying...`,
+          {
+            message: error?.message,
+            code: error?.code,
+          },
+        );
+        continue;
+      }
+      break;
+    }
   }
+
+  console.warn('⚠️ Using empty conversations fallback', {
+    message: lastError?.message,
+    code: lastError?.code,
+    status: lastError?.response?.status,
+    url: `${lastError?.config?.baseURL || ''}${lastError?.config?.url || endpoint}`,
+  });
+
+  return { success: true, conversations: [], count: 0 };
 }
 
 // ============================================================================
@@ -1966,6 +2189,27 @@ export async function getPassengerBookings(): Promise<any> {
   } catch (error: any) {
     console.error(
       '❌ Error fetching passenger bookings:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Cancel a pending approval request
+ * DELETE /api/bookings/:bookingId/cancel-approval
+ * Allows passengers to cancel their booking while it's pending driver approval
+ */
+export async function cancelPendingApproval(bookingId: string): Promise<any> {
+  try {
+    const response = await apiClient.delete(
+      `/api/bookings/${bookingId}/cancel-approval`,
+    );
+    console.log('✅ Pending approval cancelled successfully');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      '❌ Error cancelling pending approval:',
       error.response?.data || error.message,
     );
     throw error;

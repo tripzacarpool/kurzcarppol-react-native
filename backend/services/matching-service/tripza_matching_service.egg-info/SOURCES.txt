@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+app/main.py
+tripza_matching_service.egg-info/PKG-INFO
+tripza_matching_service.egg-info/SOURCES.txt
+tripza_matching_service.egg-info/dependency_links.txt
+tripza_matching_service.egg-info/requires.txt
+tripza_matching_service.egg-info/top_level.txt

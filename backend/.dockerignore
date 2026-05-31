@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+*.log
+.env
+.venv
+services/matching-service/.venv
+services/matching-service/app/__pycache__
+__pycache__
+.pytest_cache

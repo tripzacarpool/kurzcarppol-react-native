@@ -4,10 +4,16 @@
 // Or: node update-wallet.js test@example.com 500
 
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
+import './src/loadEnv.js';
+import { env } from './src/config/env.js';
 
-// Load environment variables
-dotenv.config();
+const connectOptions = {
+  dbName: env.mongodbDb,
+  maxPoolSize: env.mongodbMaxPoolSize,
+  minPoolSize: env.mongodbMinPoolSize,
+  serverSelectionTimeoutMS: env.mongodbServerSelectionTimeoutMs,
+  socketTimeoutMS: env.mongodbSocketTimeoutMs,
+};
 
 const userProfileSchema = new mongoose.Schema(
   {
@@ -24,9 +30,7 @@ const UserProfile = mongoose.model('UserProfile', userProfileSchema);
 async function updateWallet(identifier, amount) {
   try {
     // Connect to MongoDB
-    const mongoUri =
-      process.env.MONGODB_URI || 'mongodb://localhost:27017/raaheasy';
-    await mongoose.connect(mongoUri);
+    await mongoose.connect(env.mongodbUri, connectOptions);
     console.log('✅ Connected to MongoDB');
 
     // Find user by clerkId or email

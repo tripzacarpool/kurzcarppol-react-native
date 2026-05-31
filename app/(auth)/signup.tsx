@@ -16,7 +16,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import {
   UserPlus,
   Mail,
@@ -33,6 +33,7 @@ import {
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useSignUp, useAuth, useOAuth, useClerk } from '@/lib/clerkHooks';
+import { formatClerkError, isPasswordError, getPasswordStrengthTips } from '@/lib/clerkErrorHandler';
 import {
   syncUserToDatabase_Safe,
   submitRidePartnerApplication,
@@ -86,6 +87,11 @@ export default function SignupScreen() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [showVerification, setShowVerification] = useState(false);
+  const [gender, setGender] = useState<'male' | 'female' | 'prefer_not_to_say' | ''>('');
+  const [primaryContact, setPrimaryContact] = useState({ name: '', phone: '', relationship: '' });
+  const [secondaryContact, setSecondaryContact] = useState({ name: '', phone: '', relationship: '' });
+  const [womenOnlyPreference, setWomenOnlyPreference] = useState(false);
+  const [autoShareTrip, setAutoShareTrip] = useState(true);
   const [ridePartnerMode, setRidePartnerMode] = useState<RidePartnerMode>('daily');
   const [vehicleType, setVehicleType] = useState<'personal' | 'cab'>('personal');
   const [ridePartnerForm, setRidePartnerForm] = useState({
@@ -688,6 +694,31 @@ export default function SignupScreen() {
       return;
     }
 
+    // Validate women safety fields
+    if (gender === 'female') {
+      if (!primaryContact.name || !primaryContact.phone || !primaryContact.relationship) {
+        setError('Please fill in all primary emergency contact fields');
+        return;
+      }
+      // Phone number basic validation
+      const phoneRegex = /^[+]?[0-9]{10,}$/;
+      if (!phoneRegex.test(primaryContact.phone.replace(/\s+/g, ''))) {
+        setError('Please enter a valid phone number for primary contact');
+        return;
+      }
+      if (secondaryContact.name || secondaryContact.phone || secondaryContact.relationship) {
+        // If any secondary contact field is filled, validate all
+        if (!secondaryContact.name || !secondaryContact.phone || !secondaryContact.relationship) {
+          setError('Please fill in all secondary emergency contact fields or leave them empty');
+          return;
+        }
+        if (!phoneRegex.test(secondaryContact.phone.replace(/\s+/g, ''))) {
+          setError('Please enter a valid phone number for secondary contact');
+          return;
+        }
+      }
+    }
+
     if (isRidePartner && !validateRidePartnerForm()) {
       return;
     }
@@ -742,12 +773,29 @@ export default function SignupScreen() {
         // Sync user to database with new session
         if (result?.createdUserId) {
           try {
-            await syncUserToDatabase_Safe({
+            const syncPayload: any = {
               clerkId: result.createdUserId,
               email: email,
               firstName: firstName,
               lastName: lastName,
-            });
+            };
+
+            // Add women safety data if female
+            if (gender === 'female') {
+              syncPayload.isFemale = true;
+              syncPayload.femaleSignup = true;
+              syncPayload.safetyFeatures = {
+                womenOnlyPreference,
+                autoShareTrip,
+                safetyAlertsEnabled: true,
+              };
+              syncPayload.primaryEmergencyContact = primaryContact;
+              if (secondaryContact.name) {
+                syncPayload.secondaryEmergencyContact = secondaryContact;
+              }
+            }
+
+            await syncUserToDatabase_Safe(syncPayload);
             console.log('✅ User synced to database after signup');
           } catch (syncErr: any) {
             const errorCode = syncErr?.response?.data?.code;
@@ -809,7 +857,7 @@ export default function SignupScreen() {
       }
     } catch (err: any) {
       const errorCode = err?.errors?.[0]?.code;
-      const errorMsg = err?.errors?.[0]?.message || err?.message;
+      const formattedError = formatClerkError(err);
 
       console.error('❌ Signup error details:', {
         message: err?.message,
@@ -831,12 +879,16 @@ export default function SignupScreen() {
         return;
       }
 
-      const displayError = 
-        errorMsg || 
-        err?.response?.data?.error || 
-        'Sign up failed. Please try again.';
+      // Handle password errors with specific guidance
+      if (isPasswordError(err)) {
+        console.warn('⚠️ Password validation error:', errorCode);
+        const passwordTips = getPasswordStrengthTips();
+        const tipsText = passwordTips.join('\n');
+        setError(`${formattedError}\n\nPassword Requirements:\n${tipsText}`);
+      } else {
+        setError(formattedError);
+      }
       
-      setError(displayError);
       console.error('🔴 Full signup error:', err);
       setLoading(false);
     }
@@ -1185,6 +1237,211 @@ export default function SignupScreen() {
                 editable={!loading}
               />
             </View>
+
+            {/* Gender Selection - Women Safety Feature */}
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>👩 Your Safety</Text>
+              <Text style={styles.sectionDescription}>
+                Help us provide personalized safety features
+              </Text>
+            </View>
+
+            <View style={styles.genderContainer}>
+              {['male', 'female', 'prefer_not_to_say'].map((genderOption) => {
+                const isSelected = gender === genderOption;
+                const labels = {
+                  male: '👨 Male',
+                  female: '👩 Female',
+                  prefer_not_to_say: '🤐 Prefer not to say',
+                };
+                return (
+                  <TouchableOpacity
+                    key={genderOption}
+                    style={[
+                      styles.genderChip,
+                      isSelected && styles.genderChipActive,
+                    ]}
+                    onPress={() => setGender(genderOption as any)}
+                    activeOpacity={0.7}>
+                    <Text
+                      style={[
+                        styles.genderChipText,
+                        isSelected && styles.genderChipTextActive,
+                      ]}>
+                      {labels[genderOption as keyof typeof labels]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Emergency Contacts - Only for Female Users */}
+            {gender === 'female' && (
+              <View style={styles.emergencyContactsSection}>
+                <View style={styles.emergencyHeader}>
+                  <ShieldCheck size={20} color={Colors.dark.error} />
+                  <Text style={styles.emergencyTitle}>Emergency Contacts</Text>
+                  <Text style={styles.emergencySubtitle}>
+                    We'll alert them during SOS situations
+                  </Text>
+                </View>
+
+                {/* Primary Emergency Contact */}
+                <View style={styles.contactCard}>
+                  <Text style={styles.contactLabel}>Primary Emergency Contact *</Text>
+
+                  <View style={styles.inputGroup}>
+                    <View style={styles.inputIcon}>
+                      <User size={20} color={Colors.dark.gold} />
+                    </View>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Contact Name"
+                      placeholderTextColor={Colors.dark.textSecondary}
+                      value={primaryContact.name}
+                      onChangeText={(text) =>
+                        setPrimaryContact((prev) => ({ ...prev, name: text }))
+                      }
+                      editable={!loading}
+                    />
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <View style={styles.inputIcon}>
+                      <PhoneIcon size={20} color={Colors.dark.gold} />
+                    </View>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Phone Number"
+                      placeholderTextColor={Colors.dark.textSecondary}
+                      keyboardType="phone-pad"
+                      value={primaryContact.phone}
+                      onChangeText={(text) =>
+                        setPrimaryContact((prev) => ({ ...prev, phone: text }))
+                      }
+                      editable={!loading}
+                    />
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <View style={styles.inputIcon}>
+                      <User size={20} color={Colors.dark.gold} />
+                    </View>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Relationship (e.g., Mother, Sister, Friend)"
+                      placeholderTextColor={Colors.dark.textSecondary}
+                      value={primaryContact.relationship}
+                      onChangeText={(text) =>
+                        setPrimaryContact((prev) => ({
+                          ...prev,
+                          relationship: text,
+                        }))
+                      }
+                      editable={!loading}
+                    />
+                  </View>
+                </View>
+
+                {/* Secondary Emergency Contact (Optional) */}
+                <View style={styles.contactCard}>
+                  <Text style={styles.contactLabel}>Secondary Emergency Contact</Text>
+
+                  <View style={styles.inputGroup}>
+                    <View style={styles.inputIcon}>
+                      <User size={20} color={Colors.dark.gold} />
+                    </View>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Contact Name (Optional)"
+                      placeholderTextColor={Colors.dark.textSecondary}
+                      value={secondaryContact.name}
+                      onChangeText={(text) =>
+                        setSecondaryContact((prev) => ({ ...prev, name: text }))
+                      }
+                      editable={!loading}
+                    />
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <View style={styles.inputIcon}>
+                      <PhoneIcon size={20} color={Colors.dark.gold} />
+                    </View>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Phone Number (Optional)"
+                      placeholderTextColor={Colors.dark.textSecondary}
+                      keyboardType="phone-pad"
+                      value={secondaryContact.phone}
+                      onChangeText={(text) =>
+                        setSecondaryContact((prev) => ({ ...prev, phone: text }))
+                      }
+                      editable={!loading}
+                    />
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <View style={styles.inputIcon}>
+                      <User size={20} color={Colors.dark.gold} />
+                    </View>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Relationship (Optional)"
+                      placeholderTextColor={Colors.dark.textSecondary}
+                      value={secondaryContact.relationship}
+                      onChangeText={(text) =>
+                        setSecondaryContact((prev) => ({
+                          ...prev,
+                          relationship: text,
+                        }))
+                      }
+                      editable={!loading}
+                    />
+                  </View>
+                </View>
+
+                {/* Women Safety Preferences */}
+                <View style={styles.preferenceCard}>
+                  <View style={styles.preferenceRow}>
+                    <View>
+                      <Text style={styles.preferenceTitle}>Women-Only Rides</Text>
+                      <Text style={styles.preferenceDescription}>
+                        Get matched only with female drivers
+                      </Text>
+                    </View>
+                    <Switch
+                      value={womenOnlyPreference}
+                      onValueChange={setWomenOnlyPreference}
+                      trackColor={{
+                        false: Colors.dark.border,
+                        true: Colors.dark.gold,
+                      }}
+                      thumbColor={Colors.dark.background}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.preferenceCard}>
+                  <View style={styles.preferenceRow}>
+                    <View>
+                      <Text style={styles.preferenceTitle}>Auto-Share Trip</Text>
+                      <Text style={styles.preferenceDescription}>
+                        Automatically share trip with your contacts
+                      </Text>
+                    </View>
+                    <Switch
+                      value={autoShareTrip}
+                      onValueChange={setAutoShareTrip}
+                      trackColor={{
+                        false: Colors.dark.border,
+                        true: Colors.dark.gold,
+                      }}
+                      thumbColor={Colors.dark.background}
+                    />
+                  </View>
+                </View>
+              </View>
+            )}
 
             <View style={styles.inputGroup}>
               <View style={styles.inputIcon}>
@@ -1867,5 +2124,109 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
     fontSize: 11,
     lineHeight: 16,
+  },
+  // Women Safety Styles
+  section: {
+    marginTop: 24,
+    marginBottom: 12,
+  },
+  sectionLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.dark.text,
+    marginBottom: 4,
+  },
+  sectionDescription: {
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+  },
+  genderContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+    flexWrap: 'wrap',
+  },
+  genderChip: {
+    flex: 1,
+    minWidth: '30%',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
+    alignItems: 'center',
+  },
+  genderChipActive: {
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '20',
+  },
+  genderChipText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.dark.text,
+  },
+  genderChipTextActive: {
+    color: Colors.dark.gold,
+    fontWeight: '700',
+  },
+  emergencyContactsSection: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.dark.border + '30',
+  },
+  emergencyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 10,
+  },
+  emergencyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.dark.text,
+  },
+  emergencySubtitle: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+  },
+  contactCard: {
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border + '30',
+  },
+  contactLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.dark.text,
+    marginBottom: 12,
+  },
+  preferenceCard: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.dark.background,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.border + '30',
+  },
+  preferenceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  preferenceTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.dark.text,
+    marginBottom: 4,
+  },
+  preferenceDescription: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
   },
 });

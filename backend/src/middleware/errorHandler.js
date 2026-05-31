@@ -1,57 +1,60 @@
-// Error Handler Middleware
-export const errorHandler = (err, req, res, next) => {
-  console.error('❌ Error:', err.message);
+import { isProduction } from '../config/env.js';
 
-  // Validation Error
+const isPublicHttpError = (statusCode) => statusCode >= 400 && statusCode < 500;
+
+export const errorHandler = (err, req, res, next) => {
+  const statusCode = err.status || 500;
+  const requestId = req.requestId;
+
+  console.error(
+    JSON.stringify({
+      type: 'request_error',
+      path: req.originalUrl || req.path,
+      method: req.method,
+      requestId,
+      statusCode,
+      message: err.message,
+      code: err.code,
+    }),
+  );
+
   if (err.name === 'ValidationError') {
     return res.status(400).json({
       error: 'Validation failed',
       details: Object.values(err.errors).map((e) => e.message),
+      requestId,
     });
   }
 
-  // Duplicate Key Error
   if (err.code === 11000) {
     const field = Object.keys(err.keyPattern)[0];
     return res.status(400).json({
       error: `${field} already exists`,
+      requestId,
     });
   }
 
-  // Cast Error
   if (err.name === 'CastError') {
     return res.status(400).json({
       error: 'Invalid ID format',
+      requestId,
     });
   }
 
-  // Default Error
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error',
+  return res.status(statusCode).json({
+    error:
+      !isProduction || isPublicHttpError(statusCode)
+        ? err.message || 'Internal server error'
+        : 'Internal server error',
+    code: err.code,
+    requestId,
   });
 };
 
-// Not Found Middleware
 export const notFound = (req, res) => {
   res.status(404).json({
     error: 'Route not found',
     path: req.path,
+    requestId: req.requestId,
   });
-};
-
-// Request Logging Middleware
-export const requestLogger = (req, res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`);
-  next();
-};
-
-// CORS Middleware
-export const corsMiddleware = (req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header(
-    'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept',
-  );
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH');
-  next();
 };

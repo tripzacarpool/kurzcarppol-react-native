@@ -8,7 +8,6 @@ import {
   SafeAreaView,
   RefreshControl,
   ActivityIndicator,
-  Platform,
   Linking,
   Alert,
 } from 'react-native';
@@ -21,7 +20,7 @@ import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
 import { useFocusEffect } from '@react-navigation/native';
 import { getLocationSocket, initializeLocationSocket } from '@/lib/locationSocket';
 import { useMessages } from '@/contexts/MessagesContext';
-import * as Notifications from 'expo-notifications';
+import { setBadgeCount } from '@/lib/notificationService';
 
 interface Conversation {
   _id: string;
@@ -60,11 +59,7 @@ export default function MessagesScreen() {
 
   // Update app icon badge when unread count changes
   useEffect(() => {
-    if (Platform.OS === 'ios' || Platform.OS === 'android') {
-      Notifications.setBadgeCountAsync(totalUnreadMessages).catch(err => {
-        console.log('Failed to set badge count:', err);
-      });
-    }
+    setBadgeCount(totalUnreadMessages);
   }, [totalUnreadMessages]);
 
   useEffect(() => {
@@ -100,7 +95,7 @@ export default function MessagesScreen() {
             if (conversationsToMarkRead.length > 0) {
               console.log('✅ Marked', conversationsToMarkRead.length, 'conversations as read');
               // Clear the badge
-              Notifications.setBadgeCountAsync(0);
+              await setBadgeCount(0);
               // Refresh conversations to update UI
               setTimeout(() => {
                 refreshMessages();

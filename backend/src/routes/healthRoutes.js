@@ -1,9 +1,14 @@
 import express from 'express';
-import { healthCheck } from '../controllers/healthController.js';
+import { healthCheck, readinessCheck } from '../controllers/healthController.js';
 
-const router = express.Router();
+export function createHealthRoutes(context = {}) {
+  const router = express.Router();
 
-// GET /health - Health check
-router.get('/', healthCheck);
+  router.get('/', healthCheck);
+  router.get('/live', healthCheck);
+  router.get('/ready', readinessCheck(context));
 
-export default router;
+  return router;
+}
+
+export default createHealthRoutes();

@@ -17,7 +17,7 @@ const ForceLogoutButton: React.FC<Props> = ({ label = 'Force Logout' }) => {
     try {
       setLoading(true);
       await signOut();
-      router.replace('/(auth)/login');
+      router.replace('/');
     } catch (err) {
       // Non-blocking: signOut already clears state even on errors
     } finally {

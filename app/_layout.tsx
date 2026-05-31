@@ -13,8 +13,11 @@ import { ClerkProvider as ClerkProviderExpo } from '@clerk/clerk-expo';
 import { ClerkProvider as ClerkProviderReact } from '@clerk/clerk-react';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fetchAndStoreUserIP } from '@/lib/ipService';
-import { testBackendConnectivity } from '@/lib/connectivityHelper';
+import {
+  testBackendConnectivity,
+  testBackendReadiness,
+} from '@/lib/connectivityHelper';
+import { getApiBaseUrl } from '@/lib/backendConfig';
 import NotificationToast from '@/components/NotificationToast';
 
 // Use the appropriate ClerkProvider based on platform
@@ -146,6 +149,7 @@ function RootLayoutNav() {
         <Stack.Screen name="driver" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="admin" />
+        <Stack.Screen name="redirect" />
         <Stack.Screen name="extend-time" />
         <Stack.Screen name="+not-found" />
       </Stack>
@@ -161,14 +165,13 @@ export default function RootLayout() {
   // Test backend connectivity on startup (non-blocking)
   useEffect(() => {
     const checkConnectivity = async () => {
-      if (!process.env.EXPO_PUBLIC_API_URL) {
-        console.error('❌ EXPO_PUBLIC_API_URL environment variable is required');
-        return;
-      }
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL;
+      const apiUrl = getApiBaseUrl();
       // const apiUrl = 'http://10.238.194.123:5000'; // Local development URL
       console.log('🔗 Backend URL configured as:', apiUrl);
       const isReachable = await testBackendConnectivity(apiUrl);
+      if (isReachable) {
+        await testBackendReadiness();
+      }
       if (isReachable) {
         console.log('✅ Backend connectivity verified');
       } else {
