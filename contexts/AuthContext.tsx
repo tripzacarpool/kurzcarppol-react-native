@@ -233,6 +233,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       
       console.warn('⚠️ Sync failed (non-critical):', errorMsg);
+      setUser((prev) =>
+        prev && prev.role === undefined
+          ? {
+              ...prev,
+              role: 'passenger',
+            }
+          : prev,
+      );
       // Don't block auth - user is already authenticated via Clerk
     }
   };

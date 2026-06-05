@@ -66,10 +66,22 @@ export async function syncClerkUser(clerkId, payload = {}) {
   });
 
   if (existingEmailUser) {
-    throw new UserProfileError('Email already in use', {
-      code: 'EMAIL_ALREADY_EXISTS',
-      details: 'This email is associated with another user',
-    });
+    const linkedUser = await UserProfile.findByIdAndUpdate(
+      existingEmailUser._id,
+      {
+        clerkId: sanitized.clerkId,
+        firstName: sanitized.firstName || existingEmailUser.firstName,
+        lastName: sanitized.lastName || existingEmailUser.lastName,
+        profileImage: sanitized.profileImage || existingEmailUser.profileImage,
+        isActive: true,
+      },
+      { new: true, runValidators: true },
+    );
+
+    return {
+      isNewUser: false,
+      user: formatUserResponse(linkedUser),
+    };
   }
 
   let user = await UserProfile.findOne({ clerkId: sanitized.clerkId });
