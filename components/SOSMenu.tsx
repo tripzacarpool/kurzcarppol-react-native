@@ -1,23 +1,17 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  ScrollView,
+  ActivityIndicator,
   Alert,
   Linking,
-  ActivityIndicator,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import {
-  AlertTriangle,
-  X,
-  Share2,
-  Phone,
-  AlertCircle,
-  Zap,
-} from 'lucide-react-native';
+import { AlertTriangle, X } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { SOS_POPUP_OPTIONS } from '@/constants/womenSafety';
 import { activateSOS } from '@/lib/api';
@@ -38,8 +32,6 @@ export default function SOSMenu({
   onClose,
   onShareTrip,
   onReportIssue,
-  driverName = 'Driver',
-  passengerName = 'Passenger',
 }: SOSMenuProps) {
   const [loading, setLoading] = useState(false);
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
@@ -47,9 +39,9 @@ export default function SOSMenu({
   const handleEmergencyCall = () => {
     Alert.alert(
       'Call Emergency Services',
-      'Are you sure you want to call 112 (Emergency)?',
+      'Are you sure you want to call 112?',
       [
-        { text: 'Cancel', onPress: () => {} },
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Call 112',
           onPress: () => {
@@ -62,14 +54,92 @@ export default function SOSMenu({
     );
   };
 
+  const openEmergencySms = async (response: any) => {
+    const alertData = response?.data || response?.sosAlert || response;
+    const emergencyContacts = Array.isArray(alertData?.emergencyContacts)
+      ? alertData.emergencyContacts
+      : [];
+    const phones = [
+      ...new Set(
+        emergencyContacts
+          .map((contact: any) => contact?.phone)
+          .filter(Boolean),
+      ),
+    ];
+    const route = [alertData?.pickupLocation?.name, alertData?.dropoffLocation?.name]
+      .filter(Boolean)
+      .join(' to ');
+    const location =
+      alertData?.currentLocation?.latitude && alertData?.currentLocation?.longitude
+        ? ` Location: https://maps.google.com/?q=${alertData.currentLocation.latitude},${alertData.currentLocation.longitude}`
+        : '';
+    const body = `SOS ALERT: I need help during my Tripza ride${route ? ` (${route})` : ''}. Ride ID: ${rideId}.${location}`;
+
+    if (phones.length === 0) {
+      Alert.alert(
+        'No emergency contacts',
+        'SOS was sent to Tripza support and ride participants. Add emergency contacts in your safety settings for direct SMS alerts.',
+        [
+          { text: 'OK' },
+          {
+            text: 'Call 112',
+            style: 'destructive',
+            onPress: () => Linking.openURL('tel:112'),
+          },
+        ],
+      );
+      return;
+    }
+
+    const separator = Platform.OS === 'ios' ? ',' : ';';
+    const smsUrl = `sms:${phones.join(separator)}?body=${encodeURIComponent(body)}`;
+
+    try {
+      if (await Linking.canOpenURL(smsUrl)) {
+        await Linking.openURL(smsUrl);
+        return;
+      }
+    } catch (error) {
+      console.warn('Unable to open SMS composer:', error);
+    }
+
+    Alert.alert(
+      'Emergency SMS ready',
+      `Please message these emergency contacts now:\n${phones.join(', ')}`,
+      [
+        { text: 'OK' },
+        {
+          text: 'Call 112',
+          style: 'destructive',
+          onPress: () => Linking.openURL('tel:112'),
+        },
+      ],
+    );
+  };
+
   const handleSendSOS = async () => {
     try {
       setLoading(true);
       setSelectedAction('send_sos');
-      await activateSOS(rideId, 'User sent emergency alert');
+      const response = await activateSOS(rideId, 'User sent emergency alert');
       Alert.alert(
-        '🚨 Alert Sent',
-        'Emergency alert has been sent to support team and your emergency contacts. Help is on the way.',
+        'Alert Sent',
+        'Emergency alert has been sent. You can also message your saved emergency contacts now.',
+        [
+          {
+            text: 'Send SMS',
+            onPress: () => {
+              openEmergencySms(response).catch((error) => {
+                console.warn('Emergency SMS failed:', error);
+              });
+            },
+          },
+          {
+            text: 'Call 112',
+            style: 'destructive',
+            onPress: () => Linking.openURL('tel:112'),
+          },
+        ],
       );
       onClose();
     } catch (error: any) {
@@ -106,10 +176,10 @@ export default function SOSMenu({
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={onClose}>
+      onRequestClose={onClose}
+    >
       <View style={styles.overlay}>
         <View style={styles.container}>
-          {/* Header */}
           <View style={styles.header}>
             <AlertTriangle size={28} color={Colors.dark.error} />
             <Text style={styles.headerText}>Safety Options</Text>
@@ -118,15 +188,9 @@ export default function SOSMenu({
             </TouchableOpacity>
           </View>
 
-          {/* Message */}
-          <Text style={styles.message}>
-            What would you like to do?
-          </Text>
+          <Text style={styles.message}>What would you like to do?</Text>
 
-          {/* Options */}
-          <ScrollView
-            style={styles.optionsContainer}
-            scrollEnabled={false}>
+          <ScrollView style={styles.optionsContainer} scrollEnabled={false}>
             {SOS_POPUP_OPTIONS.map((option) => (
               <TouchableOpacity
                 key={option.id}
@@ -136,7 +200,8 @@ export default function SOSMenu({
                 ]}
                 onPress={() => handleAction(option.id)}
                 disabled={loading || selectedAction !== null}
-                activeOpacity={0.7}>
+                activeOpacity={0.7}
+              >
                 <View style={styles.optionContent}>
                   <Text style={styles.optionIcon}>{option.icon}</Text>
                   <View style={styles.optionText}>
@@ -153,17 +218,16 @@ export default function SOSMenu({
             ))}
           </ScrollView>
 
-          {/* Cancel Button */}
           <TouchableOpacity
             style={styles.cancelButton}
             onPress={onClose}
-            disabled={loading}>
+            disabled={loading}
+          >
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </TouchableOpacity>
 
-          {/* Disclaimer */}
           <Text style={styles.disclaimer}>
-            💡 If you're in immediate danger, always call 112 first
+            If you're in immediate danger, always call 112 first
           </Text>
         </View>
       </View>
@@ -232,6 +296,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    minWidth: 0,
   },
   optionIcon: {
     fontSize: 28,
@@ -239,6 +304,7 @@ const styles = StyleSheet.create({
   },
   optionText: {
     flex: 1,
+    minWidth: 0,
   },
   optionLabel: {
     fontSize: 15,

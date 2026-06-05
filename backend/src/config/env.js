@@ -19,6 +19,7 @@ const isValidOrigin = (origin) => {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
+  isPm2Run: process.env.pm_id !== undefined,
   port: Number(process.env.PORT || 5000),
   mongodbUri: process.env.MONGODB_URI,
   mongodbDb: process.env.MONGODB_DB || 'tripzaapp',
@@ -41,7 +42,9 @@ export const env = {
   rateLimitMax: Number(process.env.RATE_LIMIT_MAX || 300),
   kafkaBrokers: parseList(process.env.KAFKA_BROKERS),
   kafkaClientId: process.env.KAFKA_CLIENT_ID || 'tripza-api',
+  kafkaHealthTimeoutMs: Number(process.env.KAFKA_HEALTH_TIMEOUT_MS || 8000),
   eventBusStrict: process.env.EVENT_BUS_STRICT === 'true',
+  eventBusConnectTimeoutMs: Number(process.env.EVENT_BUS_CONNECT_TIMEOUT_MS || 1500),
   redisUrl: process.env.REDIS_URL,
   matchingServiceUrl: process.env.MATCHING_SERVICE_URL,
   matchingServiceRequired: process.env.MATCHING_SERVICE_REQUIRED === 'true',

@@ -28,6 +28,52 @@ const getRideLocation = (ride, prefix) => ({
   longitude: prefix === 'pickup' ? ride.pickupLongitude : ride.dropoffLongitude,
 });
 
+const normalizePhone = (phone) =>
+  typeof phone === 'string' ? phone.replace(/[^\d+]/g, '') : '';
+
+const normalizeEmergencyContact = (contact, source) => {
+  const phone = normalizePhone(contact?.phone);
+  if (!phone) return null;
+
+  return {
+    id: contact.id?.toString?.() || `${source}:${phone}`,
+    name: contact.name || 'Emergency contact',
+    phone,
+    relationship: contact.relationship || '',
+    source,
+  };
+};
+
+const collectEmergencyContacts = (...people) => {
+  const contacts = [];
+  const seenPhones = new Set();
+
+  for (const person of people.filter(Boolean)) {
+    const safety = person.safetyFeatures || {};
+    const candidates = [
+      normalizeEmergencyContact(
+        safety.primaryEmergencyContact,
+        `${person.clerkId}:primary`,
+      ),
+      normalizeEmergencyContact(
+        safety.secondaryEmergencyContact,
+        `${person.clerkId}:secondary`,
+      ),
+      ...(safety.emergencyContacts || []).map((contact) =>
+        normalizeEmergencyContact(contact, `${person.clerkId}:additional`),
+      ),
+    ].filter(Boolean);
+
+    for (const contact of candidates) {
+      if (seenPhones.has(contact.phone)) continue;
+      seenPhones.add(contact.phone);
+      contacts.push(contact);
+    }
+  }
+
+  return contacts;
+};
+
 export const isSOSAllowedForRide = (ride) =>
   ['accepted', 'booked', 'ongoing', 'in_progress', 'awaiting_driver_confirmation'].includes(
     ride.status,
@@ -101,6 +147,10 @@ export async function getSOSRideContext(rideId, activatedBy) {
   const passenger = primaryPassengerClerkId
     ? peopleByClerkId.get(primaryPassengerClerkId)
     : null;
+  const activatingUserContacts = activatingUser
+    ? collectEmergencyContacts(activatingUser)
+    : [];
+  const passengerContacts = collectEmergencyContacts(passenger);
 
   return {
     ride,
@@ -111,6 +161,13 @@ export async function getSOSRideContext(rideId, activatedBy) {
     driver,
     passenger,
     activatingUser,
+    emergencyContacts: [
+      ...activatingUserContacts,
+      ...passengerContacts.filter(
+        (contact) =>
+          !activatingUserContacts.some((item) => item.phone === contact.phone),
+      ),
+    ],
     peopleByClerkId,
     pickupLocation: getRideLocation(ride, 'pickup'),
     dropoffLocation: getRideLocation(ride, 'dropoff'),
@@ -144,6 +201,7 @@ export function toSOSAlert(context) {
     driverId: driverClerkId,
     driverName: getPersonName(driver, ride.acceptedBy?.driverName || 'Driver'),
     driverPhone: driver?.phone,
+    emergencyContacts: context.emergencyContacts || [],
     pickupLocation: context.pickupLocation,
     dropoffLocation: context.dropoffLocation,
     currentLocation,

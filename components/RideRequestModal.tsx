@@ -16,6 +16,7 @@ import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
 import { createRideRequest, setAuthToken } from '@/lib/api';
+import { getApiBaseUrl } from '@/lib/backendConfig';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
@@ -39,6 +40,7 @@ interface LocationData {
 }
 
 const FLEXIBILITY_OPTIONS = [15, 30, 60, 120];
+const MAPS_PROXY_BASE_URL = getApiBaseUrl();
 
 const roundToNearestFiveMinutes = (date: Date) => {
   const rounded = new Date(date);
@@ -70,6 +72,8 @@ export default function RideRequestModal({
   const [loading, setLoading] = useState(false);
   const [pickupLocation, setPickupLocation] = useState<LocationData | null>(null);
   const [dropoffLocation, setDropoffLocation] = useState<LocationData | null>(null);
+  const [pickupAddress, setPickupAddress] = useState('');
+  const [dropoffAddress, setDropoffAddress] = useState('');
   const [showPickupPicker, setShowPickupPicker] = useState(false);
   const [showDropoffPicker, setShowDropoffPicker] = useState(false);
   const [passengers, setPassengers] = useState(1);
@@ -119,14 +123,16 @@ export default function RideRequestModal({
       return;
     }
 
-    setPickupLocation({
+    const currentLocation = {
       address:
         location.city && location.country
           ? `${location.city}, ${location.country}`
           : 'Current Location',
       latitude: location.latitude,
       longitude: location.longitude,
-    });
+    };
+    setPickupLocation(currentLocation);
+    setPickupAddress(currentLocation.address);
   }, [
     visible,
     pickupLocation,
@@ -210,14 +216,54 @@ export default function RideRequestModal({
     setFlexibilityMinutes(60);
   };
 
+  const geocodeAddress = async (address: string): Promise<LocationData | null> => {
+    const trimmedAddress = address.trim();
+    if (!trimmedAddress) {
+      return null;
+    }
+
+    try {
+      const response = await fetch(
+        `${MAPS_PROXY_BASE_URL}/api/maps/geocode?address=${encodeURIComponent(trimmedAddress)}`,
+      );
+      const data = await response.json();
+      const result = data?.results?.[0];
+      const coordinates = result?.geometry?.location;
+
+      if (data?.status === 'OK' && coordinates?.lat && coordinates?.lng) {
+        return {
+          address: result.formatted_address || trimmedAddress,
+          latitude: coordinates.lat,
+          longitude: coordinates.lng,
+        };
+      }
+    } catch (geocodeError) {
+      console.error('Ride request geocoding failed:', geocodeError);
+    }
+
+    return null;
+  };
+
   const handleCreateRide = async () => {
-    if (!pickupLocation) {
-      setError('Please select pickup location');
+    const resolvedPickup =
+      pickupLocation || (pickupAddress.trim() ? await geocodeAddress(pickupAddress) : null);
+    const resolvedDropoff =
+      dropoffLocation || (dropoffAddress.trim() ? await geocodeAddress(dropoffAddress) : null);
+
+    if (!resolvedPickup) {
+      setError('Please enter or select a valid pickup location');
       return;
     }
-    if (!dropoffLocation) {
-      setError('Please select dropoff location');
+    if (!resolvedDropoff) {
+      setError('Please enter or select a valid dropoff location');
       return;
+    }
+
+    if (!pickupLocation) {
+      setPickupLocation(resolvedPickup);
+    }
+    if (!dropoffLocation) {
+      setDropoffLocation(resolvedDropoff);
     }
 
     if (scheduledDeparture.getTime() < Date.now() + 5 * 60 * 1000) {
@@ -248,16 +294,16 @@ export default function RideRequestModal({
 
       const ridePayload = {
         clerkId: user.id,
-        from: pickupLocation.address,
-        to: dropoffLocation.address,
+        from: resolvedPickup.address,
+        to: resolvedDropoff.address,
         passengers,
         vehicleType,
         notes,
         womenOnly,
-        pickupLatitude: pickupLocation.latitude,
-        pickupLongitude: pickupLocation.longitude,
-        dropoffLatitude: dropoffLocation.latitude,
-        dropoffLongitude: dropoffLocation.longitude,
+        pickupLatitude: resolvedPickup.latitude,
+        pickupLongitude: resolvedPickup.longitude,
+        dropoffLatitude: resolvedDropoff.latitude,
+        dropoffLongitude: resolvedDropoff.longitude,
         pickupCity: location?.city,
         pickupCountry: location?.country,
         scheduledDeparture: scheduledDeparture.toISOString(),
@@ -275,12 +321,14 @@ export default function RideRequestModal({
 
       showAlert(
         'Ride Request Created',
-        `Your ride from ${pickupLocation.address} to ${dropoffLocation.address} is now live! Drivers will start accepting it soon.`,
+        `Your ride from ${resolvedPickup.address} to ${resolvedDropoff.address} is now live! Drivers will start accepting it soon.`,
         'success',
       );
 
       setPickupLocation(null);
       setDropoffLocation(null);
+      setPickupAddress('');
+      setDropoffAddress('');
       setPassengers(1);
       setVehicleType('four_wheeler');
       setRequestedFare('');
@@ -313,7 +361,8 @@ export default function RideRequestModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <>
+      <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.title}>Request a Ride</Text>
@@ -325,7 +374,10 @@ export default function RideRequestModal({
         <ScrollView
           style={styles.content}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.contentContainer}>
+          contentContainerStyle={[
+            styles.contentContainer,
+            Platform.OS === 'web' && styles.webContentContainer,
+          ]}>
           {error ? (
             <View style={styles.errorContainer}>
               <Text style={styles.errorText}>{error}</Text>
@@ -343,43 +395,57 @@ export default function RideRequestModal({
                 <View style={[styles.routeDot, styles.timeDot]} />
               </View>
               <View style={styles.routeInputs}>
-                <TouchableOpacity
-                  style={styles.routeField}
-                  onPress={() => setShowPickupPicker(true)}
-                  disabled={loading}
-                  activeOpacity={0.75}>
+                <View style={styles.routeField}>
                   <View style={styles.routeFieldCopy}>
                     <Text style={styles.routeLabel}>Pickup</Text>
-                    <Text
-                      style={[
-                        styles.routeValue,
-                        !pickupLocation && styles.routePlaceholder,
-                      ]}
-                      numberOfLines={1}>
-                      {pickupLocation?.address || 'Where are you starting?'}
-                    </Text>
+                    <TextInput
+                      style={styles.routeInput}
+                      placeholder="Where are you starting?"
+                      placeholderTextColor={Colors.dark.textSecondary}
+                      value={pickupAddress}
+                      onChangeText={(value) => {
+                        setPickupAddress(value);
+                        setPickupLocation(null);
+                        setError('');
+                      }}
+                      editable={!loading}
+                      returnKeyType="next"
+                    />
                   </View>
-                  <Navigation size={18} color={Colors.dark.gold} />
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.routeIconButton}
+                    onPress={() => setShowPickupPicker(true)}
+                    disabled={loading}
+                    activeOpacity={0.75}>
+                    <Navigation size={18} color={Colors.dark.gold} />
+                  </TouchableOpacity>
+                </View>
 
-                <TouchableOpacity
-                  style={styles.routeField}
-                  onPress={() => setShowDropoffPicker(true)}
-                  disabled={loading}
-                  activeOpacity={0.75}>
+                <View style={styles.routeField}>
                   <View style={styles.routeFieldCopy}>
                     <Text style={styles.routeLabel}>Drop-off</Text>
-                    <Text
-                      style={[
-                        styles.routeValue,
-                        !dropoffLocation && styles.routePlaceholder,
-                      ]}
-                      numberOfLines={1}>
-                      {dropoffLocation?.address || 'Where do you want to go?'}
-                    </Text>
+                    <TextInput
+                      style={styles.routeInput}
+                      placeholder="Where do you want to go?"
+                      placeholderTextColor={Colors.dark.textSecondary}
+                      value={dropoffAddress}
+                      onChangeText={(value) => {
+                        setDropoffAddress(value);
+                        setDropoffLocation(null);
+                        setError('');
+                      }}
+                      editable={!loading}
+                      returnKeyType="done"
+                    />
                   </View>
-                  <MapPin size={18} color={Colors.dark.pink} />
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.routeIconButton}
+                    onPress={() => setShowDropoffPicker(true)}
+                    disabled={loading}
+                    activeOpacity={0.75}>
+                    <MapPin size={18} color={Colors.dark.pink} />
+                  </TouchableOpacity>
+                </View>
 
                 <TouchableOpacity
                   style={[styles.routeField, styles.routeFieldLast]}
@@ -602,6 +668,7 @@ export default function RideRequestModal({
           </TouchableOpacity>
         </View>
       </SafeAreaView>
+      </Modal>
 
       <CustomAlert
         visible={alertVisible}
@@ -616,6 +683,7 @@ export default function RideRequestModal({
         onClose={() => setShowPickupPicker(false)}
         onLocationSelect={(loc) => {
           setPickupLocation(loc);
+          setPickupAddress(loc.address);
           setShowPickupPicker(false);
         }}
         title="Select Pickup Location"
@@ -627,6 +695,7 @@ export default function RideRequestModal({
         onClose={() => setShowDropoffPicker(false)}
         onLocationSelect={(loc) => {
           setDropoffLocation(loc);
+          setDropoffAddress(loc.address);
           setShowDropoffPicker(false);
         }}
         title="Select Dropoff Location"
@@ -673,7 +742,7 @@ export default function RideRequestModal({
           </View>
         </View>
       </Modal>
-    </Modal>
+    </>
   );
 }
 
@@ -708,6 +777,11 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 20,
     paddingBottom: 100,
+  },
+  webContentContainer: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
   },
   errorContainer: {
     backgroundColor: Colors.dark.error + '20',
@@ -794,6 +868,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
+  },
+  routeInput: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 3,
+    minHeight: 24,
+    padding: 0,
+  },
+  routeIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.background,
   },
   routeValue: {
     color: Colors.dark.text,

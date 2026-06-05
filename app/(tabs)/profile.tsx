@@ -7,18 +7,21 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/contexts/LocationContext';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { getUserProfile } from '@/lib/ipService';
+import { setAuthToken, updateSafetySettings } from '@/lib/api';
 import ForceLogoutButton from '@/components/ForceLogoutButton';
 import CustomAlert, { AlertType } from '@/components/CustomAlert';
+import SafetySettingsScreen from '@/components/SafetySettingsScreen';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, signOut, getAuthToken } = useAuth();
   const { location, hasPermission, requestPermission, updateLocation } = useLocation();
   const { enablePushNotifications } = useNotifications();
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [locationEnabled, setLocationEnabled] = useState(hasPermission);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [showSafetySettings, setShowSafetySettings] = useState(false);
   
   // Custom alert state
   const [alertVisible, setAlertVisible] = useState(false);
@@ -56,7 +59,8 @@ export default function ProfileScreen() {
     
     try {
       setLoading(true);
-      const profile = await getUserProfile(user.id);
+      const token = await getAuthToken();
+      const profile = await getUserProfile(user.id, token);
       setUserProfile(profile);
       console.log('✅ Profile loaded:', profile);
     } catch (error) {
@@ -136,6 +140,24 @@ export default function ProfileScreen() {
   const userEmail = user?.email || 'user@example.com';
   const userRating = userProfile?.rating || 4.8;
   const totalTrips = userProfile?.total_trips || 0;
+  const safetySettings = userProfile?.safetyFeatures || {
+    isFemale: false,
+    womenOnlyPreference: false,
+    autoShareTrip: true,
+    safetyAlertsEnabled: true,
+    primaryEmergencyContact: { name: '', phone: '', relationship: '' },
+    emergencyContacts: [],
+  };
+
+  const handleSaveSafetySettings = async (settings: any) => {
+    const token = await getAuthToken();
+    if (token) setAuthToken(token);
+    const response = await updateSafetySettings(settings);
+    setUserProfile((current: any) => ({
+      ...current,
+      ...(response.user || {}),
+    }));
+  };
 
   if (loading && !userProfile) {
     return (
@@ -144,6 +166,16 @@ export default function ProfileScreen() {
           <Text style={styles.loadingText}>Loading profile...</Text>
         </View>
       </SafeAreaView>
+    );
+  }
+
+  if (showSafetySettings) {
+    return (
+      <SafetySettingsScreen
+        initialSettings={safetySettings}
+        onClose={() => setShowSafetySettings(false)}
+        onSave={handleSaveSafetySettings}
+      />
     );
   }
 
@@ -281,7 +313,9 @@ export default function ProfileScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Safety & Support</Text>
-          <TouchableOpacity style={styles.menuItem}>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => setShowSafetySettings(true)}>
             <View style={[styles.menuIcon, styles.pinkIcon]}>
               <Shield size={20} color={Colors.dark.pink} />
             </View>

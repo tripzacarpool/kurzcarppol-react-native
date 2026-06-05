@@ -108,7 +108,7 @@ export async function getPendingRatingsForUser(userId) {
   }).select('_id from to departureTime completedAt bookings');
 
   const completedBookings = await RideBooking.find({
-    passengerId: userId,
+    $or: [{ passengerId: userId }, { passengerClerkId: userId }],
     approvalStatus: 'confirmed',
   })
     .populate('rideId', 'from to departureTime completedAt status driverId')

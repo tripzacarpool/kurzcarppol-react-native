@@ -12,6 +12,7 @@ import {
   FlatList,
   Keyboard,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -341,12 +342,7 @@ export default function LocationPicker({
     setLocationError('');
   };
 
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={false}
-      onRequestClose={onClose}>
+  const pickerContent = (
       <View style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -536,6 +532,27 @@ export default function LocationPicker({
           </TouchableOpacity>
         </View>
       </View>
+  );
+
+  if (Platform.OS === 'web') {
+    if (!visible) {
+      return null;
+    }
+
+    return (
+      <View style={styles.webOverlay}>
+        {pickerContent}
+      </View>
+    );
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={false}
+      onRequestClose={onClose}>
+      {pickerContent}
     </Modal>
   );
 }
@@ -543,6 +560,15 @@ export default function LocationPicker({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: Colors.dark.background,
+  },
+  webOverlay: {
+    position: 'fixed' as any,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 10000,
     backgroundColor: Colors.dark.background,
   },
   header: {

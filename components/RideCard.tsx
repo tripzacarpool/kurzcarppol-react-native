@@ -76,7 +76,7 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime, onHol
           </View>
           <View style={styles.driverDetails}>
             <View style={styles.nameRow}>
-              <Text style={styles.driverName}>{driverName}</Text>
+              <Text style={styles.driverName} numberOfLines={1}>{driverName}</Text>
               <VerificationBadge
                 verificationBatch={driver.verificationBatch}
                 driverVerified={driver.driverVerified}
@@ -166,11 +166,11 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime, onHol
       <View style={styles.footer}>
         <View style={styles.infoItem}>
           <Clock size={14} color={Colors.dark.textSecondary} />
-          <Text style={styles.infoText}>{readableDepartureTime}</Text>
+          <Text style={styles.infoText} numberOfLines={1}>{readableDepartureTime}</Text>
         </View>
         <View style={styles.infoItem}>
           <Car size={14} color={Colors.dark.textSecondary} />
-          <Text style={styles.infoText}>{vehicleModel}</Text>
+          <Text style={styles.infoText} numberOfLines={1}>{vehicleModel}</Text>
         </View>
         <View style={styles.infoItem}>
           <Users size={14} color={Colors.dark.textSecondary} />
@@ -220,11 +220,13 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    gap: 10,
     marginBottom: 12,
   },
   driverInfo: {
     flexDirection: 'row',
     flex: 1,
+    minWidth: 0,
   },
   avatar: {
     width: 48,
@@ -245,18 +247,22 @@ const styles = StyleSheet.create({
   },
   driverDetails: {
     flex: 1,
+    minWidth: 0,
     justifyContent: 'center',
   },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
     marginBottom: 4,
   },
   driverName: {
     color: Colors.dark.text,
     fontSize: 16,
     fontWeight: '600',
-    marginRight: 8,
+    flexShrink: 1,
+    minWidth: 0,
   },
   womenBadge: {
     backgroundColor: Colors.dark.pink + '30',
@@ -311,10 +317,13 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
     fontSize: 11,
     fontWeight: '600',
+    flex: 1,
+    minWidth: 0,
   },
   fareContainer: {
     alignItems: 'flex-end',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   fareRow: {
     flexDirection: 'row',
@@ -410,16 +419,24 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   infoItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 30,
+    maxWidth: '100%',
+    backgroundColor: Colors.dark.background + '99',
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
   },
   infoText: {
     color: Colors.dark.textSecondary,
     fontSize: 12,
     marginLeft: 4,
+    flexShrink: 1,
   },
   holdButton: {
     marginTop: 12,

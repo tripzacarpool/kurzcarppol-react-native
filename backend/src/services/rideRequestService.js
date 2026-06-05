@@ -282,6 +282,7 @@ export async function getRideRequestsForPassenger(clerkId) {
       status: ride.status,
       createdAt: ride.createdAt,
       acceptedBy: ride.acceptedBy,
+      pickupStatus: ride.pickupStatus,
       requestedTotalFare: ride.requestedTotalFare || ride.fare || 0,
       driverGuaranteedFare: ride.driverGuaranteedFare || ride.fare || 0,
       maxSharedSeats:

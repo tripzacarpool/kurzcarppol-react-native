@@ -210,6 +210,33 @@ export async function logoutUserFromBackend(clerkId: string) {
   }
 }
 
+export async function updateSafetySettings(settings: {
+  isFemale: boolean;
+  womenOnlyPreference: boolean;
+  autoShareTrip: boolean;
+  safetyAlertsEnabled: boolean;
+  primaryEmergencyContact: {
+    id?: string;
+    name: string;
+    phone: string;
+    relationship: string;
+  };
+  secondaryEmergencyContact?: {
+    name: string;
+    phone: string;
+    relationship: string;
+  };
+  emergencyContacts: Array<{
+    id?: string;
+    name: string;
+    phone: string;
+    relationship: string;
+  }>;
+}) {
+  const response = await apiClient.put('/api/users/safety-settings', settings);
+  return response.data;
+}
+
 // Update driver verification status
 export async function updateDriverVerification(verificationData: {
   verificationStatus:
@@ -1222,13 +1249,48 @@ export async function processWalletPayment(
     const response = await apiClient.post('/api/payments/wallet-payment', {
       userId,
       amount,
-      metadata,
+      bookingDetails: metadata,
     });
     console.log('✅ Wallet payment processed');
     return response.data;
   } catch (error: any) {
     console.error(
       '❌ Error processing wallet payment:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Recharge wallet balance
+ */
+export async function walletRecharge(
+  userId: string,
+  amount: number,
+  paymentId: string,
+  orderId?: string,
+): Promise<any> {
+  try {
+    const response = await apiClient.post(
+      '/api/payments/wallet-recharge',
+      {
+        userId,
+        amount,
+        paymentId,
+        orderId,
+      },
+      {
+        headers: {
+          'Idempotency-Key': paymentId,
+        },
+      },
+    );
+    console.log('âœ… Wallet recharged');
+    return response.data;
+  } catch (error: any) {
+    console.error(
+      'âŒ Error recharging wallet:',
       error.response?.data || error.message,
     );
     throw error;

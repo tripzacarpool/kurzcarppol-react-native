@@ -34,6 +34,7 @@ import {
 import { Colors } from '@/constants/Colors';
 import { useSignUp, useAuth, useOAuth, useClerk } from '@/lib/clerkHooks';
 import { formatClerkError, isPasswordError, getPasswordStrengthTips } from '@/lib/clerkErrorHandler';
+import { googleOAuthRedirectParams } from '@/lib/googleOAuth';
 import {
   syncUserToDatabase_Safe,
   submitRidePartnerApplication,
@@ -74,8 +75,7 @@ export default function SignupScreen() {
   const router = useRouter();
   const { signUp } = useSignUp();
   const { isSignedIn, isLoaded } = useAuth();
-  // OAuth is only available on native platforms
-  const oauth = Platform.OS !== 'web' ? useOAuth({ strategy: 'oauth_google' }) : null;
+  const oauth = useOAuth({ strategy: 'oauth_google' });
   const clerk = useClerk();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -1013,7 +1013,27 @@ export default function SignupScreen() {
 
   const handleGoogleSignIn = async () => {
     if (Platform.OS === 'web') {
-      setError('Google sign-up is not available on web. Please use email/password.');
+      if (!signUp?.authenticateWithRedirect) {
+        setError('Google sign-up is not available yet. Please try again.');
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError('');
+        await AsyncStorage.setItem('user_role_preference', 'passenger');
+        await signUp.authenticateWithRedirect({
+          ...googleOAuthRedirectParams,
+          continueSignUp: true,
+        });
+      } catch (err: any) {
+        console.error('Google web sign-up error:', {
+          message: err?.message,
+          errors: err?.errors,
+        });
+        setError(err?.errors?.[0]?.message || err?.message || 'Google sign-up failed');
+        setLoading(false);
+      }
       return;
     }
 
@@ -1518,28 +1538,23 @@ export default function SignupScreen() {
               </Text>
             </View>
 
-            {/* Google Sign-up - Only available on native platforms */}
-            {Platform.OS !== 'web' && (
-              <>
-                <View style={styles.divider}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>or</Text>
-                  <View style={styles.dividerLine} />
-                </View>
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
-                <TouchableOpacity
-                  style={[styles.googleButton, loading && styles.buttonDisabled]}
-                  onPress={handleGoogleSignIn}
-                  disabled={loading}
-                  activeOpacity={0.8}>
-                  {loading ? (
-                    <ActivityIndicator color="white" />
-                  ) : (
-                    <Text style={styles.googleButtonText}>Sign up with Google</Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            )}
+            <TouchableOpacity
+              style={[styles.googleButton, loading && styles.buttonDisabled]}
+              onPress={handleGoogleSignIn}
+              disabled={loading}
+              activeOpacity={0.8}>
+              {loading ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.googleButtonText}>Sign up with Google</Text>
+              )}
+            </TouchableOpacity>
 
             <View style={styles.loginPrompt}>
               <Text style={styles.loginPromptText}>Already have an account? </Text>
@@ -1564,7 +1579,11 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
     paddingHorizontal: 24,
+    paddingBottom: 28,
   },
   backButton: {
     width: 44,
@@ -1599,6 +1618,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.dark.text,
     marginBottom: 8,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
@@ -1690,6 +1710,7 @@ const styles = StyleSheet.create({
   },
   form: {
     flex: 1,
+    width: '100%',
   },
   errorContainer: {
     backgroundColor: Colors.dark.error + '20',

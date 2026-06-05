@@ -200,6 +200,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
               role: syncedUser?.role,
               ridePartnerProfile: syncedUser?.ridePartnerProfile || prev.ridePartnerProfile,
               ridePartnerStatus: syncedUser?.ridePartnerProfile?.status || prev.ridePartnerStatus,
+              driverVerified: syncedUser?.driverVerified ?? prev.driverVerified,
+              verificationBatch: syncedUser?.verificationBatch || prev.verificationBatch,
+              verificationStatus: syncedUser?.verificationStatus || prev.verificationStatus,
             }
           : prev,
       );
@@ -245,6 +248,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
                 ridePartnerProfile: profile,
                 ridePartnerStatus: profile.status,
                 role: profile.status === 'approved' ? 'ride_partner' : prev.role,
+                driverVerified:
+                  profile.status === 'approved' ? true : prev.driverVerified,
+                verificationStatus:
+                  profile.status === 'approved'
+                    ? 'auto_approved'
+                    : prev.verificationStatus,
               }
             : prev,
         );

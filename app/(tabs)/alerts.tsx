@@ -6,6 +6,7 @@ import { useNotifications } from '@/contexts/NotificationContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
 import { setBadgeCount } from '@/lib/notificationService';
+import { useRouter } from 'expo-router';
 
 const getNotificationIcon = (type: string) => {
   switch (type) {
@@ -46,9 +47,10 @@ const getNotificationColor = (type: string) => {
 };
 
 export default function AlertsScreen() {
-  const { user } = useAuth();
+  const { user, getAuthToken } = useAuth();
   const { notifications, unreadCount, markAsRead, clearNotification, clearAll } = useNotifications();
   const [userProfile, setUserProfile] = useState<any>(null);
+  const router = useRouter();
 
   useEffect(() => {
     if (user) {
@@ -63,7 +65,8 @@ export default function AlertsScreen() {
 
   const loadUserProfile = async () => {
     if (user) {
-      const profile = await getUserProfile(user.id);
+      const token = await getAuthToken();
+      const profile = await getUserProfile(user.id, token);
       setUserProfile(profile);
     }
   };
@@ -74,9 +77,57 @@ export default function AlertsScreen() {
     });
   };
 
+  const getNotificationDestination = (notification: any) => {
+    const type = String(notification.type || notification.data?.type || '').toLowerCase();
+    const action = String(notification.data?.action || '').toLowerCase();
+    const data = notification.data || {};
+
+    if (type.includes('chat') || type.includes('message')) {
+      return '/(tabs)/messages';
+    }
+
+    if (type.includes('payment') || type.includes('wallet')) {
+      return '/(tabs)/wallet';
+    }
+
+    if (type.includes('sos') || type.includes('emergency')) {
+      return user?.role === 'admin' ? '/admin/dashboard' : '/(tabs)/trips';
+    }
+
+    if (action === 'extend_time' || type.includes('expiring') || type.includes('departure_reminder')) {
+      return {
+        pathname: '/extend-time',
+        params: {
+          offerId: data.offerId || data.rideId,
+          rideId: data.rideId,
+          from: data.from,
+          to: data.to,
+          departureTime: data.departureTime,
+          action: data.action,
+          hasBookings: data.hasBookings,
+        },
+      };
+    }
+
+    if (
+      type.includes('booking') ||
+      type.includes('ride') ||
+      type.includes('offer') ||
+      notification.data?.rideId ||
+      notification.data?.offerId
+    ) {
+      return user?.role === 'ride_partner' ? '/driver/dashboard' : '/(tabs)/trips';
+    }
+
+    return '/(tabs)/trips';
+  };
+
   const handleNotificationPress = (notificationId: string) => {
+    const notification = notifications.find((item) => item.id === notificationId);
     markAsRead(notificationId);
-    // TODO: Navigate to relevant screen based on notification data
+    if (!notification) return;
+
+    router.push(getNotificationDestination(notification) as any);
   };
 
   const handleDeleteNotification = (notificationId: string) => {

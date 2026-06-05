@@ -5,9 +5,27 @@ import { getCurrentRequestId } from '../http/requestContext.js';
 
 let producer;
 let connectionPromise;
+let optionalRetryAfter = 0;
+
+function withTimeout(promise, timeoutMs, label) {
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeout);
+  });
+}
 
 async function getProducer() {
   if (env.kafkaBrokers.length === 0) {
+    return null;
+  }
+
+  if (!env.eventBusStrict && optionalRetryAfter > Date.now()) {
     return null;
   }
 
@@ -23,10 +41,35 @@ async function getProducer() {
 
     producer = kafka.producer();
     connectionPromise = producer.connect();
+    connectionPromise.catch(() => {
+      producer = null;
+      connectionPromise = null;
+    });
   }
 
-  await connectionPromise;
-  return producer;
+  try {
+    await withTimeout(
+      connectionPromise,
+      env.eventBusConnectTimeoutMs,
+      'Kafka producer connection',
+    );
+    optionalRetryAfter = 0;
+    return producer;
+  } catch (error) {
+    const failedProducer = producer;
+    producer = null;
+    connectionPromise = null;
+
+    if (!env.eventBusStrict) {
+      optionalRetryAfter = Date.now() + 30000;
+    }
+
+    if (failedProducer) {
+      failedProducer.disconnect().catch(() => {});
+    }
+
+    throw error;
+  }
 }
 
 export async function publishEvent(eventType, data, options = {}) {

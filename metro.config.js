@@ -2,6 +2,14 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
+config.maxWorkers = Number(process.env.METRO_MAX_WORKERS || 2);
+config.resolver.blockList = [
+  /[/\\]\.brave-webtest-profile[/\\].*/,
+  /[/\\]\.tripza-services[/\\].*/,
+  /[/\\]\.local-infra[/\\].*/,
+  /[/\\]backend[/\\]services[/\\]matching-service[/\\]\.venv[/\\].*/,
+];
+
 // Configure resolver to handle socket.io-client Node.js imports
 config.resolver.sourceExts = [...config.resolver.sourceExts, 'cjs'];
 

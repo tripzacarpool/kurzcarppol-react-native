@@ -1,21 +1,20 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
   Modal,
   ScrollView,
-  Dimensions,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import {
-  Share2,
-  AlertTriangle,
-  Phone,
   AlertCircle,
-  X,
+  AlertTriangle,
   Check,
+  Phone,
+  Share2,
   Shield,
+  X,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 
@@ -28,8 +27,6 @@ interface SafetyToolkitProps {
   onReportIssue: () => void;
   hasTripShared?: boolean;
 }
-
-const { width } = Dimensions.get('window');
 
 export default function SafetyToolkit({
   visible,
@@ -58,12 +55,12 @@ export default function SafetyToolkit({
       id: 'emergency_call',
       title: 'Emergency Call',
       icon: <Phone size={24} color={Colors.dark.warning} />,
-      description: 'Call 112 (Emergency Services)',
+      description: 'Call 112 emergency services',
       color: Colors.dark.warning,
       status: 'ready',
       action: onEmergencyCall,
       details:
-        'Direct call to emergency services (112). Your ride details will be visible on your screen to share with responders.',
+        'Call emergency services directly. Keep your ride details visible so you can share them with responders.',
     },
     {
       id: 'report_issue',
@@ -74,18 +71,18 @@ export default function SafetyToolkit({
       status: 'ready',
       action: onReportIssue,
       details:
-        'Report issues like unsafe driving, wrong route, misbehavior, or any safety concern to the support team.',
+        'Report unsafe driving, wrong route, misbehavior, or any safety concern to the support team.',
     },
     {
       id: 'sos',
       title: 'SOS Alert',
       icon: <AlertTriangle size={24} color={Colors.dark.error} />,
-      description: 'Emergency SOS (Critical Situation)',
+      description: 'Emergency SOS for critical situations',
       color: Colors.dark.error,
       status: 'ready',
       action: onOpenSOS,
       details:
-        'Send immediate alert to admin, emergency contacts, and driver. Emergency services can be dispatched automatically.',
+        'Send an immediate alert to Tripza support, saved emergency contacts, and ride participants.',
     },
   ];
 
@@ -94,14 +91,14 @@ export default function SafetyToolkit({
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={onClose}>
+      onRequestClose={onClose}
+    >
       <View style={styles.overlay}>
         <View style={styles.container}>
-          {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerContent}>
               <Shield size={28} color={Colors.dark.gold} />
-              <View>
+              <View style={styles.headerCopy}>
                 <Text style={styles.headerTitle}>Safety Toolkit</Text>
                 <Text style={styles.headerSubtitle}>
                   Tools available during your ride
@@ -113,26 +110,30 @@ export default function SafetyToolkit({
             </TouchableOpacity>
           </View>
 
-          {/* Safety Tools */}
           <ScrollView showsVerticalScrollIndicator={false} style={styles.toolsList}>
             {tools.map((tool) => (
               <View key={tool.id} style={styles.toolCard}>
-                {/* Tool Header */}
                 <TouchableOpacity
                   onPress={() =>
-                    setExpandedItem(
-                      expandedItem === tool.id ? null : tool.id,
-                    )
+                    setExpandedItem(expandedItem === tool.id ? null : tool.id)
                   }
                   activeOpacity={0.7}
-                  style={styles.toolHeader}>
-                  <View style={[styles.toolIconContainer, { borderLeftColor: tool.color }]}>
+                  style={styles.toolHeader}
+                >
+                  <View
+                    style={[
+                      styles.toolIconContainer,
+                      { borderLeftColor: tool.color },
+                    ]}
+                  >
                     {tool.icon}
                   </View>
 
                   <View style={styles.toolInfo}>
                     <View style={styles.toolTitleRow}>
-                      <Text style={styles.toolTitle}>{tool.title}</Text>
+                      <Text style={styles.toolTitle} numberOfLines={1}>
+                        {tool.title}
+                      </Text>
                       {tool.status === 'shared' && (
                         <View style={styles.statusBadge}>
                           <Check size={12} color="white" />
@@ -140,13 +141,12 @@ export default function SafetyToolkit({
                         </View>
                       )}
                     </View>
-                    <Text style={styles.toolDescription}>
+                    <Text style={styles.toolDescription} numberOfLines={2}>
                       {tool.description}
                     </Text>
                   </View>
                 </TouchableOpacity>
 
-                {/* Expanded Details */}
                 {expandedItem === tool.id && (
                   <View style={styles.toolDetails}>
                     <Text style={styles.detailsText}>{tool.details}</Text>
@@ -156,7 +156,8 @@ export default function SafetyToolkit({
                         tool.action();
                         setExpandedItem(null);
                       }}
-                      activeOpacity={0.7}>
+                      activeOpacity={0.7}
+                    >
                       <Text style={styles.useButtonText}>Use {tool.title}</Text>
                     </TouchableOpacity>
                   </View>
@@ -165,25 +166,24 @@ export default function SafetyToolkit({
             ))}
           </ScrollView>
 
-          {/* Safety Tips */}
           <View style={styles.safetyTips}>
-            <Text style={styles.tipsTitle}>💡 Safety Tips</Text>
+            <Text style={styles.tipsTitle}>Safety Tips</Text>
             <Text style={styles.tipText}>
-              • Share your trip with trusted contacts before the ride starts
+              Share your trip with trusted contacts before the ride starts.
             </Text>
             <Text style={styles.tipText}>
-              • Keep your phone charged and locate notifications enabled
+              Keep your phone charged and location notifications enabled.
             </Text>
             <Text style={styles.tipText}>
-              • In case of emergency, call 112 immediately
+              In case of emergency, call 112 immediately.
             </Text>
           </View>
 
-          {/* Close Button */}
           <TouchableOpacity
             style={styles.closeToolkitButton}
             onPress={onClose}
-            activeOpacity={0.7}>
+            activeOpacity={0.7}
+          >
             <Text style={styles.closeToolkitButtonText}>Close</Text>
           </TouchableOpacity>
         </View>
@@ -205,6 +205,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     maxHeight: '92%',
     width: '100%',
+    maxWidth: 520,
     overflow: 'hidden',
   },
   header: {
@@ -221,6 +222,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     gap: 12,
+    minWidth: 0,
+  },
+  headerCopy: {
+    flex: 1,
+    minWidth: 0,
   },
   headerTitle: {
     fontSize: 18,
@@ -266,14 +272,17 @@ const styles = StyleSheet.create({
   },
   toolInfo: {
     flex: 1,
+    minWidth: 0,
   },
   toolTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 4,
+    gap: 8,
   },
   toolTitle: {
+    flex: 1,
     fontSize: 15,
     fontWeight: '700',
     color: Colors.dark.text,

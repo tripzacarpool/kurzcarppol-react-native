@@ -1,21 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  TouchableOpacity,
   Alert,
-  StyleSheet,
-  Dimensions,
   Animated,
-  View,
+  Linking,
+  Platform,
+  StyleSheet,
   Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { AlertTriangle, Phone, X } from 'lucide-react-native';
-import { Colors } from '@/constants/Colors';
-
-const { width } = Dimensions.get('window');
+import { AlertTriangle } from 'lucide-react-native';
 
 interface SOSButtonProps {
   rideId: string;
-  onSOSActivated: (rideId: string) => Promise<void>;
+  onSOSActivated: (rideId: string) => Promise<any>;
   driverName?: string;
   driverPhone?: string;
   disabled?: boolean;
@@ -32,36 +30,161 @@ export default function SOSButton({
   const [loading, setLoading] = useState(false);
   const [pulseAnim] = useState(new Animated.Value(1));
 
-  // Pulse animation for SOS button
-  useEffect(() => {
-    if (sosActivated) {
-      const pulseAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.2,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-        ]),
-      );
-      pulseAnimation.start();
+  const openEmergencySms = async (response: any) => {
+    const alertData = response?.data || response?.sosAlert || response;
+    const emergencyContacts = Array.isArray(alertData?.emergencyContacts)
+      ? alertData.emergencyContacts
+      : [];
+    const phones = [
+      ...new Set(
+        emergencyContacts
+          .map((contact: any) => contact?.phone)
+          .filter(Boolean),
+      ),
+    ];
+    const route = [alertData?.pickupLocation?.name, alertData?.dropoffLocation?.name]
+      .filter(Boolean)
+      .join(' to ');
+    const location =
+      alertData?.currentLocation?.latitude && alertData?.currentLocation?.longitude
+        ? ` Location: https://maps.google.com/?q=${alertData.currentLocation.latitude},${alertData.currentLocation.longitude}`
+        : '';
+    const body = `SOS ALERT: I need help during my Tripza ride${route ? ` (${route})` : ''}. Ride ID: ${rideId}.${location}`;
 
-      return () => {
-        pulseAnimation.stop();
-      };
+    if (phones.length === 0) {
+      Alert.alert(
+        'No emergency contacts',
+        'SOS was sent to Tripza support and ride participants. Add emergency contacts in your safety settings for direct SMS alerts.',
+        [
+          { text: 'OK' },
+          {
+            text: 'Call 112',
+            style: 'destructive',
+            onPress: () => Linking.openURL('tel:112'),
+          },
+        ],
+      );
+      return;
     }
-  }, [sosActivated, pulseAnim]);
+
+    const separator = Platform.OS === 'ios' ? ',' : ';';
+    const smsUrl = `sms:${phones.join(separator)}?body=${encodeURIComponent(body)}`;
+
+    try {
+      if (await Linking.canOpenURL(smsUrl)) {
+        await Linking.openURL(smsUrl);
+        return;
+      }
+    } catch (error) {
+      console.warn('Unable to open SMS composer:', error);
+    }
+
+    Alert.alert(
+      'Emergency SMS ready',
+      `Please message these emergency contacts now:\n${phones.join(', ')}`,
+      [
+        { text: 'OK' },
+        {
+          text: 'Call 112',
+          style: 'destructive',
+          onPress: () => Linking.openURL('tel:112'),
+        },
+      ],
+    );
+  };
+
+  useEffect(() => {
+    if (!sosActivated) return;
+
+    const pulseAnimation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.12,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    pulseAnimation.start();
+
+    return () => {
+      pulseAnimation.stop();
+    };
+  }, [pulseAnim, sosActivated]);
+
+  const activateSOSAlert = async () => {
+    setLoading(true);
+    try {
+      const response = await onSOSActivated(rideId);
+      setSosActivated(true);
+
+      if (Platform.OS === 'web') {
+        const sendSms =
+          typeof window !== 'undefined'
+            ? window.confirm(
+                'SOS activated. Open emergency SMS to your saved contacts?',
+              )
+            : false;
+        if (sendSms) {
+          await openEmergencySms(response);
+        }
+        return;
+      }
+
+      Alert.alert(
+        'SOS Activated',
+        'Emergency alert has been sent. You can also message your saved emergency contacts now.',
+        [
+          {
+            text: 'Send SMS',
+            onPress: () => {
+              openEmergencySms(response).catch((error) => {
+                console.warn('Emergency SMS failed:', error);
+              });
+            },
+          },
+          {
+            text: 'Call 112',
+            style: 'destructive',
+            onPress: () => Linking.openURL('tel:112'),
+          },
+        ],
+      );
+    } catch (error: any) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(error.message || 'Failed to activate SOS. Please try again.');
+      } else {
+        Alert.alert(
+          'Error',
+          error.message || 'Failed to activate SOS. Please try again.',
+        );
+      }
+      console.error('SOS activation error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSOSPress = () => {
     if (sosActivated) {
-      // Cancel SOS
+      if (Platform.OS === 'web') {
+        const shouldCancel =
+          typeof window !== 'undefined'
+            ? window.confirm('Cancel SOS alert?')
+            : false;
+        if (shouldCancel) {
+          setSosActivated(false);
+        }
+        return;
+      }
+
       Alert.alert('Cancel SOS', 'Are you sure you want to cancel the SOS alert?', [
-        { text: 'Keep SOS Active', onPress: () => {} },
+        { text: 'Keep SOS Active', style: 'cancel' },
         {
           text: 'Cancel SOS',
           onPress: () => setSosActivated(false),
@@ -71,37 +194,27 @@ export default function SOSButton({
       return;
     }
 
-    // Activate SOS - Show confirmation
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm(
+              `Activate SOS alert? This will immediately alert ${driverName}, Tripza support, and saved emergency contacts.`,
+            )
+          : true;
+      if (confirmed) {
+        activateSOSAlert();
+      }
+      return;
+    }
+
     Alert.alert(
-      '🚨 Activate SOS Alert?',
-      `This will immediately alert ${driverName} and nearby emergency contacts that you need help.${driverPhone ? '\n\nDriver will be notified immediately.' : ''}`,
+      'Activate SOS Alert?',
+      `This will immediately alert ${driverName}, Tripza support, and saved emergency contacts.${driverPhone ? '\n\nDriver will be notified immediately.' : ''}`,
       [
-        {
-          text: 'Cancel',
-          onPress: () => {},
-          style: 'cancel',
-        },
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Yes, Activate SOS',
-          onPress: async () => {
-            setLoading(true);
-            try {
-              await onSOSActivated(rideId);
-              setSosActivated(true);
-              Alert.alert(
-                '🚨 SOS Activated',
-                'Emergency alert has been sent. Help is on the way.',
-              );
-            } catch (error: any) {
-              Alert.alert(
-                'Error',
-                error.message || 'Failed to activate SOS. Please try again.',
-              );
-              console.error('SOS activation error:', error);
-            } finally {
-              setLoading(false);
-            }
-          },
+          onPress: activateSOSAlert,
           style: 'destructive',
         },
       ],
@@ -127,7 +240,7 @@ export default function SOSButton({
             size={28}
             color="white"
             strokeWidth={2.5}
-            style={{ marginBottom: 4 }}
+            style={styles.activeIcon}
           />
           <Text style={styles.sosButtonText}>SOS ACTIVE</Text>
           <Text style={styles.sosButtonSubtext}>Tap to cancel</Text>
@@ -145,7 +258,7 @@ export default function SOSButton({
         activeOpacity={0.7}
       >
         <AlertTriangle size={24} color="white" strokeWidth={2.5} />
-        <Text style={styles.sosButtonText}>SOS</Text>
+        <Text style={styles.sosButtonText}>{loading ? 'Sending...' : 'SOS'}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -158,9 +271,10 @@ const styles = StyleSheet.create({
     marginVertical: 12,
   },
   sosButton: {
-    width: width * 0.35,
+    minWidth: 132,
+    maxWidth: 240,
     paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     borderRadius: 12,
     backgroundColor: '#FF4444',
     alignItems: 'center',
@@ -193,5 +307,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 4,
     right: 8,
+  },
+  activeIcon: {
+    marginBottom: 4,
   },
 });

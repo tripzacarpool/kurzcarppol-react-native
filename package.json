@@ -5,12 +5,14 @@
   "private": true,
   "scripts": {
     "dev": "expo start",
-    "build:web": "expo export --platform web",
+    "build:web": "expo export --platform web && node scripts/prepare-amplify-static-routes.js",
     "lint": "expo lint",
     "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
     "backend:arch": "node scripts/backend-architecture-guard.js",
     "matching:check": "python -m compileall -q backend/services/matching-service/app",
     "backend:check": "npm --prefix backend run check && npm run matching:check && npm run typecheck",
+    "deploy:check": "node scripts/check-deployment-readiness.js",
+    "deploy:check:prod": "node -e \"process.env.REQUIRE_PROD_ENV='true'; require('./scripts/check-deployment-readiness.js')\"",
     "services:kafka:health": "cd backend && npm run kafka:health",
     "services:kafka:local": "powershell -ExecutionPolicy Bypass -File scripts/start-local-kafka.ps1",
     "services:topics": "cd backend && npm run kafka:topics",
@@ -77,5 +79,12 @@
     "eslint": "^9.0.0",
     "eslint-config-expo": "~10.0.0",
     "typescript": "~5.9.2"
-  }
+  },
+  "directories": {
+    "lib": "lib"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
 }

@@ -4,7 +4,7 @@ import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
-import { getUserRides, cancelRide, getPassengerBookings, passengerConfirmRideOfferPickup, setAuthToken, submitRating, getPendingRatings, cancelPendingApproval, activateSOS } from '@/lib/api';  
+import { getUserRides, cancelRide, getPassengerBookings, passengerConfirmRideOfferPickup, passengerConfirmPickup, completeRide, setAuthToken, submitRating, getPendingRatings, cancelPendingApproval, activateSOS } from '@/lib/api';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
 import RideRequestModal from '@/components/RideRequestModal';
 import RatingModal from '@/components/RatingModal';
@@ -30,6 +30,7 @@ export default function TripsScreen() {
   const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
   const [confirmingPickupFor, setConfirmingPickupFor] = useState<string | null>(null);
   const [cancellingApprovalId, setCancellingApprovalId] = useState<string | null>(null);
+  const [completingRideFor, setCompletingRideFor] = useState<string | null>(null);
   
   // Rating modal state
   const [ratingModalVisible, setRatingModalVisible] = useState(false);
@@ -108,7 +109,8 @@ export default function TripsScreen() {
 
   const loadUserProfile = async () => {
     if (user) {
-      const profile = await getUserProfile(user.id);
+      const token = await getToken();
+      const profile = await getUserProfile(user.id, token);
       setUserProfile(profile);
     }
   };
@@ -203,6 +205,58 @@ export default function TripsScreen() {
       showAlert('Error', 'Failed to confirm pickup. Try again.', 'error');
     } finally {
       setConfirmingPickupFor(null);
+    }
+  };
+
+  const handleConfirmRideRequestPickup = async (rideId: string) => {
+    try {
+      setConfirmingPickupFor(rideId);
+
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      await passengerConfirmPickup(rideId);
+
+      showAlert(
+        'Pickup Confirmed',
+        'You have confirmed boarding. Ride tracking is active.',
+        'success'
+      );
+
+      await fetchUserRides();
+    } catch (error) {
+      console.error('Error confirming ride request pickup:', error);
+      showAlert('Error', 'Failed to confirm pickup. Try again.', 'error');
+    } finally {
+      setConfirmingPickupFor(null);
+    }
+  };
+
+  const handleCompleteRideOffer = async (booking: any) => {
+    const rideId = booking.rideOffer?._id || booking.rideId;
+    if (!rideId) {
+      showAlert('Error', 'Ride details are missing. Refresh and try again.', 'error');
+      return;
+    }
+
+    try {
+      setCompletingRideFor(booking._id);
+      const token = await getToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
+      await completeRide(rideId);
+      showAlert('Ride Completed', 'Drop-off confirmed. Thank you for riding with Tripza.', 'success');
+      await Promise.all([fetchPassengerBookings(), fetchPendingRatings()]);
+    } catch (error: any) {
+      console.error('Error completing ride offer:', error);
+      const message = error.response?.data?.message || error.response?.data?.error || error.message || 'Unable to complete ride.';
+      showAlert('Error', message, 'error');
+    } finally {
+      setCompletingRideFor(null);
     }
   };
 
@@ -314,17 +368,27 @@ export default function TripsScreen() {
 
   // Handle opening rating modal
   const handleRateRide = (ride: any, booking?: any) => {
+    const driver = booking?.driver || {};
     const rideData = {
       rideId: ride.id || ride._id,
       bookingId: booking?._id,
       from: ride.from,
       to: ride.to,
       ratedId: booking ? booking.driverId : ride.driverId,
-      ratedName: booking ? booking.driverName : ride.driverName || 'Driver',
+      ratedName: booking ? driver.name || booking.driverName || 'Driver' : ride.driverName || 'Driver',
       ratedRole: 'driver' as const,
     };
     setSelectedRideForRating(rideData);
     setRatingModalVisible(true);
+  };
+
+  const hasPendingRatingForBooking = (booking: any) => {
+    const rideId = booking.rideOffer?._id || booking.rideId;
+    return pendingRatings.some(
+      (pending) =>
+        String(pending.rideId) === String(rideId) &&
+        (!pending.bookingId || String(pending.bookingId) === String(booking._id)),
+    );
   };
 
   // Handle rating submission
@@ -565,6 +629,24 @@ export default function TripsScreen() {
                       driverPhone={booking.driver?.phone}
                     />
 
+                    <TouchableOpacity
+                      style={[
+                        styles.confirmPickupButton,
+                        completingRideFor === booking._id && styles.disabledButton,
+                      ]}
+                      onPress={() => handleCompleteRideOffer(booking)}
+                      disabled={completingRideFor === booking._id}
+                      activeOpacity={0.7}>
+                      {completingRideFor === booking._id ? (
+                        <ActivityIndicator size="small" color={Colors.dark.background} />
+                      ) : (
+                        <>
+                          <Check size={18} color={Colors.dark.background} />
+                          <Text style={styles.confirmPickupButtonText}>Mark myself dropped off</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+
                     <View style={styles.activeRideFooter}>
                       <Text style={styles.activeRideFooterText}>🎯 Traveling to destination...</Text>
                     </View>
@@ -746,6 +828,16 @@ export default function TripsScreen() {
                           )}
                         </View>
                       </View>
+                    )}
+
+                    {hasPendingRatingForBooking(booking) && (
+                      <TouchableOpacity
+                        style={styles.rateButton}
+                        onPress={() => handleRateRide(booking.rideOffer || {}, booking)}
+                        activeOpacity={0.7}>
+                        <Star size={16} color={Colors.dark.background} fill={Colors.dark.background} />
+                        <Text style={styles.rateButtonText}>Rate Driver</Text>
+                      </TouchableOpacity>
                     )}
                   </View>
                 ))}
@@ -949,11 +1041,15 @@ export default function TripsScreen() {
             {displayRides.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>📍 My Ride Requests</Text>
-                {displayRides.map((ride, index) => (
-                  <View key={ride.id || index}>
-                    <TouchableOpacity
-                      style={styles.tripCard}
-                      activeOpacity={0.7}>
+                {displayRides.map((ride, index) => {
+                  const isRideRequestActive = ['accepted', 'ongoing', 'in_progress'].includes(ride.status);
+                  const hasDriverMarkedPickup = Boolean(ride.pickupStatus?.driverConfirmedAt);
+                  const hasPassengerConfirmedPickup = Boolean(ride.pickupStatus?.passengerConfirmedAt);
+                  const rideId = ride.id || ride._id;
+
+                  return (
+                  <View key={rideId || index}>
+                    <View style={styles.tripCard}>
                       <View style={styles.tripHeader}>
                         <View style={styles.routeInfo}>
                           <View style={styles.routeRow}>
@@ -970,17 +1066,25 @@ export default function TripsScreen() {
                           style={[
                             styles.statusBadge,
                             ride.status === 'cancelled' && styles.cancelledBadge,
-                            ride.status === 'accepted' && styles.acceptedBadge,
+                            ['accepted', 'ongoing', 'in_progress'].includes(ride.status) && styles.acceptedBadge,
                             ride.status === 'waiting' && styles.waitingBadge,
                           ]}>
                           <Text
                             style={[
                               styles.statusText,
                               ride.status === 'cancelled' && styles.cancelledText,
-                              ride.status === 'accepted' && styles.acceptedText,
+                              ['accepted', 'ongoing', 'in_progress'].includes(ride.status) && styles.acceptedText,
                               ride.status === 'waiting' && styles.waitingText,
                             ]}>
-                            {ride.status === 'completed' ? 'Completed' : ride.status === 'accepted' ? 'Accepted' : ride.status === 'waiting' ? 'Waiting' : 'Cancelled'}
+                            {ride.status === 'completed'
+                              ? 'Completed'
+                              : ride.status === 'accepted'
+                                ? 'Accepted'
+                                : ['ongoing', 'in_progress'].includes(ride.status)
+                                  ? 'Ongoing'
+                                  : ride.status === 'waiting'
+                                    ? 'Waiting'
+                                    : 'Cancelled'}
                           </Text>
                         </View>
                       </View>
@@ -1014,9 +1118,78 @@ export default function TripsScreen() {
                           </TouchableOpacity>
                         </View>
                       )}
-                    </TouchableOpacity>
+
+                      {isRideRequestActive && (
+                        <>
+                          <View style={styles.divider} />
+
+                          {ride.acceptedBy && (
+                            <View style={styles.driverInfoSection}>
+                              <View style={styles.driverInfoRow}>
+                                <UserIcon size={16} color={Colors.dark.textSecondary} />
+                                <Text style={styles.driverName}>
+                                  {ride.acceptedBy.driverName || 'Driver'}
+                                </Text>
+                              </View>
+                              {ride.acceptedBy.driverPhone && (
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    const Linking = require('react-native').Linking;
+                                    Linking.openURL(`tel:${ride.acceptedBy.driverPhone}`);
+                                  }}
+                                  style={styles.callDriverButton}>
+                                  <Phone size={16} color={Colors.dark.gold} />
+                                  <Text style={styles.callDriverText}>Call Driver</Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          )}
+
+                          {hasDriverMarkedPickup && !hasPassengerConfirmedPickup && (
+                            <View style={styles.verificationQuestion}>
+                              <Text style={styles.verificationQuestionTitle}>Did you board the car?</Text>
+                              <Text style={styles.verificationQuestionSubtitle}>
+                                Driver has marked pickup. Confirm once you are seated.
+                              </Text>
+                              <TouchableOpacity
+                                style={[
+                                  styles.confirmPickupButton,
+                                  confirmingPickupFor === rideId && styles.disabledButton
+                                ]}
+                                onPress={() => handleConfirmRideRequestPickup(rideId)}
+                                disabled={confirmingPickupFor === rideId}
+                                activeOpacity={0.7}>
+                                {confirmingPickupFor === rideId ? (
+                                  <ActivityIndicator size="small" color={Colors.dark.background} />
+                                ) : (
+                                  <>
+                                    <Check size={18} color={Colors.dark.background} />
+                                    <Text style={styles.confirmPickupButtonText}>Yes, I'm in the Car</Text>
+                                  </>
+                                )}
+                              </TouchableOpacity>
+                            </View>
+                          )}
+
+                          {hasPassengerConfirmedPickup && (
+                            <View style={styles.activeRideStatus}>
+                              <Check size={14} color={Colors.dark.success} />
+                              <Text style={styles.activeRideStatusText}>Pickup confirmed</Text>
+                            </View>
+                          )}
+
+                          <SOSButton
+                            rideId={rideId}
+                            onSOSActivated={activateSOS}
+                            driverName={ride.acceptedBy?.driverName || 'Driver'}
+                            driverPhone={ride.acceptedBy?.driverPhone}
+                          />
+                        </>
+                      )}
+                    </View>
                   </View>
-                ))}
+                  );
+                })}
               </View>
             )}
 

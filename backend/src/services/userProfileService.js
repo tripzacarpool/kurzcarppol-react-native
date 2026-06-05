@@ -136,6 +136,7 @@ export async function getFullUserProfile(clerkId) {
     walletBalance: user.walletBalance || 0,
     phone: user.phone,
     isWomenOnly: user.isWomenOnly,
+    safetyFeatures: user.safetyFeatures || null,
     ip_address: user.ipAddress,
     ipUpdatedAt: user.ipUpdatedAt,
     location: user.location || null,
@@ -232,6 +233,91 @@ export async function updateUserIpById({ userId, ipAddress }) {
       ipUpdatedAt: new Date(),
     },
     { new: true },
+  );
+
+  if (!user) {
+    throw new UserProfileError('User not found', {
+      status: 404,
+      code: 'USER_NOT_FOUND',
+    });
+  }
+
+  return formatUserResponse(user);
+}
+
+const normalizePhone = (phone) =>
+  typeof phone === 'string' ? phone.replace(/[^\d+]/g, '') : '';
+
+const normalizeEmergencyContact = (contact = {}) => ({
+  id: contact.id?.toString?.() || undefined,
+  name: String(contact.name || '').trim(),
+  phone: normalizePhone(contact.phone),
+  relationship: String(contact.relationship || '').trim(),
+});
+
+const normalizeOptionalEmergencyContact = (contact) => {
+  const normalized = normalizeEmergencyContact(contact);
+  return normalized.name || normalized.phone || normalized.relationship
+    ? normalized
+    : undefined;
+};
+
+export async function updateSafetySettingsForUser(clerkId, payload = {}) {
+  if (!clerkId) {
+    throw new UserProfileError('Unauthorized', {
+      status: 401,
+      code: 'NO_AUTH_USER',
+      details: 'Valid Clerk authentication required',
+    });
+  }
+
+  const primaryEmergencyContact = normalizeEmergencyContact(
+    payload.primaryEmergencyContact,
+  );
+
+  if (
+    !primaryEmergencyContact.name ||
+    !primaryEmergencyContact.phone ||
+    !primaryEmergencyContact.relationship
+  ) {
+    throw new UserProfileError('Primary emergency contact is required', {
+      code: 'MISSING_PRIMARY_CONTACT',
+      details: 'name, phone, and relationship are required',
+    });
+  }
+
+  if (!/^\+?\d{10,15}$/.test(primaryEmergencyContact.phone)) {
+    throw new UserProfileError('Invalid primary contact phone number', {
+      code: 'INVALID_PHONE',
+      details: 'Use a valid phone number with 10 to 15 digits',
+    });
+  }
+
+  const secondaryEmergencyContact = normalizeOptionalEmergencyContact(
+    payload.secondaryEmergencyContact,
+  );
+  const emergencyContacts = Array.isArray(payload.emergencyContacts)
+    ? payload.emergencyContacts
+        .slice(0, 5)
+        .map(normalizeEmergencyContact)
+        .filter((contact) => contact.name && contact.phone && contact.relationship)
+    : [];
+
+  const user = await UserProfile.findOneAndUpdate(
+    { clerkId },
+    {
+      isWomenOnly: Boolean(payload.womenOnlyPreference),
+      safetyFeatures: {
+        isFemale: Boolean(payload.isFemale),
+        womenOnlyPreference: Boolean(payload.womenOnlyPreference),
+        autoShareTrip: payload.autoShareTrip !== false,
+        safetyAlertsEnabled: payload.safetyAlertsEnabled !== false,
+        primaryEmergencyContact,
+        secondaryEmergencyContact,
+        emergencyContacts,
+      },
+    },
+    { new: true, runValidators: true },
   );
 
   if (!user) {

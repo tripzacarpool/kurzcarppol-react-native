@@ -5,6 +5,7 @@ import {
   updateUserRole,
   updateUserLocation,
   updateUserIP,
+  updateSafetySettings,
   logoutUser,
   getProfile,
   updatePushToken,
@@ -29,6 +30,9 @@ router.get('/check-email', checkEmailExists);
 
 // GET /api/users/profile - Get current user profile (requires auth)
 router.get('/profile', requireClerkAuth, getProfile);
+
+// PUT /api/users/safety-settings - Update SOS emergency contacts and safety preferences
+router.put('/safety-settings', requireClerkAuth, updateSafetySettings);
 
 // Admin user and driver management
 router.get('/admin/overview', requireClerkAuth, requireRole('admin'), getAdminOverview);

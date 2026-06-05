@@ -852,7 +852,7 @@ export async function getPassengerBookingsWithRideDetails(clerkId) {
   assertClerkId(clerkId);
 
   const bookings = await RideBooking.find({
-    passengerClerkId: clerkId,
+    $or: [{ passengerClerkId: clerkId }, { passengerId: clerkId }],
   })
     .sort({ createdAt: -1 })
     .lean();

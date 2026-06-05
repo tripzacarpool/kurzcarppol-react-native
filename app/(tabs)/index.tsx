@@ -1281,9 +1281,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginBottom: 8,
     gap: 12,
+    flexWrap: width < 390 ? 'wrap' : 'nowrap',
   },
   womenToggle: {
     flex: 1,
+    minWidth: width < 390 ? '100%' : 0,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.dark.card,
@@ -1316,8 +1318,10 @@ const styles = StyleSheet.create({
     color: Colors.dark.pink,
   },
   createRideButton: {
+    flex: width < 390 ? 1 : 0,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: Colors.dark.gold,
     paddingVertical: 10,
     paddingHorizontal: 16,
@@ -1356,6 +1360,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
+    flexWrap: width < 390 ? 'wrap' : 'nowrap',
     marginBottom: 16,
   },
   sectionTitle: {
@@ -1377,6 +1383,7 @@ const styles = StyleSheet.create({
   rideCountContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 0,
     gap: 8,
   },
   liveBadge: {

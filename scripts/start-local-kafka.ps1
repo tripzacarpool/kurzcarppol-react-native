@@ -37,7 +37,7 @@ $lines = foreach ($line in $template) {
     '^node\.id=' { 'node.id=1'; continue }
     '^controller\.quorum\.voters=' { 'controller.quorum.voters=1@localhost:9093'; continue }
     '^listeners=' { 'listeners=PLAINTEXT://127.0.0.1:9094,CONTROLLER://127.0.0.1:9093'; continue }
-    '^advertised\.listeners=' { 'advertised.listeners=PLAINTEXT://localhost:9094'; continue }
+    '^advertised\.listeners=' { 'advertised.listeners=PLAINTEXT://127.0.0.1:9094'; continue }
     '^log\.dirs=' { "log.dirs=$($KafkaDataDir -replace '\\', '/')"; continue }
     '^auto\.create\.topics\.enable=' { 'auto.create.topics.enable=true'; continue }
     default { $line }

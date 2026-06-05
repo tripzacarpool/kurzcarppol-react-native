@@ -49,7 +49,7 @@ export async function fetchAndStoreUserIP(
   }
 }
 
-export async function getUserProfile(userId: string) {
+export async function getUserProfile(userId: string, token?: string | null) {
   try {
     const API_URL = getApiBaseUrl();
     console.log('👤 Fetching profile from:', `${API_URL}/api/users/${userId}`);
@@ -57,6 +57,7 @@ export async function getUserProfile(userId: string) {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 

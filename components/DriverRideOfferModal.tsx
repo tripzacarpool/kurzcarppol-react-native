@@ -547,9 +547,35 @@ export default function DriverRideOfferModal({
 
     console.log('📤 Submit - Edit mode:', isEditMode, 'Editing offer ID:', editingOffer?.id);
 
-    // In edit mode, skip location validation since we already have the location strings
-    if (!isEditMode && (!fromLocation || !toLocation)) {
-      showAlert('Error', 'Please select valid locations from the map', 'error');
+    let resolvedFromLocation = fromLocation;
+    let resolvedToLocation = toLocation;
+
+    if (!isEditMode && !resolvedFromLocation) {
+      const geocodedFrom = await geocodeAddress(from);
+      if (geocodedFrom) {
+        resolvedFromLocation = {
+          latitude: geocodedFrom.latitude,
+          longitude: geocodedFrom.longitude,
+        };
+        setFrom(geocodedFrom.address || from.trim());
+        setFromLocation(resolvedFromLocation);
+      }
+    }
+
+    if (!isEditMode && !resolvedToLocation) {
+      const geocodedTo = await geocodeAddress(to);
+      if (geocodedTo) {
+        resolvedToLocation = {
+          latitude: geocodedTo.latitude,
+          longitude: geocodedTo.longitude,
+        };
+        setTo(geocodedTo.address || to.trim());
+        setToLocation(resolvedToLocation);
+      }
+    }
+
+    if (!isEditMode && (!resolvedFromLocation || !resolvedToLocation)) {
+      showAlert('Error', 'Please enter a valid pickup and drop-off address, or select both on the map.', 'error');
       return;
     }
 
@@ -638,10 +664,10 @@ export default function DriverRideOfferModal({
                 showProfilePhoto: false,
               },
         departureTime: departureTime.toISOString(),
-        pickupLatitude: fromLocation?.latitude,
-        pickupLongitude: fromLocation?.longitude,
-        dropoffLatitude: toLocation?.latitude,
-        dropoffLongitude: toLocation?.longitude,
+        pickupLatitude: resolvedFromLocation?.latitude,
+        pickupLongitude: resolvedFromLocation?.longitude,
+        dropoffLatitude: resolvedToLocation?.latitude,
+        dropoffLongitude: resolvedToLocation?.longitude,
         festivalType,
         festivalConfig,
       };
@@ -731,20 +757,21 @@ export default function DriverRideOfferModal({
   };
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={handleClose}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={handleClose}
-        />
-        <View style={styles.modal}>
+    <>
+      <Modal
+        visible={visible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={handleClose}>
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity
+            style={styles.backdrop}
+            activeOpacity={1}
+            onPress={handleClose}
+          />
+          <View style={styles.modal}>
           <View style={styles.header}>
             <Text style={styles.title}>{isEditMode ? 'Edit Ride Offer' : 'Offer a Ride'}</Text>
             <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
@@ -769,35 +796,51 @@ export default function DriverRideOfferModal({
                   <View style={[styles.routeDot, styles.timeDot]} />
                 </View>
                 <View style={styles.routeInputs}>
-                  <TouchableOpacity
-                    style={styles.routeField}
-                    onPress={() => openLocationPicker('from')}
-                    activeOpacity={0.75}>
+                  <View style={styles.routeField}>
                     <View style={styles.routeFieldCopy}>
                       <Text style={styles.routeLabel}>Pickup</Text>
-                      <Text
-                        style={[styles.routeValue, !from && styles.routePlaceholder]}
-                        numberOfLines={1}>
-                        {from || 'Where will passengers board?'}
-                      </Text>
+                      <TextInput
+                        style={styles.routeInput}
+                        placeholder="Where will passengers board?"
+                        placeholderTextColor={Colors.dark.textSecondary}
+                        value={from}
+                        onChangeText={(value) => {
+                          setFrom(value);
+                          setFromLocation(null);
+                        }}
+                        returnKeyType="next"
+                      />
                     </View>
-                    <Navigation size={18} color={Colors.dark.gold} />
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.routeIconButton}
+                      onPress={() => openLocationPicker('from')}
+                      activeOpacity={0.75}>
+                      <Navigation size={18} color={Colors.dark.gold} />
+                    </TouchableOpacity>
+                  </View>
 
-                  <TouchableOpacity
-                    style={styles.routeField}
-                    onPress={() => openLocationPicker('to')}
-                    activeOpacity={0.75}>
+                  <View style={styles.routeField}>
                     <View style={styles.routeFieldCopy}>
                       <Text style={styles.routeLabel}>Drop-off</Text>
-                      <Text
-                        style={[styles.routeValue, !to && styles.routePlaceholder]}
-                        numberOfLines={1}>
-                        {to || 'Where are you going?'}
-                      </Text>
+                      <TextInput
+                        style={styles.routeInput}
+                        placeholder="Where are you going?"
+                        placeholderTextColor={Colors.dark.textSecondary}
+                        value={to}
+                        onChangeText={(value) => {
+                          setTo(value);
+                          setToLocation(null);
+                        }}
+                        returnKeyType="done"
+                      />
                     </View>
-                    <MapPin size={18} color={Colors.dark.pink} />
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.routeIconButton}
+                      onPress={() => openLocationPicker('to')}
+                      activeOpacity={0.75}>
+                      <MapPin size={18} color={Colors.dark.pink} />
+                    </TouchableOpacity>
+                  </View>
 
                   <View style={[styles.routeField, styles.routeFieldLast]}>
                     <View style={styles.routeFieldCopy}>
@@ -865,7 +908,7 @@ export default function DriverRideOfferModal({
             {(!fromLocation || !toLocation) && from && to && (
               <View style={styles.routeSummarySection}>
                 <Text style={styles.locationHint}>
-                  📍 Please select locations from the map to calculate route
+                  Route will be calculated after typed addresses resolve, or you can choose exact points on the map.
                 </Text>
               </View>
             )}
@@ -1205,8 +1248,9 @@ export default function DriverRideOfferModal({
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <CustomAlert
         visible={alertVisible}
@@ -1230,7 +1274,7 @@ export default function DriverRideOfferModal({
             : undefined
         }
       />
-    </Modal>
+    </>
   );
 }
 
@@ -1251,6 +1295,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.background,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
     maxHeight: '90%',
     paddingBottom: 20,
   },
@@ -1375,6 +1422,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
+  },
+  routeInput: {
+    color: Colors.dark.text,
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 3,
+    minHeight: 24,
+    padding: 0,
+  },
+  routeIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.dark.background,
   },
   routeValue: {
     color: Colors.dark.text,

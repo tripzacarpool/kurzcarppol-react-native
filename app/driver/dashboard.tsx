@@ -12,6 +12,7 @@ import {
   Linking,
   Alert,
   TextInput,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -137,6 +138,11 @@ function formatVerificationStatusLabel(status: DriverVerificationStatus) {
 
 export default function DriverDashboard() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isCompact = width < 430;
+  const isWide = width >= 900;
+  const bottomNavWidth = isWide ? Math.min(width - 40, 960) : undefined;
+  const bottomNavLeft = isWide && bottomNavWidth ? (width - bottomNavWidth) / 2 : undefined;
   const { user, signOut } = useAuthContext();
   const [isLive, setIsLive] = useState(false);
   const [liveStateReady, setLiveStateReady] = useState(false);
@@ -553,6 +559,17 @@ export default function DriverDashboard() {
       let isMounted = true;
 
       const loadVerificationState = async () => {
+        if (
+          user?.driverVerified ||
+          user?.verificationStatus === 'auto_approved' ||
+          user?.ridePartnerProfile?.status === 'approved'
+        ) {
+          if (!isMounted) return;
+          setVerificationStatus('auto_approved');
+          setVerificationScore(null);
+          return;
+        }
+
         if (!verificationKey) {
           if (!isMounted) return;
           setVerificationStatus('pending');
@@ -588,7 +605,12 @@ export default function DriverDashboard() {
       return () => {
         isMounted = false;
       };
-    }, [verificationKey]),
+    }, [
+      user?.driverVerified,
+      user?.verificationStatus,
+      user?.ridePartnerProfile?.status,
+      verificationKey,
+    ]),
   );
 
   useEffect(() => {
@@ -655,14 +677,15 @@ export default function DriverDashboard() {
       });
     }
     
+    if (myOffers.length > 0) {
+      fetchAllPendingApprovals();
+      fetchAutoAcceptedBookings();
+      fetchCurrentActiveRide();
+    }
+
     if (isLive) {
       // Initial fetch
       fetchLiveRides();
-      if (myOffers.length > 0) {
-        fetchAllPendingApprovals();
-        fetchAutoAcceptedBookings();
-        fetchCurrentActiveRide();
-      }
       
       // Poll for new requests every 60 seconds as fallback (socket is primary)
       const interval = setInterval(() => {
@@ -682,7 +705,6 @@ export default function DriverDashboard() {
       };
     } else {
       setLiveRides([]);
-      setPendingApprovals([]);
     }
   }, [isLive, user?.id, liveStateReady, myOffers.length]);
 
@@ -826,6 +848,13 @@ export default function DriverDashboard() {
   // Poll for pending approvals when a ride is active (for active ride only)
   useEffect(() => {
     if (!activeRideId || !user?.id) return;
+    const isDriverOfferRide =
+      myOffers.some((offer: any) => (offer._id || offer.id) === activeRideId) ||
+      ((currentActiveRide?._id || currentActiveRide?.id) === activeRideId);
+
+    if (!isDriverOfferRide) {
+      return;
+    }
 
     try {
       // Initial load
@@ -840,7 +869,7 @@ export default function DriverDashboard() {
     } catch (error) {
       console.error('Error setting up approval polling:', error);
     }
-  }, [activeRideId, user?.id]);
+  }, [activeRideId, currentActiveRide, myOffers, user?.id]);
 
   // Fetch approvals when Live tab is selected (for immediate visibility)
   useEffect(() => {
@@ -949,6 +978,7 @@ export default function DriverDashboard() {
       }
 
       const acceptedRide = liveRides.find((r) => r.id === rideId) || null;
+      setActiveRideId(rideId);
       setActiveRideDetails(acceptedRide);
       setDriverPickupConfirmed(false);
       
@@ -986,14 +1016,19 @@ export default function DriverDashboard() {
   };
 
   const handleDriverPickupConfirm = async () => {
-    if (!activeRideId) {
+    const rideId =
+      activeRideId ||
+      activeRideDetails?.id ||
+      (activeRideDetails as any)?._id;
+    if (!rideId) {
       showAlert('No Active Ride', 'Accept a ride before marking pickup.', 'warning');
       return;
     }
 
     try {
       setPickupConfirming(true);
-      await driverConfirmPickup(activeRideId);
+      setActiveRideId(rideId);
+      await driverConfirmPickup(rideId);
       setDriverPickupConfirmed(true);
       showAlert('Passenger Notified', 'Passenger alerted to confirm onboarding.', 'success');
     } catch (error) {
@@ -1542,39 +1577,41 @@ export default function DriverDashboard() {
             </View>
           )}
 
-          <View style={styles.offerCardActions}>
-            <TouchableOpacity
-              style={styles.editButton}
-              onPress={() => {
-                console.log('Editing offer with ID:', offer.id, 'Type:', typeof offer.id);
+          {!isCompleted && !isExpired && !isCancelled && (
+            <View style={styles.offerCardActions}>
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => {
+                  console.log('Editing offer with ID:', offer.id, 'Type:', typeof offer.id);
 
-                const isValidMongoId = (id: string) => {
-                  return id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id) && !id.startsWith('local-');
-                };
+                  const isValidMongoId = (id: string) => {
+                    return id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id) && !id.startsWith('local-');
+                  };
 
-                if (!isValidMongoId(offer.id)) {
-                  showAlert('Cannot Edit', 'This ride offer cannot be edited. Please create a new one instead.', 'warning');
-                  return;
-                }
+                  if (!isValidMongoId(offer.id)) {
+                    showAlert('Cannot Edit', 'This ride offer cannot be edited. Please create a new one instead.', 'warning');
+                    return;
+                  }
 
-                setEditingOffer(offer);
-                setRideOfferModalVisible(true);
-              }}
-              activeOpacity={0.7}>
-              <Text style={styles.editButtonText}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => handleCancelOffer(offer.id)}
-              disabled={cancellingOfferId === offer.id}
-              activeOpacity={0.7}>
-              {cancellingOfferId === offer.id ? (
-                <ActivityIndicator size="small" color={Colors.dark.error} />
-              ) : (
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              )}
-            </TouchableOpacity>
-          </View>
+                  setEditingOffer(offer);
+                  setRideOfferModalVisible(true);
+                }}
+                activeOpacity={0.7}>
+                <Text style={styles.editButtonText}>Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => handleCancelOffer(offer.id)}
+                disabled={cancellingOfferId === offer.id}
+                activeOpacity={0.7}>
+                {cancellingOfferId === offer.id ? (
+                  <ActivityIndicator size="small" color={Colors.dark.error} />
+                ) : (
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       );
     };
@@ -1745,11 +1782,15 @@ export default function DriverDashboard() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topSpacer} />
-      <View style={styles.header}>
+      <View style={[styles.header, isCompact && styles.headerCompact]}>
         <View style={styles.headerLeft}>
           <View style={styles.userInfo}>
             <View style={styles.welcomeRow}>
-              <Text style={styles.headerTitle}>
+              <Text
+                style={[styles.headerTitle, isCompact && styles.headerTitleCompact]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.82}>
                 Welcome, {user?.firstName || 'Driver'}
               </Text>
               <VerificationBadge
@@ -1762,12 +1803,13 @@ export default function DriverDashboard() {
             <Text style={styles.headerSubtitle}>Ready to earn?</Text>
           </View>
         </View>
-        <View style={styles.headerActions}>
+        <View style={[styles.headerActions, isCompact && styles.headerActionsCompact]}>
           <TouchableOpacity
             onPress={handleDriverNotificationsPress}
             style={[
               styles.notificationBellButton,
               driverNotificationCount === 0 && styles.notificationBellButtonIdle,
+              isCompact && styles.headerActionButtonCompact,
             ]}
             activeOpacity={0.75}>
             <Bell
@@ -1784,19 +1826,23 @@ export default function DriverDashboard() {
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setDebugModalVisible(true)}
-            style={[styles.createRideButton, { backgroundColor: Colors.dark.gold }]}
+            style={[
+              styles.createRideButton,
+              { backgroundColor: Colors.dark.gold },
+              isCompact && styles.headerActionButtonCompact,
+            ]}
             activeOpacity={0.7}>
-            <Text style={[styles.debugButtonText, { color: Colors.dark.background }]}>🔔</Text>
+            <RefreshCw size={18} color={Colors.dark.background} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setRideOfferModalVisible(true)}
-            style={styles.createRideButton}
+            style={[styles.createRideButton, isCompact && styles.headerActionButtonCompact]}
             activeOpacity={0.7}>
             <Plus size={20} color={Colors.dark.background} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={handleLogout}
-            style={styles.logoutButton}
+            style={[styles.logoutButton, isCompact && styles.headerActionButtonCompact]}
             activeOpacity={0.7}>
             <LogOut size={20} color={Colors.dark.error} />
           </TouchableOpacity>
@@ -1806,7 +1852,11 @@ export default function DriverDashboard() {
       <ScrollView
         ref={scrollViewRef}
         style={styles.content}
-        contentContainerStyle={{ paddingBottom: 160 }}
+        contentContainerStyle={[
+          styles.contentContainer,
+          isWide && styles.webContentContainer,
+          isCompact && styles.contentContainerCompact,
+        ]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -1990,6 +2040,14 @@ export default function DriverDashboard() {
                   </View>
                 </View>
 
+                <View style={styles.driverSosContainer}>
+                  <SOSButton
+                    rideId={currentActiveRide._id || currentActiveRide.id}
+                    onSOSActivated={activateSOS}
+                    driverName="Emergency Services"
+                  />
+                </View>
+
                 {/* Passenger List - Only show passengers waiting for pickup */}
                 <View style={styles.passengerListContainer}>
                   <Text style={styles.passengerListTitle}>Waiting for Pickup:</Text>
@@ -2116,21 +2174,13 @@ export default function DriverDashboard() {
                   📍 Passengers waiting for pickup are shown above. Once they board and confirm, they'll be removed from this list.
                 </Text>
 
-                {/* SOS Safety Button for Driver */}
-                <View style={styles.driverSosContainer}>
-                  <SOSButton
-                    rideId={currentActiveRide._id || currentActiveRide.id}
-                    onSOSActivated={activateSOS}
-                    driverName="Emergency Services"
-                  />
-                </View>
               </View>
             )}
 
-            {isLive && (liveRides.length > 0 || pendingApprovals.length > 0) && (
+            {(liveRides.length > 0 || pendingApprovals.length > 0 || autoAcceptedBookings.length > 0) && (
               <View style={styles.requestsSection}>
                 {/* LIVE RIDES SECTION */}
-                {liveRides.length > 0 && (
+                {isLive && liveRides.length > 0 && (
                   <>
                     <View style={styles.requestsHeader}>
                       <View style={styles.liveIndicator}>
@@ -2560,23 +2610,39 @@ export default function DriverDashboard() {
         }}
       />
 
-      <View style={styles.bottomNav}>
+      <View
+        style={[
+          styles.bottomNav,
+          isWide && styles.bottomNavWide,
+          isWide && { width: bottomNavWidth, left: bottomNavLeft, right: undefined },
+          isCompact && styles.bottomNavCompact,
+        ]}>
         <TouchableOpacity
-          style={[styles.bottomNavItem, selectedTab === 'live' && styles.bottomNavItemActive]}
+          style={[
+            styles.bottomNavItem,
+            isWide && styles.bottomNavItemWide,
+            isCompact && styles.bottomNavItemCompact,
+            selectedTab === 'live' && styles.bottomNavItemActive,
+          ]}
           onPress={() => setSelectedTab('live')}
           activeOpacity={0.85}>
           <LayoutDashboard size={18} color={selectedTab === 'live' ? Colors.dark.background : Colors.dark.text} />
           <Text style={[styles.bottomNavText, selectedTab === 'live' && styles.bottomNavTextActive]}>Live</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.bottomNavItem, selectedTab === 'offers' && styles.bottomNavItemActive]}
+          style={[
+            styles.bottomNavItem,
+            isWide && styles.bottomNavItemWide,
+            isCompact && styles.bottomNavItemCompact,
+            selectedTab === 'offers' && styles.bottomNavItemActive,
+          ]}
           onPress={() => setSelectedTab('offers')}
           activeOpacity={0.85}>
           <List size={18} color={selectedTab === 'offers' ? Colors.dark.background : Colors.dark.text} />
           <Text style={[styles.bottomNavText, selectedTab === 'offers' && styles.bottomNavTextActive]}>My rides</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.bottomNavCreate}
+          style={[styles.bottomNavCreate, isWide && styles.bottomNavCreateWide, isCompact && styles.bottomNavCreateCompact]}
           onPress={() => {
             setRideOfferModalVisible(true);
           }}
@@ -2585,7 +2651,12 @@ export default function DriverDashboard() {
           <Text style={styles.bottomNavCreateText}>Offer</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.bottomNavItem, selectedTab === 'messages' && styles.bottomNavItemActive]}
+          style={[
+            styles.bottomNavItem,
+            isWide && styles.bottomNavItemWide,
+            isCompact && styles.bottomNavItemCompact,
+            selectedTab === 'messages' && styles.bottomNavItemActive,
+          ]}
           onPress={() => setSelectedTab('messages')}
           activeOpacity={0.85}>
           <View>
@@ -2599,7 +2670,12 @@ export default function DriverDashboard() {
           <Text style={[styles.bottomNavText, selectedTab === 'messages' && styles.bottomNavTextActive]}>Messages</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.bottomNavItem, selectedTab === 'insights' && styles.bottomNavItemActive]}
+          style={[
+            styles.bottomNavItem,
+            isWide && styles.bottomNavItemWide,
+            isCompact && styles.bottomNavItemCompact,
+            selectedTab === 'insights' && styles.bottomNavItemActive,
+          ]}
           onPress={() => setSelectedTab('insights')}
           activeOpacity={0.85}>
           <BarChart3 size={18} color={selectedTab === 'insights' ? Colors.dark.background : Colors.dark.text} />
@@ -2698,8 +2774,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
   },
+  headerCompact: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+  },
   headerLeft: {
     flex: 1,
+    minWidth: 0,
   },
   userInfo: {
     flex: 1,
@@ -2714,6 +2796,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.dark.text,
   },
+  headerTitleCompact: {
+    fontSize: 18,
+    lineHeight: 23,
+  },
   headerSubtitle: {
     fontSize: 14,
     color: Colors.dark.textSecondary,
@@ -2722,6 +2808,10 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     gap: 12,
+    flexShrink: 0,
+  },
+  headerActionsCompact: {
+    gap: 7,
   },
   createRideButton: {
     width: 44,
@@ -2730,6 +2820,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.gold,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  headerActionButtonCompact: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    marginLeft: 0,
   },
   logoutButton: {
     width: 44,
@@ -2742,7 +2838,19 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  contentContainer: {
     padding: 20,
+    paddingBottom: 160,
+  },
+  contentContainerCompact: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+  webContentContainer: {
+    width: '100%',
+    maxWidth: 1200,
+    alignSelf: 'center',
   },
   verificationCard: {
     backgroundColor: Colors.dark.card,
@@ -2940,6 +3048,8 @@ const styles = StyleSheet.create({
   seatsInfoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 8,
     marginBottom: 12,
   },
@@ -2962,6 +3072,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
     paddingVertical: 8,
     paddingHorizontal: 10,
     backgroundColor: Colors.dark.card,
@@ -2971,6 +3083,7 @@ const styles = StyleSheet.create({
   },
   passengerInfo: {
     flex: 1,
+    minWidth: 160,
     gap: 4,
   },
   passengerItemName: {
@@ -3003,7 +3116,9 @@ const styles = StyleSheet.create({
   pickupButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
+    minWidth: 96,
     paddingHorizontal: 12,
     paddingVertical: 8,
     backgroundColor: Colors.dark.gold + '20',
@@ -3188,6 +3303,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 12,
     marginBottom: 14,
   },
@@ -3201,6 +3317,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderWidth: 1,
     borderColor: Colors.dark.border,
+    flexShrink: 1,
   },
   offerStatusDot: {
     width: 7,
@@ -3225,6 +3342,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderWidth: 1,
     borderColor: Colors.dark.gold + '40',
+    flexShrink: 0,
   },
   offerFareAmount: {
     color: Colors.dark.gold,
@@ -3271,6 +3389,7 @@ const styles = StyleSheet.create({
   },
   offerRouteCopy: {
     flex: 1,
+    minWidth: 0,
     gap: 12,
     marginLeft: 8,
   },
@@ -3288,6 +3407,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     marginTop: 2,
+    lineHeight: 20,
   },
   offerMetaRow: {
     flexDirection: 'row',
@@ -3379,6 +3499,7 @@ const styles = StyleSheet.create({
   },
   offerCardActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
   requestCard: {
@@ -3393,12 +3514,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 12,
   },
   passengerName: {
     fontSize: 16,
     fontWeight: '700',
     color: Colors.dark.text,
+    flex: 1,
+    minWidth: 0,
   },
   requestFare: {
     fontSize: 20,
@@ -3410,13 +3535,16 @@ const styles = StyleSheet.create({
   },
   routeRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   routeText: {
     color: Colors.dark.text,
     fontSize: 14,
     marginLeft: 8,
     fontWeight: '500',
+    flex: 1,
+    minWidth: 0,
+    lineHeight: 20,
   },
   routeLine: {
     width: 2,
@@ -3431,11 +3559,15 @@ const styles = StyleSheet.create({
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 1,
+    minWidth: 0,
+    marginBottom: 6,
   },
   detailText: {
     color: Colors.dark.textSecondary,
     fontSize: 13,
     marginLeft: 6,
+    flexShrink: 1,
   },
   customRequestBox: {
     backgroundColor: Colors.dark.backgroundSecondary,
@@ -3465,6 +3597,7 @@ const styles = StyleSheet.create({
   },
   requestActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   },
   rejectButton: {
@@ -3662,6 +3795,7 @@ const styles = StyleSheet.create({
   },
   editButton: {
     flex: 1,
+    minWidth: 120,
     backgroundColor: Colors.dark.gold + '20',
     borderRadius: 8,
     paddingVertical: 8,
@@ -3684,6 +3818,7 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
+    minWidth: 120,
     backgroundColor: Colors.dark.error + '15',
     borderRadius: 8,
     paddingVertical: 8,
@@ -3804,6 +3939,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     gap: 10,
   },
+  bottomNavWide: {
+    left: 20,
+    right: 20,
+    bottom: 12,
+    alignSelf: 'center',
+    maxWidth: 960,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 18,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.dark.background + 'f2',
+  },
+  bottomNavCompact: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    gap: 6,
+  },
   bottomNavItem: {
     flex: 1,
     alignItems: 'center',
@@ -3813,6 +3966,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.dark.border,
     gap: 6,
+  },
+  bottomNavItemWide: {
+    minHeight: 52,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  bottomNavItemCompact: {
+    paddingVertical: 8,
+    borderRadius: 12,
+    gap: 4,
   },
   bottomNavItemActive: {
     backgroundColor: Colors.dark.gold,
@@ -3834,6 +3997,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 14,
     backgroundColor: Colors.dark.gold,
+  },
+  bottomNavCreateWide: {
+    minHeight: 52,
+    paddingHorizontal: 18,
+    justifyContent: 'center',
+  },
+  bottomNavCreateCompact: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 10,
   },
   bottomNavCreateText: {
     color: Colors.dark.background,

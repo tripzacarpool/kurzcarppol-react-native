@@ -3,6 +3,7 @@ import {
   Alert,
   Dimensions,
   Linking,
+  Platform,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -112,9 +113,59 @@ export default function RideTrackingMap({
   }, [rideId, dropoffLocation.latitude, dropoffLocation.longitude]);
 
   const handleOpenSOS = async () => {
+    const openEmergencySms = async (response: any) => {
+      const alertData = response?.data || response?.sosAlert || response;
+      const emergencyContacts = Array.isArray(alertData?.emergencyContacts)
+        ? alertData.emergencyContacts
+        : [];
+      const phones = [
+        ...new Set(
+          emergencyContacts
+            .map((contact: any) => contact?.phone)
+            .filter(Boolean),
+        ),
+      ];
+      const location = driverLocation
+        ? ` Location: https://maps.google.com/?q=${driverLocation.latitude},${driverLocation.longitude}`
+        : '';
+      const body = `SOS ALERT: I need help during my Tripza ride. Ride ID: ${rideId}.${location}`;
+
+      if (phones.length === 0) {
+        Alert.alert(
+          'No emergency contacts',
+          'SOS was sent to Tripza support and ride participants. Add emergency contacts in your safety settings for direct SMS alerts.',
+          [
+            { text: 'OK' },
+            {
+              text: 'Call 112',
+              style: 'destructive',
+              onPress: () => Linking.openURL('tel:112'),
+            },
+          ],
+        );
+        return;
+      }
+
+      const separator = Platform.OS === 'ios' ? ',' : ';';
+      const smsUrl = `sms:${phones.join(separator)}?body=${encodeURIComponent(body)}`;
+      try {
+        if (await Linking.canOpenURL(smsUrl)) {
+          await Linking.openURL(smsUrl);
+          return;
+        }
+      } catch (error) {
+        console.warn('Unable to open SMS composer:', error);
+      }
+
+      Alert.alert(
+        'Emergency SMS ready',
+        `Please message these emergency contacts now:\n${phones.join(', ')}`,
+      );
+    };
+
     Alert.alert(
       'Activate SOS Alert?',
-      `This will immediately alert ${driverName} and nearby emergency contacts that you need help.`,
+      `This will immediately alert ${driverName}, Tripza support, and saved emergency contacts.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -122,8 +173,26 @@ export default function RideTrackingMap({
           style: 'destructive',
           onPress: async () => {
             try {
-              await activateSOS(rideId);
-              Alert.alert('SOS Activated', 'Emergency alert has been sent.');
+              const response = await activateSOS(rideId);
+              Alert.alert(
+                'SOS Activated',
+                'Emergency alert has been sent. You can also message your saved emergency contacts now.',
+                [
+                  {
+                    text: 'Send SMS',
+                    onPress: () => {
+                      openEmergencySms(response).catch((error) => {
+                        console.warn('Emergency SMS failed:', error);
+                      });
+                    },
+                  },
+                  {
+                    text: 'Call 112',
+                    style: 'destructive',
+                    onPress: () => Linking.openURL('tel:112'),
+                  },
+                ],
+              );
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to activate SOS.');
             }

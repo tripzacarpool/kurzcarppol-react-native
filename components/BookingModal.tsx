@@ -8,7 +8,6 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { X, Check, MapPin, MessageSquare, Armchair, Navigation, CheckCircle2, ArrowLeft, Wallet as WalletIcon, CreditCard, ShieldCheck, UserCheck, Clock, AlertCircle, Star } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
@@ -36,7 +35,9 @@ import {
   setAuthToken,
   bookRideOffer,
   confirmBookingPayment,
+  getBookingApprovalStatus,
   joinRideRequest,
+  cancelPendingApproval,
 } from '@/lib/api';
 
 interface BookingModalProps {
@@ -126,6 +127,26 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     setAlertVisible(true);
   };
 
+  const handleBookingApproved = useCallback((message = 'Driver approved your request. Please confirm when you board.') => {
+    setApprovalStatus('approved');
+    setApprovalCountdown(0);
+    setBookingConfirmed(true);
+    showAlert('Approved!', message, 'success');
+    setTimeout(() => {
+      setStep('boarding');
+    }, 1500);
+  }, []);
+
+  const handleBookingRejected = useCallback((message = 'Driver rejected your booking request.') => {
+    setApprovalStatus('rejected');
+    setApprovalCountdown(0);
+    showAlert('Booking Rejected', message, 'error');
+    setTimeout(() => {
+      setStep('seats');
+      setCurrentBookingId(null);
+    }, 2000);
+  }, []);
+
   const hideAlert = () => {
     setAlertVisible(false);
     setTimeout(() => {
@@ -187,7 +208,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     const timer = setInterval(() => {
       setApprovalCountdown((prev) => {
         const newCount = prev - 1;
-        if (newCount <= 0) {
+        if (newCount <= 0 && approvalStatus === 'pending') {
           // Auto-expire after 5 minutes
           setApprovalStatus('expired');
           showAlert('Approval Expired', 'Driver did not respond in time. Your booking was cancelled.', 'warning');
@@ -201,7 +222,44 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [step, approvalCountdown]);
+  }, [step, approvalCountdown, approvalStatus]);
+
+  useEffect(() => {
+    if (step !== 'approval-waiting' || !currentBookingId) return;
+
+    let cancelled = false;
+    const pollApprovalStatus = async () => {
+      try {
+        const token = await getAuthToken();
+        if (token) {
+          setAuthToken(token);
+        }
+
+        const response = await getBookingApprovalStatus(currentBookingId);
+        if (cancelled || !response?.booking) return;
+
+        const status = response.booking.approvalStatus;
+        if (['confirmed', 'approved', 'auto_accepted'].includes(status)) {
+          handleBookingApproved('Driver approved your request. Please confirm when you board.');
+        } else if (['rejected', 'cancelled', 'expired'].includes(status)) {
+          handleBookingRejected(
+            status === 'rejected'
+              ? response.booking.rejectionReason || 'Driver rejected your booking request.'
+              : 'This booking request is no longer active.',
+          );
+        }
+      } catch (error) {
+        console.warn('Could not poll booking approval status:', error);
+      }
+    };
+
+    pollApprovalStatus();
+    const interval = setInterval(pollApprovalStatus, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [step, currentBookingId, getAuthToken, handleBookingApproved, handleBookingRejected]);
 
   // Socket listener for booking approval/rejection
   useEffect(() => {
@@ -219,26 +277,14 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     const handleApproval = (data: any) => {
       if (data.bookingId === currentBookingId) {
         console.log('✅ Booking approved by driver:', data.bookingId);
-        setApprovalStatus('approved');
-        setApprovalCountdown(0);
-        setBookingConfirmed(true); // Booking is confirmed after driver approval
-        showAlert('Approved!', 'Driver approved your request. Please confirm when you board.', 'success');
-        setTimeout(() => {
-          setStep('boarding'); // Go to boarding, payment comes after ride completion
-        }, 1500);
+        handleBookingApproved();
       }
     };
 
     const handleRejection = (data: any) => {
       if (data.bookingId === currentBookingId) {
         console.log('❌ Booking rejected by driver:', data.bookingId);
-        setApprovalStatus('rejected');
-        setApprovalCountdown(0);
-        showAlert('Booking Rejected', data.reason || 'Driver rejected your booking request.', 'error');
-        setTimeout(() => {
-          setStep('seats');
-          setCurrentBookingId(null);
-        }, 2000);
+        handleBookingRejected(data.reason || 'Driver rejected your booking request.');
       }
     };
 
@@ -252,7 +298,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       socket.off(rejectionEventName, handleRejection);
       console.log('❌ Stopped listening for booking events');
     };
-  }, [step, currentBookingId, user?.id]);
+  }, [step, currentBookingId, user?.id, handleBookingApproved, handleBookingRejected]);
 
   const loadWalletBalance = async () => {
     if (!user?.id) return;
@@ -264,15 +310,34 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     }
   };
 
-  const handleBack = useCallback(() => {
+  const handleBack = useCallback(async () => {
     // Cancel booking if going back from approval-waiting
     if (step === 'approval-waiting' && currentBookingId) {
-      console.log('🔙 Cancelling booking request:', currentBookingId);
+      console.log('Cancelling booking request:', currentBookingId);
+      try {
+        const token = await getAuthToken();
+        if (token) {
+          setAuthToken(token);
+        }
+        await cancelPendingApproval(currentBookingId);
+        showAlert(
+          'Request Cancelled',
+          'Your booking request was cancelled and the selected seats were released.',
+          'success',
+        );
+      } catch (error: any) {
+        console.error('Error cancelling pending approval:', error);
+        showAlert(
+          'Cancellation Failed',
+          error.response?.data?.message ||
+            error.response?.data?.error ||
+            'Could not cancel the request on the server. Refresh before booking those seats again.',
+          'error',
+        );
+      }
       setCurrentBookingId(null);
       setApprovalStatus('pending');
       setApprovalCountdown(300);
-      // TODO: Call backend API to mark booking as cancelled
-      // await cancelBooking(currentBookingId);
     }
 
     switch (step) {
@@ -297,7 +362,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       default:
         onClose();
     }
-  }, [step, onClose, currentBookingId]);
+  }, [step, onClose, currentBookingId, getAuthToken, showAlert]);
 
   const handleClose = useCallback(() => {
     setStep('confirm');
@@ -988,7 +1053,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   }, [selectedSeats, handleSeatSelect, ride?.availableSeats]);
 
   const renderStep = useMemo(() => {
-    return () => {
+    const BookingModalStepContent = () => {
       if (!ride) return null;
       
       switch (step) {
@@ -1171,10 +1236,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             
             {ride.driver && (
               <View style={styles.driverCard}>
-                <Image
-                  source={{ uri: 'https://via.placeholder.com/60' }}
-                  style={styles.driverImage}
-                />
+                <View style={styles.driverAvatar}>
+                  <Text style={styles.driverAvatarText}>
+                    {(ride.driver.name || 'D').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
                 <View style={styles.driverInfo}>
                   <Text style={styles.driverName}>{ride.driver.name}</Text>
                   <View style={styles.ratingRow}>
@@ -1532,8 +1598,12 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             </TouchableOpacity>
           </View>
         );
-    }
-  };
+      default:
+        return null;
+      }
+    };
+
+    return BookingModalStepContent;
   }, [step, selectedSeats, customRequest, customFare, paymentMethod, walletBalance, processingPayment, pickupConfirmed, ride?.id, ride?.from, ride?.to, ride?.driver?.name, ride?.farePerSeat, ride?.availableSeats, ride?.driverMode, user?.id, handlePayment, handleRazorpaySuccess, handleRazorpayFailure, handleBack, handleClose, handlePickupConfirmation, handleDropConfirmation, handleSeatSelect, renderSeatLayout]);
 
   // Early return after all hooks
@@ -1666,6 +1736,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
     backgroundColor: Colors.dark.backgroundSecondary,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
@@ -1733,6 +1806,7 @@ const styles = StyleSheet.create({
   },
   stepContent: {
     alignItems: 'center',
+    width: '100%',
     minHeight: '100%',
     justifyContent: 'flex-start',
   },
@@ -1771,12 +1845,16 @@ const styles = StyleSheet.create({
   routeRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    width: '100%',
   },
   routeText: {
     color: Colors.dark.text,
     fontSize: 15,
     marginLeft: 10,
     fontWeight: '500',
+    flex: 1,
+    minWidth: 0,
+    lineHeight: 21,
   },
   routeLine: {
     width: 2,
@@ -1828,6 +1906,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
@@ -1848,10 +1927,16 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.dark.text,
     fontWeight: '600',
+    flexShrink: 1,
+    textAlign: 'right',
   },
   infoValueRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+    flex: 1,
+    minWidth: 0,
+    flexWrap: 'wrap',
     gap: 8,
   },
   compactModeBadge: {
@@ -2106,6 +2191,7 @@ const styles = StyleSheet.create({
   seatLegend: {
     flexDirection: 'row',
     justifyContent: 'center',
+    flexWrap: 'wrap',
     gap: 16,
     marginBottom: 20,
   },
@@ -2285,9 +2371,12 @@ const styles = StyleSheet.create({
   primaryButton: {
     width: '100%',
     backgroundColor: Colors.dark.gold,
-    paddingVertical: 16,
+    minHeight: 52,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
   },
   primaryButtonDisabled: {
@@ -2300,6 +2389,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.background,
     fontSize: 16,
     fontWeight: '700',
+    textAlign: 'center',
   },
   secondaryButton: {
     width: '100%',
@@ -2307,7 +2397,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.dark.backgroundSecondary,
-    paddingVertical: 14,
+    minHeight: 50,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
     borderRadius: 12,
     marginTop: 12,
     borderWidth: 1,
@@ -2318,6 +2410,8 @@ const styles = StyleSheet.create({
     color: Colors.dark.gold,
     fontSize: 16,
     fontWeight: '600',
+    textAlign: 'center',
+    flexShrink: 1,
   },
   walletBalanceCard: {
     width: '100%',
@@ -2351,6 +2445,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
     backgroundColor: Colors.dark.card,
     padding: 16,
     borderRadius: 12,
@@ -2369,9 +2464,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     flex: 1,
+    minWidth: 0,
   },
   paymentOptionText: {
     flex: 1,
+    minWidth: 0,
   },
   paymentOptionTitle: {
     fontSize: 15,
@@ -2398,11 +2495,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.dark.border,
   },
-  driverImage: {
+  driverAvatar: {
     width: 60,
     height: 60,
     borderRadius: 30,
     marginRight: 16,
+    backgroundColor: Colors.dark.gold + '20',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '55',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  driverAvatarText: {
+    color: Colors.dark.gold,
+    fontSize: 24,
+    fontWeight: '800',
   },
   driverInfo: {
     flex: 1,

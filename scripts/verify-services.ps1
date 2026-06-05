@@ -101,11 +101,35 @@ if ($fare.per_participant_estimate -ne 200) {
   throw "Matching fare split returned an unexpected estimate: $($fare | ConvertTo-Json -Depth 10)"
 }
 
-$kafkaHealthJson = Push-Location (Join-Path $Root 'backend'); try {
-  npm run --silent kafka:health
-} finally {
-  Pop-Location
+$kafkaOut = Join-Path $env:TEMP "tripza-kafka-health-$PID.out"
+$kafkaErr = Join-Path $env:TEMP "tripza-kafka-health-$PID.err"
+$kafkaProcess = Start-Process `
+  -FilePath 'npm.cmd' `
+  -ArgumentList @('run', '--silent', 'kafka:health') `
+  -WorkingDirectory (Join-Path $Root 'backend') `
+  -RedirectStandardOutput $kafkaOut `
+  -RedirectStandardError $kafkaErr `
+  -WindowStyle Hidden `
+  -PassThru
+$kafkaProcess.WaitForExit()
+
+$kafkaHealthOutput = @()
+if (Test-Path $kafkaOut) {
+  $kafkaHealthOutput += Get-Content $kafkaOut
 }
+if (Test-Path $kafkaErr) {
+  $kafkaHealthOutput += Get-Content $kafkaErr
+}
+$kafkaHealthJson = @($kafkaHealthOutput) |
+  Where-Object { $_ -and $_.ToString().Trim().StartsWith('{') } |
+  Select-Object -Last 1
+
+Remove-Item $kafkaOut, $kafkaErr -Force -ErrorAction SilentlyContinue
+
+if (-not $kafkaHealthJson) {
+  throw "Kafka health did not return JSON: $($kafkaHealthOutput -join [Environment]::NewLine)"
+}
+
 $kafkaHealth = $kafkaHealthJson | ConvertFrom-Json
 if ($kafkaHealth.status -ne 'healthy') {
   throw "Kafka is not healthy: $kafkaHealthJson"

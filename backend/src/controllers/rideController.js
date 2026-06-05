@@ -491,6 +491,7 @@ export const activateSOS = async (req, res, next) => {
         sosActivated: true,
         adminNotified: true,
         driverNotified: !!context.driver,
+        emergencyContactsNotified: sosAlert.emergencyContacts?.length || 0,
       },
     });
   } catch (error) {

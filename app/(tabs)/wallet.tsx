@@ -1,18 +1,19 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator, Alert, Platform } from 'react-native';
 import { Wallet, Plus, ArrowUpRight, ArrowDownRight, CreditCard } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
-import { getWalletBalance, getWalletTransactions } from '@/lib/api';
+import { getWalletBalance, getWalletTransactions, setAuthToken, walletRecharge } from '@/lib/api';
 
 export default function WalletScreen() {
-  const { user } = useAuth();
+  const { user, getAuthToken } = useAuth();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [walletBalance, setWalletBalance] = useState(0);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [recharging, setRecharging] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -23,7 +24,8 @@ export default function WalletScreen() {
 
   const loadUserProfile = async () => {
     if (user) {
-      const profile = await getUserProfile(user.id);
+      const token = await getAuthToken();
+      const profile = await getUserProfile(user.id, token);
       setUserProfile(profile);
     }
   };
@@ -32,6 +34,10 @@ export default function WalletScreen() {
     if (user) {
       try {
         setLoading(true);
+        const token = await getAuthToken();
+        if (token) {
+          setAuthToken(token);
+        }
         const [balance, txns] = await Promise.all([
           getWalletBalance(user.id),
           getWalletTransactions(user.id),
@@ -50,6 +56,63 @@ export default function WalletScreen() {
     setRefreshing(true);
     await loadWalletData();
     setRefreshing(false);
+  };
+
+  const showMessage = (title: string, message: string) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.alert(`${title}\n\n${message}`);
+      return;
+    }
+    Alert.alert(title, message);
+  };
+
+  const rechargeWallet = async (amount: number) => {
+    if (!user?.id || recharging) return;
+
+    if (!Number.isFinite(amount) || amount < 10 || amount > 10000) {
+      showMessage('Invalid Amount', 'Enter an amount between Rs 10 and Rs 10,000.');
+      return;
+    }
+
+    try {
+      setRecharging(true);
+      const token = await getAuthToken();
+      if (token) {
+        setAuthToken(token);
+      }
+      const paymentId = `wallet_recharge_${user.id}_${Date.now()}`;
+      await walletRecharge(user.id, amount, paymentId, `wallet_order_${Date.now()}`);
+      await loadWalletData();
+      showMessage('Wallet Updated', `Rs ${amount.toFixed(2)} added to your wallet.`);
+    } catch (error: any) {
+      const message = error.response?.data?.error || error.message || 'Could not add money right now.';
+      showMessage('Recharge Failed', message);
+    } finally {
+      setRecharging(false);
+    }
+  };
+
+  const handleAddMoney = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const value = window.prompt('Enter amount to add', '500');
+      if (value === null) return;
+      rechargeWallet(Number(value));
+      return;
+    }
+
+    Alert.alert('Add Money', 'Choose an amount to add to your wallet.', [
+      { text: 'Rs 250', onPress: () => rechargeWallet(250) },
+      { text: 'Rs 500', onPress: () => rechargeWallet(500) },
+      { text: 'Rs 1000', onPress: () => rechargeWallet(1000) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const handleBankTransfer = () => {
+    showMessage(
+      'Bank Transfer',
+      'Bank withdrawals need payout verification. Add bank onboarding before enabling live withdrawals.',
+    );
   };
 
   const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
@@ -83,11 +146,19 @@ export default function WalletScreen() {
             {loading ? '...' : `₹${walletBalance.toFixed(2)}`}
           </Text>
           <View style={styles.actionButtons}>
-            <TouchableOpacity style={styles.addMoneyButton} activeOpacity={0.7}>
-              <Plus size={20} color={Colors.dark.background} />
-              <Text style={styles.addMoneyText}>Add Money</Text>
+            <TouchableOpacity
+              style={[styles.addMoneyButton, recharging && styles.disabledButton]}
+              onPress={handleAddMoney}
+              disabled={recharging}
+              activeOpacity={0.7}>
+              {recharging ? (
+                <ActivityIndicator size="small" color={Colors.dark.background} />
+              ) : (
+                <Plus size={20} color={Colors.dark.background} />
+              )}
+              <Text style={styles.addMoneyText}>{recharging ? 'Adding...' : 'Add Money'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.bankButton} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.bankButton} onPress={handleBankTransfer} activeOpacity={0.7}>
               <CreditCard size={20} color={Colors.dark.gold} />
               <Text style={styles.bankText}>To Bank</Text>
             </TouchableOpacity>
@@ -237,6 +308,9 @@ const styles = StyleSheet.create({
     color: Colors.dark.gold,
     fontSize: 15,
     fontWeight: '700',
+  },
+  disabledButton: {
+    opacity: 0.65,
   },
   transactionsSection: {
     marginBottom: 24,

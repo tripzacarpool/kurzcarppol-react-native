@@ -1,7 +1,7 @@
 import { Kafka } from 'kafkajs';
 import { env } from '../src/config/env.js';
 
-const timeoutMs = Number(process.env.KAFKA_HEALTH_TIMEOUT_MS || 8000);
+const timeoutMs = env.kafkaHealthTimeoutMs;
 
 if (env.kafkaBrokers.length === 0) {
   console.error(JSON.stringify({ status: 'not_configured' }));

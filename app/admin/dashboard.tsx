@@ -19,7 +19,7 @@ import {
   DollarSign,
   CheckCircle,
   XCircle,
-  Search,
+  RefreshCw,
   ShieldCheck,
   Eye,
   EyeOff,
@@ -177,7 +177,7 @@ export default function AdminDashboard() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Admin Dashboard</Text>
         <TouchableOpacity onPress={onRefresh} style={styles.iconButton}>
-          <Search size={20} color={Colors.dark.text} />
+          <RefreshCw size={20} color={Colors.dark.text} />
         </TouchableOpacity>
       </View>
 
@@ -481,8 +481,6 @@ const styles = StyleSheet.create({
   },
   sosPanel: {
     marginTop: 14,
-    maxHeight: 540,
-    overflow: 'hidden',
   },
   searchInput: {
     backgroundColor: Colors.dark.background,

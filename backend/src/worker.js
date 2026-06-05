@@ -78,7 +78,7 @@ const isDirectRun =
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-if (isDirectRun) {
+if (isDirectRun || env.isPm2Run) {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('unhandledRejection', (error) => {

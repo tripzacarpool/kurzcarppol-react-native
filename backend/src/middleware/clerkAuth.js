@@ -30,5 +30,7 @@ export const requireClerkAuth = (req, res, next) => {
     });
   }
 
+  req.clerkUserId = userId;
+
   return next();
 };

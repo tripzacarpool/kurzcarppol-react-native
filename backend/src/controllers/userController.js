@@ -9,6 +9,7 @@ import {
   updateUserIpById,
   updateUserLocationById,
   updateUserRoleByClerkId,
+  updateSafetySettingsForUser,
 } from '../services/userProfileService.js';
 import {
   registerPushTokenForUser,
@@ -39,9 +40,11 @@ const sendServiceError = (req, res, error, fallbackCode = 'USER_PROFILE_ERROR') 
   });
 };
 
+const getAuthenticatedClerkId = (req) => req.clerkUserId || req.auth?.userId;
+
 export const syncUser = async (req, res) => {
   try {
-    const result = await syncClerkUser(req.auth?.userId, req.body);
+    const result = await syncClerkUser(getAuthenticatedClerkId(req), req.body);
     return res.status(result.isNewUser ? 201 : 200).json({
       success: true,
       message: result.isNewUser
@@ -103,9 +106,25 @@ export const updateUserIP = async (req, res) => {
   }
 };
 
+export const updateSafetySettings = async (req, res) => {
+  try {
+    const user = await updateSafetySettingsForUser(
+      getAuthenticatedClerkId(req),
+      req.body,
+    );
+    return res.json({
+      success: true,
+      message: 'Safety settings updated successfully',
+      user,
+    });
+  } catch (error) {
+    return sendServiceError(req, res, error, 'SAFETY_SETTINGS_UPDATE_ERROR');
+  }
+};
+
 export const getProfile = async (req, res) => {
   try {
-    const user = await getCurrentUserProfile(req.auth?.userId);
+    const user = await getCurrentUserProfile(getAuthenticatedClerkId(req));
     return res.status(200).json(user);
   } catch (error) {
     return sendServiceError(req, res, error, 'PROFILE_FETCH_ERROR');
@@ -124,7 +143,7 @@ export const checkEmailExists = async (req, res) => {
 export const updatePushToken = async (req, res) => {
   try {
     const result = await registerPushTokenForUser({
-      clerkId: req.auth?.userId || req.body.clerkId,
+      clerkId: getAuthenticatedClerkId(req) || req.body.clerkId,
       pushToken: req.body.pushToken,
     });
 
@@ -156,7 +175,7 @@ export const testPushNotification = async (req, res) => {
 export const updateDriverVerification = async (req, res) => {
   try {
     const result = await updateDriverVerificationForUser(
-      req.auth?.userId,
+      getAuthenticatedClerkId(req),
       req.body,
     );
 

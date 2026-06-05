@@ -76,6 +76,16 @@ export async function bookRideOfferSeats({
     });
   }
 
+  if (
+    rideOffer.clerkId === passengerClerkId ||
+    rideOffer.driverId === passengerClerkId
+  ) {
+    throw new RideOfferLifecycleError('Drivers cannot book their own ride', {
+      status: 403,
+      code: 'DRIVER_CANNOT_BOOK_OWN_RIDE',
+    });
+  }
+
   const unavailableSeats = seatNumbers.filter(
     (seat) => !rideOffer.availableSeats.includes(seat),
   );
@@ -574,7 +584,8 @@ export async function confirmRideOfferPassengerPickup({
     });
   }
 
-  if (booking.passengerId !== passengerClerkId) {
+  const bookingPassengerClerkId = booking.passengerClerkId || booking.passengerId;
+  if (bookingPassengerClerkId !== passengerClerkId) {
     throw new RideOfferLifecycleError('Forbidden - not the booking passenger', {
       status: 403,
       code: 'NOT_PASSENGER',

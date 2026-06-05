@@ -143,6 +143,13 @@ export async function acceptRideRequest({ rideId, driverClerkId }) {
     });
   }
 
+  if (ride.clerkId === driverClerkId) {
+    throw new RideLifecycleError('Drivers cannot accept their own ride request', {
+      status: 403,
+      code: 'DRIVER_CANNOT_ACCEPT_OWN_RIDE',
+    });
+  }
+
   ride.status = 'accepted';
   ride.driverGuaranteedFare = roundMoney(
     ride.driverGuaranteedFare || ride.requestedTotalFare || ride.fare,
@@ -604,15 +611,21 @@ const creditDriverEarnings = async ({ driverClerkId, ride, grossAmount }) => {
 
   const platformFee = grossAmount * 0.07;
   const driverEarnings = grossAmount - platformFee;
-  const driver = await UserProfile.findOne({ clerkId: driverClerkId });
+  const driver = await UserProfile.findOne({ clerkId: driverClerkId }).select(
+    'walletBalance',
+  );
   if (!driver) return null;
 
-  driver.walletBalance = (driver.walletBalance || 0) + driverEarnings;
-  driver.walletTransactions = driver.walletTransactions || [];
-  driver.walletTransactions.push({
+  const nextBalance = (driver.walletBalance || 0) + driverEarnings;
+  await UserProfile.updateOne(
+    { clerkId: driverClerkId },
+    {
+      $set: { walletBalance: nextBalance },
+      $push: {
+        walletTransactions: {
     type: 'credit',
     amount: driverEarnings,
-    balance: driver.walletBalance,
+            balance: nextBalance,
     description: `Ride earnings (Rs ${grossAmount} - 7% fee)`,
     rideDetails: {
       rideId: ride._id,
@@ -622,8 +635,10 @@ const creditDriverEarnings = async ({ driverClerkId, ride, grossAmount }) => {
     },
     timestamp: new Date(),
     transactionId: `txn_${Date.now()}`,
-  });
-  await driver.save();
+        },
+      },
+    },
+  );
 
   return {
     driverEarnings,

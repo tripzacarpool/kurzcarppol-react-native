@@ -1028,6 +1028,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
     paddingHorizontal: 24,
     paddingTop: 20,
     paddingBottom: 12,
@@ -1058,6 +1061,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   scrollContent: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
     paddingHorizontal: 24,
     paddingBottom: 32,
   },
@@ -1082,11 +1088,13 @@ const styles = StyleSheet.create({
   },
   rowInputs: {
     flexDirection: 'row',
+    alignItems: 'stretch',
     gap: 12,
     marginBottom: 16,
   },
   input: {
     flex: 1,
+    minWidth: 0,
     backgroundColor: Colors.dark.background,
     borderRadius: 12,
     borderWidth: 1,
@@ -1098,6 +1106,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   halfInput: {
+    flexBasis: 0,
     marginBottom: 0,
   },
   sectionDescription: {
