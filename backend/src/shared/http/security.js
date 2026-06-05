@@ -41,6 +41,8 @@ export function securityMiddleware() {
     rateLimit({
       windowMs: env.rateLimitWindowMs,
       max: env.rateLimitMax,
+      skip: (req) =>
+        req.path.startsWith('/health') || req.path === '/metrics',
       standardHeaders: true,
       legacyHeaders: false,
       handler: (req, res) =>

@@ -6,6 +6,7 @@ import { registerRoutes } from './routes/index.js';
 import { getDependencyHealth as getDefaultDependencyHealth } from './services/dependencyHealthService.js';
 import { requestContext } from './shared/http/requestContext.js';
 import { requestLogger } from './shared/http/requestLogger.js';
+import { metricsHandler, metricsMiddleware } from './shared/http/metrics.js';
 import { securityMiddleware } from './shared/http/security.js';
 
 export function createApp({
@@ -21,13 +22,16 @@ export function createApp({
   }
 
   app.use(requestContext);
+  app.use(metricsMiddleware);
   app.use(requestLogger);
   app.use(securityMiddleware());
   app.use(express.json({ limit: env.requestBodyLimit }));
   app.use(express.urlencoded({ extended: true, limit: env.requestBodyLimit }));
 
+  app.get('/metrics', metricsHandler);
+
   app.use((req, res, next) => {
-    if (req.path.startsWith('/health')) {
+    if (req.path.startsWith('/health') || req.path === '/metrics') {
       return next();
     }
 
@@ -35,7 +39,7 @@ export function createApp({
   });
 
   app.use((req, res, next) => {
-    if (req.path.startsWith('/health')) {
+    if (req.path.startsWith('/health') || req.path === '/metrics') {
       return next();
     }
 
