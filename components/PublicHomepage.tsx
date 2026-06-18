@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import {
-  Image,
+  ImageBackground,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,6 +19,7 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Star,
   Users,
   Zap,
 } from 'lucide-react-native';
@@ -26,9 +27,14 @@ import AppLogo from '@/components/AppLogo';
 import { Colors } from '@/constants/Colors';
 import { mockRides } from '@/data/mockData';
 
-const normalize = (value: string) => value.toLowerCase().trim();
-
 const formatSeats = (count: number) => `${count} seat${count === 1 ? '' : 's'}`;
+
+const rideVisuals = [
+  'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1502865395757-40c7dd2ff0f0?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1511919884226-fd3cad34687c?auto=format&fit=crop&w=1200&q=80',
+];
 
 export default function PublicHomepage() {
   const router = useRouter();
@@ -37,29 +43,16 @@ export default function PublicHomepage() {
   const scrollRef = useRef<ScrollView | null>(null);
 
   const isWide = width >= 960;
-  const previewRides = useMemo(() => {
-    const cleaned = normalize(query);
-    const source = [...mockRides].sort((a, b) => Number.parseInt(a.departureTime, 10) - Number.parseInt(b.departureTime, 10));
 
-    if (!cleaned) {
-      return source.slice(0, 3);
-    }
-
-    return source
-      .filter((ride) => {
-        const haystack = [
-          ride.from,
-          ride.to,
-          ride.driver?.name,
-          ride.vehicle?.model,
-          ride.vehicle?.color,
-        ]
-          .filter(Boolean)
-          .join(' ');
-        return normalize(haystack).includes(cleaned);
-      })
-      .slice(0, 3);
-  }, [query]);
+  const latestRideCarousel = useMemo(() => {
+    return [...mockRides]
+      .sort((a, b) => Number.parseInt(a.departureTime, 10) - Number.parseInt(b.departureTime, 10))
+      .slice(0, 5)
+      .map((ride, index) => ({
+        ...ride,
+        visual: rideVisuals[index % rideVisuals.length],
+      }));
+  }, []);
 
   const featureCards = [
     {
@@ -81,13 +74,13 @@ export default function PublicHomepage() {
 
   const handlePrimaryAction = () => {
     if (query.trim()) {
-      scrollRef.current?.scrollTo({ y: 460, animated: true });
+      scrollRef.current?.scrollTo({ y: 520, animated: true });
       return;
     }
     router.push('/(auth)/login');
   };
 
-  return (
+    return (
     <ScrollView
       ref={scrollRef}
       style={styles.page}
@@ -100,16 +93,16 @@ export default function PublicHomepage() {
         end={{ x: 1, y: 1 }}
         style={styles.shell}
       >
-        <View style={styles.topBar}>
+        <View style={[styles.topBar, !isWide && styles.topBarStack]}>
           <View style={styles.brandRow}>
             <AppLogo size={44} />
             <View style={styles.brandCopy}>
-              <Text style={styles.brandName}>RaahEasy</Text>
+              <Text style={[styles.brandName, !isWide && styles.brandNameCompact]}>RaahEasy</Text>
               <Text style={styles.brandTag}>Ride sharing that feels immediate</Text>
             </View>
           </View>
 
-          <View style={styles.topActions}>
+          <View style={[styles.topActions, !isWide && styles.topActionsStack]}>
             <TouchableOpacity style={styles.ghostButton} onPress={() => router.push('/(auth)/login')}>
               <Text style={styles.ghostButtonText}>Sign In</Text>
             </TouchableOpacity>
@@ -126,8 +119,10 @@ export default function PublicHomepage() {
               <Text style={styles.badgeText}>Find rides near you</Text>
             </View>
 
-            <Text style={styles.heroTitle}>Start with a location. See the ride options that fit.</Text>
-            <Text style={styles.heroSubtitle}>
+            <Text style={[styles.heroTitle, !isWide && styles.heroTitleCompact]}>
+              Start with a location. See the ride options that fit.
+            </Text>
+            <Text style={[styles.heroSubtitle, !isWide && styles.heroSubtitleCompact]}>
               Open the app, search by place, and move into booking without hunting through a maze of screens.
             </Text>
 
@@ -176,12 +171,7 @@ export default function PublicHomepage() {
           </View>
 
           <View style={styles.previewPane}>
-            <LinearGradient
-              colors={['#151515', '#1d1d1d', '#232323']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.previewCard}
-            >
+            <View style={styles.previewCard}>
               <View style={styles.previewHeader}>
                 <View>
                   <Text style={styles.previewLabel}>Live preview</Text>
@@ -206,34 +196,95 @@ export default function PublicHomepage() {
                 </View>
               </View>
 
-              <Image source={require('@/assets/icon.png')} style={styles.heroImage} resizeMode="contain" />
-
-              <View style={styles.previewRideList}>
-                {previewRides.map((ride) => (
-                  <View key={ride.id} style={styles.previewRideCard}>
-                    <View style={styles.previewRideTop}>
-                      <View style={styles.previewRideTitleWrap}>
-                        <Text style={styles.previewRideRoute} numberOfLines={1}>
-                          {ride.from} to {ride.to}
-                        </Text>
-                        <Text style={styles.previewRideMeta} numberOfLines={1}>
-                          {ride.driver.name} • {ride.vehicle.model}
-                        </Text>
-                      </View>
-                      <View style={styles.previewFarePill}>
-                        <Text style={styles.previewFareText}>Rs {ride.farePerSeat}</Text>
-                      </View>
+              <ImageBackground
+                source={{ uri: latestRideCarousel[0]?.visual || rideVisuals[0] }}
+                style={styles.featuredImage}
+                imageStyle={styles.featuredImageLayer}
+              >
+                <LinearGradient
+                  colors={['#00000000', '#00000055', '#000000d5']}
+                  style={styles.featuredOverlay}
+                >
+                  <View style={styles.featuredTopRow}>
+                    <View style={styles.featuredScore}>
+                      <Star size={12} color="#f8d66d" />
+                      <Text style={styles.featuredScoreText}>4.9 live</Text>
                     </View>
-                    <View style={styles.previewRideBottom}>
-                      <Text style={styles.previewRideSecondary}>
-                        {formatSeats(ride.availableSeats.length)} available
-                      </Text>
-                      <Text style={styles.previewRideSecondary}>{ride.departureTime} away</Text>
+                    <View style={styles.featuredScore}>
+                      <Clock3 size={12} color={Colors.dark.gold} />
+                      <Text style={styles.featuredScoreText}>Fastest pickup</Text>
                     </View>
                   </View>
-                ))}
+                  <View style={styles.featuredBottom}>
+                    <Text style={styles.featuredHeadline}>
+                      {latestRideCarousel[0]?.from} to {latestRideCarousel[0]?.to}
+                    </Text>
+                    <Text style={styles.featuredSubline}>
+                      {latestRideCarousel[0]?.driver?.name} • {latestRideCarousel[0]?.vehicle?.model}
+                    </Text>
+                  </View>
+                </LinearGradient>
+              </ImageBackground>
+
+              <View style={styles.carouselSection}>
+                <View style={styles.carouselHeader}>
+                  <Text style={styles.carouselTitle}>Latest rides</Text>
+                  <Text style={styles.carouselHint}>Swipe for more options</Text>
+                </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  decelerationRate="fast"
+                  snapToAlignment="start"
+                  snapToInterval={width < 700 ? Math.min(width * 0.82, 330) + 14 : 360}
+                  contentContainerStyle={styles.carouselContent}
+                >
+                  {latestRideCarousel.map((ride, index) => (
+                    <View
+                      key={ride.id}
+                      style={[
+                        styles.carouselCard,
+                        {
+                          width: width < 700 ? Math.min(width * 0.82, 330) : 340,
+                        },
+                      ]}
+                    >
+                      <ImageBackground
+                        source={{ uri: ride.visual }}
+                        style={styles.carouselCardImage}
+                        imageStyle={styles.carouselCardImageLayer}
+                      >
+                        <LinearGradient colors={['#00000010', '#00000088']} style={styles.carouselCardOverlay}>
+                          <View style={styles.carouselCardTopRow}>
+                            <View style={styles.carouselRoutePill}>
+                              <MapPin size={12} color={Colors.dark.gold} />
+                              <Text style={styles.carouselRouteText}>{ride.from}</Text>
+                            </View>
+                            <View style={styles.carouselFarePill}>
+                              <Text style={styles.carouselFareText}>Rs {ride.farePerSeat}</Text>
+                            </View>
+                          </View>
+                        </LinearGradient>
+                      </ImageBackground>
+                      <View style={styles.carouselCardBody}>
+                        <Text style={styles.carouselRideTitle} numberOfLines={1}>
+                          {ride.from} to {ride.to}
+                        </Text>
+                        <Text style={styles.carouselRideMeta} numberOfLines={1}>
+                          {ride.driver.name} • {ride.vehicle.model}
+                        </Text>
+                        <View style={styles.carouselCardFooter}>
+                          <Text style={styles.carouselRideSecondary}>
+                            {formatSeats(ride.availableSeats.length)} available
+                          </Text>
+                          <Text style={styles.carouselRideSecondary}>{ride.departureTime} away</Text>
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
               </View>
-            </LinearGradient>
+            </View>
           </View>
         </View>
 
@@ -297,6 +348,10 @@ const styles = StyleSheet.create({
     gap: 16,
     marginBottom: 22,
   },
+  topBarStack: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
   brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -313,6 +368,9 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '900',
   },
+  brandNameCompact: {
+    fontSize: 20,
+  },
   brandTag: {
     color: Colors.dark.textSecondary,
     fontSize: 12,
@@ -323,6 +381,9 @@ const styles = StyleSheet.create({
     gap: 10,
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
+  },
+  topActionsStack: {
+    justifyContent: 'flex-start',
   },
   ghostButton: {
     paddingHorizontal: 14,
@@ -388,11 +449,19 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     maxWidth: 760,
   },
+  heroTitleCompact: {
+    fontSize: 34,
+    lineHeight: 40,
+  },
   heroSubtitle: {
     color: Colors.dark.textSecondary,
     fontSize: 16,
     lineHeight: 24,
     maxWidth: 720,
+  },
+  heroSubtitleCompact: {
+    fontSize: 15,
+    lineHeight: 22,
   },
   searchBox: {
     flexDirection: 'row',
@@ -485,8 +554,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.dark.border,
     padding: 18,
-    gap: 14,
+    gap: 16,
     overflow: 'hidden',
+    backgroundColor: Colors.dark.card,
   },
   previewHeader: {
     flexDirection: 'row',
@@ -551,61 +621,152 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  heroImage: {
-    width: '100%',
-    height: 150,
-    alignSelf: 'center',
+  featuredImage: {
+    height: 220,
+    borderRadius: 18,
+    overflow: 'hidden',
+    marginTop: 2,
   },
-  previewRideList: {
-    gap: 10,
+  featuredImageLayer: {
+    borderRadius: 18,
   },
-  previewRideCard: {
-    backgroundColor: Colors.dark.background,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-    padding: 12,
-    gap: 8,
-  },
-  previewRideTop: {
-    flexDirection: 'row',
-    gap: 10,
-    justifyContent: 'space-between',
-  },
-  previewRideTitleWrap: {
+  featuredOverlay: {
     flex: 1,
-    minWidth: 0,
-    gap: 3,
+    justifyContent: 'space-between',
+    padding: 14,
   },
-  previewRideRoute: {
-    color: Colors.dark.text,
-    fontSize: 14,
-    fontWeight: '800',
+  featuredTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
   },
-  previewRideMeta: {
-    color: Colors.dark.textSecondary,
-    fontSize: 12,
-  },
-  previewFarePill: {
+  featuredScore: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: Colors.dark.gold + '20',
-    alignSelf: 'flex-start',
+    backgroundColor: '#00000088',
   },
-  previewFareText: {
-    color: Colors.dark.gold,
+  featuredScoreText: {
+    color: Colors.dark.text,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  featuredBottom: {
+    gap: 4,
+  },
+  featuredHeadline: {
+    color: Colors.dark.text,
+    fontSize: 18,
     fontWeight: '900',
-    fontSize: 12,
+    textShadowColor: '#00000055',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
-  previewRideBottom: {
+  featuredSubline: {
+    color: Colors.dark.text,
+    fontSize: 12,
+    opacity: 0.9,
+    fontWeight: '600',
+  },
+  carouselSection: {
+    gap: 10,
+  },
+  carouselHeader: {
     flexDirection: 'row',
+    alignItems: 'baseline',
     justifyContent: 'space-between',
     gap: 10,
   },
-  previewRideSecondary: {
+  carouselTitle: {
+    color: Colors.dark.text,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  carouselHint: {
     color: Colors.dark.textSecondary,
     fontSize: 12,
+    fontWeight: '600',
+  },
+  carouselContent: {
+    paddingRight: 4,
+    gap: 12,
+  },
+  carouselCard: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: Colors.dark.background,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  carouselCardImage: {
+    height: 140,
+  },
+  carouselCardImageLayer: {
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+  },
+  carouselCardOverlay: {
+    flex: 1,
+    padding: 12,
+    justifyContent: 'space-between',
+  },
+  carouselCardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  carouselRoutePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '72%',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#00000088',
+  },
+  carouselRouteText: {
+    color: Colors.dark.text,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  carouselFarePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: Colors.dark.gold,
+  },
+  carouselFareText: {
+    color: Colors.dark.background,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  carouselCardBody: {
+    padding: 12,
+    gap: 5,
+  },
+  carouselRideTitle: {
+    color: Colors.dark.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  carouselRideMeta: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+  },
+  carouselCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 2,
+  },
+  carouselRideSecondary: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
     fontWeight: '700',
   },
   section: {
@@ -693,3 +854,4 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 });
+
