@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
@@ -98,7 +98,6 @@ function RootLayoutNav() {
     const onDriverDashboard = currentRoot === 'driver';
     const onPassengerTabs = currentRoot === '(tabs)';
     const isDriver = user?.role === 'ride_partner';
-
     // Only enforce route protection - don't handle initial redirects
     // Index screen handles initial routing
     if (!isSignedIn || !currentRoot) {
@@ -138,8 +137,6 @@ function RootLayoutNav() {
       </View>
     );
   }
-
-  const isDriver = user?.role === 'ride_partner';
 
   return (
     <>

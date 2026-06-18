@@ -32,7 +32,7 @@ import {
   CheckCircle2,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { useSignUp, useAuth, useOAuth, useClerk } from '@/lib/clerkHooks';
+import { useSignUp, useOAuth, useClerk } from '@/lib/clerkHooks';
 import { formatClerkError, isPasswordError, getPasswordStrengthTips } from '@/lib/clerkErrorHandler';
 import { googleOAuthRedirectParams } from '@/lib/googleOAuth';
 import {
@@ -74,7 +74,6 @@ const MAX_UPLOAD_BYTES = 6 * 1024 * 1024; // 6 MB per document
 export default function SignupScreen() {
   const router = useRouter();
   const { signUp } = useSignUp();
-  const { isSignedIn, isLoaded } = useAuth();
   const oauth = useOAuth({ strategy: 'oauth_google' });
   const clerk = useClerk();
   const [firstName, setFirstName] = useState('');
@@ -118,7 +117,6 @@ export default function SignupScreen() {
   });
   const [ridePartnerDraft, setRidePartnerDraft] = useState<RidePartnerDraft | null>(null);
   const [applicationPreview, setApplicationPreview] = useState<RidePartnerProfile | null>(null);
-  const [successVariant, setSuccessVariant] = useState<'passenger' | 'ride_partner'>('passenger');
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [createdClerkId, setCreatedClerkId] = useState<string | null>(null);
   const isRidePartner = false;
@@ -340,7 +338,6 @@ export default function SignupScreen() {
         ...ridePartnerDraft,
       });
       setApplicationPreview(payload.profile);
-      setSuccessVariant('ride_partner');
       setCreatedClerkId(clerkId);
     } catch (appErr: any) {
       const message = appErr?.response?.data?.error || appErr?.message || 'Failed to submit ride partner details';
@@ -370,6 +367,8 @@ export default function SignupScreen() {
     }
   };
 
+  // Legacy ride-partner form is kept for future use but not mounted in the current flow.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const renderRidePartnerForm = () => (
     <View style={styles.partnerCard}>
       <Text style={styles.partnerHeading}>Ride Partner Verification</Text>
@@ -831,7 +830,6 @@ export default function SignupScreen() {
         }
         
         await finalizeRidePartnerSubmission(result?.createdUserId);
-        setSuccessVariant(isRidePartner ? 'ride_partner' : 'passenger');
         setSuccess(true);
         setLoading(false);
         
@@ -964,7 +962,6 @@ export default function SignupScreen() {
         }
 
         await finalizeRidePartnerSubmission(result?.createdUserId);
-        setSuccessVariant(isRidePartner ? 'ride_partner' : 'passenger');
         // Session created automatically by Clerk
         setSuccess(true);
         setLoading(false);
