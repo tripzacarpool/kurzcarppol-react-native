@@ -6,7 +6,6 @@ import {
   Modal,
   TouchableOpacity,
   ScrollView,
-  Dimensions,
 } from 'react-native';
 import {
   X,
@@ -37,8 +36,6 @@ interface FareBreakdownProps {
   eta?: string;
   onConfirm?: () => void;
 }
-
-const { width } = Dimensions.get('window');
 
 export default function FareBreakdown({
   visible,

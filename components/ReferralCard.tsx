@@ -4,8 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Share,
-  Image,
   TextInput,
 } from 'react-native';
 import { Copy, Share2, Gift, Users, Zap } from 'lucide-react-native';
@@ -162,13 +160,13 @@ export const RedeemReferralCode: React.FC<RedeemReferralCodeProps> = ({
 };
 
 interface ReferralHistoryProps {
-  referrals: Array<{
+  referrals: {
     id: string;
     friendName: string;
     redeemedAt: string;
     bonusAmount: number;
     status: 'completed' | 'pending' | 'cancelled';
-  }>;
+  }[];
 }
 
 export const ReferralHistory: React.FC<ReferralHistoryProps> = ({ referrals }) => {

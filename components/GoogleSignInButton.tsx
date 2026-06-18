@@ -99,11 +99,16 @@ const styles = StyleSheet.create({
   gradientBorder: {
     borderRadius: 16,
     padding: 2,
-    shadowColor: Colors.dark.gold,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
+    ...Platform.select({
+      web: { boxShadow: `0 4px 12px ${Colors.dark.gold}4D` },
+      default: {
+        shadowColor: Colors.dark.gold,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+        elevation: 8,
+      },
+    }),
   },
   button: {
     backgroundColor: Colors.dark.backgroundSecondary + 'E6',
@@ -138,11 +143,16 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     marginRight: 12,
-    shadowColor: Colors.dark.gold,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 4,
+    ...Platform.select({
+      web: { boxShadow: `0 2px 4px ${Colors.dark.gold}80` },
+      default: {
+        shadowColor: Colors.dark.gold,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.5,
+        shadowRadius: 4,
+        elevation: 4,
+      },
+    }),
   },
   iconGradient: {
     width: '100%',

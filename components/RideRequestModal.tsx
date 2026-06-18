@@ -20,7 +20,6 @@ import { getApiBaseUrl } from '@/lib/backendConfig';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
-import FareBreakdown from './FareBreakdown';
 import { VEHICLE_TYPE_OPTIONS, type RideVehicleType } from '@/constants/vehicleTypes';
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -53,6 +52,9 @@ const roundToNearestFiveMinutes = (date: Date) => {
   return rounded;
 };
 
+const getDefaultDeparture = () =>
+  roundToNearestFiveMinutes(new Date(Date.now() + 30 * 60 * 1000));
+
 const formatDepartureTime = (date: Date) =>
   new Intl.DateTimeFormat(undefined, {
     weekday: 'short',
@@ -82,13 +84,10 @@ export default function RideRequestModal({
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
   const [error, setError] = useState('');
-  const initialDeparture = roundToNearestFiveMinutes(
-    new Date(Date.now() + 30 * 60 * 1000),
-  );
   const [scheduledDeparture, setScheduledDeparture] = useState<Date>(
-    initialDeparture,
+    getDefaultDeparture,
   );
-  const [pendingIOSDate, setPendingIOSDate] = useState<Date>(initialDeparture);
+  const [pendingIOSDate, setPendingIOSDate] = useState<Date>(getDefaultDeparture);
   const [flexibilityMinutes, setFlexibilityMinutes] = useState<number>(60);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -98,17 +97,6 @@ export default function RideRequestModal({
     message: string;
     type: AlertType;
   }>({ title: '', message: '', type: 'info' });
-
-  const [showFareBreakdown, setShowFareBreakdown] = useState(false);
-  const [fareDetails, setFareDetails] = useState({
-    baseFare: 50,
-    distanceCharge: 0,
-    distance: 0,
-    surgePricing: 0,
-    discount: 0,
-    taxes: 0,
-    totalFare: 50,
-  });
 
   const departureWindowStart = new Date(
     scheduledDeparture.getTime() - flexibilityMinutes * 60 * 1000,
@@ -141,6 +129,19 @@ export default function RideRequestModal({
     location?.city,
     location?.country,
   ]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+
+    const minimumDeparture = Date.now() + 5 * 60 * 1000;
+    if (scheduledDeparture.getTime() < minimumDeparture) {
+      const resetTime = getDefaultDeparture();
+      setScheduledDeparture(resetTime);
+      setPendingIOSDate(resetTime);
+    }
+  }, [scheduledDeparture, visible]);
 
   const showAlert = (title: string, message: string, type: AlertType = 'info') => {
     setAlertConfig({ title, message, type });
@@ -208,9 +209,7 @@ export default function RideRequestModal({
   };
 
   const resetScheduling = () => {
-    const resetTime = roundToNearestFiveMinutes(
-      new Date(Date.now() + 30 * 60 * 1000),
-    );
+    const resetTime = getDefaultDeparture();
     setScheduledDeparture(resetTime);
     setPendingIOSDate(resetTime);
     setFlexibilityMinutes(60);

@@ -26,7 +26,7 @@ import {
   FESTIVALS,
   type ActiveFestivalCampaign,
 } from '@/constants/festivals';
-import { createDriverRideOffer, createRideOffer, updateRideOffer, setAuthToken } from '@/lib/api';
+import { createRideOffer, updateRideOffer, setAuthToken } from '@/lib/api';
 import CustomAlert, { AlertType } from './CustomAlert';
 import LocationPicker from './LocationPicker';
 import RouteInfo from './RouteInfo';
@@ -87,7 +87,6 @@ export default function DriverRideOfferModal({
   const [to, setTo] = useState('');
   const [fromLocation, setFromLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [toLocation, setToLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [passengers, setPassengers] = useState('2');
   const [fare, setFare] = useState('');
   const [notes, setNotes] = useState('');
   const [womenOnly, setWomenOnly] = useState(false);
@@ -98,10 +97,7 @@ export default function DriverRideOfferModal({
   const [locationPickerMode, setLocationPickerMode] = useState<'from' | 'to'>('from');
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
-  const [fromFocused, setFromFocused] = useState(false);
-  const [toFocused, setToFocused] = useState(false);
   const [suggestedFare, setSuggestedFare] = useState<number>(0);
-  const [isRouteCalculated, setIsRouteCalculated] = useState(false);
   const [vehicleType, setVehicleType] = useState<'two_wheeler' | 'three_wheeler' | 'four_wheeler'>('four_wheeler');
   const [requiresManualApproval, setRequiresManualApproval] = useState(false);
   const [driverPrivacyType, setDriverPrivacyType] = useState<'private_vehicle' | 'full_detail'>('private_vehicle');
@@ -196,7 +192,6 @@ export default function DriverRideOfferModal({
       setNotes('');
       setWomenOnly(false);
       setSelectedSeats([]);
-      setIsRouteCalculated(false);
       setSuggestedFare(0);
       setFestivalType('');
       setFestivalConfig({
@@ -213,7 +208,6 @@ export default function DriverRideOfferModal({
   useEffect(() => {
     // Reset when locations are cleared
     if (!fromLocation || !toLocation) {
-      setIsRouteCalculated(false);
       setSuggestedFare(0);
     }
   }, [fromLocation, toLocation]);
@@ -225,7 +219,7 @@ export default function DriverRideOfferModal({
     if (selectedSeats.length > maxPassengerCount) {
       setSelectedSeats([]);
     }
-  }, [maxPassengers]);
+  }, [maxPassengers, selectedSeats.length]);
 
   const getTotalSeats = (): number => {
     const maxPassengerCount = parseInt(maxPassengers) || 0;
@@ -289,10 +283,8 @@ export default function DriverRideOfferModal({
     // Set text immediately for better UX
     if (mode === 'from') {
       setFrom(search);
-      setFromFocused(false);
     } else {
       setTo(search);
-      setToFocused(false);
     }
 
     // Geocode the address in background
@@ -321,7 +313,6 @@ export default function DriverRideOfferModal({
 
   const handleFareCalculated = (calculatedFare: number) => {
     setSuggestedFare(calculatedFare);
-    setIsRouteCalculated(true);
     // Auto-populate fare if field is empty
     if (!fare || fare === '0') {
       setFare(calculatedFare.toString());
@@ -329,7 +320,6 @@ export default function DriverRideOfferModal({
   };
 
   const handleCalculationStart = () => {
-    setIsRouteCalculated(false);
     setSuggestedFare(0);
   };
 
@@ -751,7 +741,6 @@ export default function DriverRideOfferModal({
     setWomenOnly(false);
     setRequiresManualApproval(false);
     setSelectedSeats([]);
-    setIsRouteCalculated(false);
     setSuggestedFare(0);
     onClose();
   };

@@ -10,7 +10,6 @@ import {
   Platform,
   Alert,
   TextInput,
-  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
@@ -25,8 +24,6 @@ interface ApprovalRequestModalProps {
   driverId: string;
   onApprovalChange?: () => void;
 }
-
-const { height: screenHeight } = Dimensions.get('window');
 
 export default function ApprovalRequestModal({
   visible,

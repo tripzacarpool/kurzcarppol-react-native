@@ -13,6 +13,7 @@ import {
   Alert,
   TextInput,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -44,7 +45,7 @@ import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
 import type { DriverVerificationResult, DriverVerificationStatus } from '@/types';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
-import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, getRideOfferById, setAuthToken, getMyRideOffers, getPendingApprovals, getAllDriverPendingApprovals, approveBooking, rejectBooking, driverInitiatePickup, activateSOS, respondRideOfferHold } from '@/lib/api';
+import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, setAuthToken, getMyRideOffers, getPendingApprovals, getAllDriverPendingApprovals, approveBooking, rejectBooking, driverInitiatePickup, activateSOS, respondRideOfferHold, getApiErrorMessage } from '@/lib/api';
 import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket, joinUserSocketRoom, subscribeToPickupConfirmed, unsubscribeFromPickupEvents } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
 import ApprovalControlsDriver from '@/components/ApprovalControlsDriver';
@@ -90,14 +91,14 @@ interface DriverOffer {
   departureTime?: string;
   status?: 'waiting' | 'live' | 'ongoing' | 'booked' | 'completed' | 'cancelled' | 'draft';
   lifecycleStatus?: 'live' | 'upcoming' | 'expired' | 'completed' | 'cancelled';
-  holdRequests?: Array<{
+  holdRequests?: {
     _id: string;
     passengerName?: string;
     passengerClerkId: string;
     minutes: number;
     status: 'pending' | 'approved' | 'rejected';
     requestedAt?: string;
-  }>;
+  }[];
 }
 
 interface Conversation {
@@ -153,12 +154,12 @@ export default function DriverDashboard() {
   const [activeRideDetails, setActiveRideDetails] = useState<Ride | null>(null);
   const [driverPickupConfirmed, setDriverPickupConfirmed] = useState(false);
   const [pickupConfirming, setPickupConfirming] = useState(false);
-  const [stats, setStats] = useState<DriverStats>({
+  const stats: DriverStats = {
     earnings: 2450,
     ridesCount: 12,
     rating: 4.8,
     onlineTime: 240,
-  });
+  };
   const [selectedTab, setSelectedTab] = useState<DashboardTab>('live');
   const [offersLoading, setOffersLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -209,7 +210,7 @@ export default function DriverDashboard() {
     title: string,
     message: string,
     type: 'info' | 'success' | 'error' | 'warning' = 'info',
-    buttons?: Array<{ text: string; onPress?: () => void; style?: 'default' | 'cancel' | 'destructive' }>
+    buttons?: { text: string; onPress?: () => void; style?: 'default' | 'cancel' | 'destructive' }[]
   ) => {
     setAlertConfig({ title, message, type, buttons });
     setAlertVisible(true);
@@ -1033,7 +1034,7 @@ export default function DriverDashboard() {
       showAlert('Passenger Notified', 'Passenger alerted to confirm onboarding.', 'success');
     } catch (error) {
       console.error('❌ Error confirming pickup:', error);
-      showAlert('Error', 'Failed to notify passenger. Try again.', 'error');
+      showAlert('Pickup changed', getApiErrorMessage(error, 'Failed to notify passenger. Try again.'), 'warning');
     } finally {
       setPickupConfirming(false);
     }
@@ -1176,7 +1177,7 @@ export default function DriverDashboard() {
       await fetchCurrentActiveRide();
     } catch (error) {
       console.error('❌ Error initiating pickup:', error);
-      showAlert('Error', 'Failed to initiate pickup. Try again.', 'error');
+      showAlert('Pickup changed', getApiErrorMessage(error, 'Failed to initiate pickup. Try again.'), 'warning');
     } finally {
       setInitiatingPickupForBooking(null);
     }
@@ -1461,7 +1462,6 @@ export default function DriverDashboard() {
       };
 
       const isActive = activeRides.includes(offer);
-      const status = offer.status || 'live';
       const lifecycle = getOfferLifecycleStatus(offer);
       const isCompleted = lifecycle === 'completed';
       const isExpired = lifecycle === 'expired';
@@ -3289,11 +3289,16 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderWidth: 1,
     borderColor: Colors.dark.border,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    ...Platform.select({
+      web: { boxShadow: '0 4px 10px rgba(0, 0, 0, 0.18)' },
+      default: {
+        shadowColor: '#000',
+        shadowOpacity: 0.18,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 3,
+      },
+    }),
   },
   driverOfferCardActive: {
     borderColor: Colors.dark.gold + '70',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,10 @@ import {
   Alert,
   Linking,
   ActivityIndicator,
-  Share,
 } from 'react-native';
 import {
   X,
   Send,
-  MessageCircle,
   Phone,
   Copy,
   MapPin,
@@ -23,7 +21,6 @@ import {
   Clock,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { SHARE_METHODS } from '@/constants/womenSafety';
 
 interface TripDetails {
   driverName: string;
@@ -84,7 +81,7 @@ export default function ShareTrip({
       const message = encodeURIComponent(generateTripMessage());
       const whatsappUrl = `whatsapp://send?phone=${phone}&text=${message}`;
       await Linking.openURL(whatsappUrl);
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'WhatsApp is not installed');
     }
   };
@@ -94,7 +91,7 @@ export default function ShareTrip({
       const message = generateTripMessage().replace(/\*/g, '').replace(/\n/g, '%0A');
       const smsUrl = `sms:${phone}?body=${message}`;
       await Linking.openURL(smsUrl);
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to open SMS');
     }
   };
@@ -138,7 +135,7 @@ export default function ShareTrip({
       Alert.alert('Success', `Trip shared with ${selected.length} contact(s)`);
       onTripShared?.();
       onClose();
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to share trip');
     } finally {
       setLoading(false);

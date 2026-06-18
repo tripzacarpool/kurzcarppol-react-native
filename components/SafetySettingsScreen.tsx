@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -25,7 +25,6 @@ import {
   Check,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
-import { useFocusEffect } from '@react-navigation/native';
 
 interface EmergencyContact {
   id?: string;

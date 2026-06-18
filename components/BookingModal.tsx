@@ -8,6 +8,7 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { X, Check, MapPin, MessageSquare, Armchair, Navigation, CheckCircle2, ArrowLeft, Wallet as WalletIcon, CreditCard, ShieldCheck, UserCheck, Clock, AlertCircle, Star } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
@@ -38,6 +39,8 @@ import {
   getBookingApprovalStatus,
   joinRideRequest,
   cancelPendingApproval,
+  getApiErrorCode,
+  getApiErrorMessage,
 } from '@/lib/api';
 
 interface BookingModalProps {
@@ -72,6 +75,19 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   const [currentBookingId, setCurrentBookingId] = useState<string | null>(null);
   const [creatingBooking, setCreatingBooking] = useState(false);
   const rideRef = useRef(ride);
+
+  // Custom alert state
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    title: string;
+    message: string;
+    type: AlertType;
+  }>({ title: '', message: '', type: 'info' });
+
+  const showAlert = useCallback((title: string, message: string, type: AlertType = 'info') => {
+    setAlertConfig({ title, message, type });
+    setAlertVisible(true);
+  }, []);
 
   // Update ride ref when ride changes
   useEffect(() => {
@@ -112,21 +128,8 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } catch (error) {
       console.error('Error setting up socket listener:', error);
     }
-  }, [visible, ride?.id]);
+  }, [visible, ride?.id, showAlert]);
   
-  // Custom alert state
-  const [alertVisible, setAlertVisible] = useState(false);
-  const [alertConfig, setAlertConfig] = useState<{
-    title: string;
-    message: string;
-    type: AlertType;
-  }>({ title: '', message: '', type: 'info' });
-
-  const showAlert = (title: string, message: string, type: AlertType = 'info') => {
-    setAlertConfig({ title, message, type });
-    setAlertVisible(true);
-  };
-
   const handleBookingApproved = useCallback((message = 'Driver approved your request. Please confirm when you board.') => {
     setApprovalStatus('approved');
     setApprovalCountdown(0);
@@ -135,7 +138,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     setTimeout(() => {
       setStep('boarding');
     }, 1500);
-  }, []);
+  }, [showAlert]);
 
   const handleBookingRejected = useCallback((message = 'Driver rejected your booking request.') => {
     setApprovalStatus('rejected');
@@ -145,7 +148,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       setStep('seats');
       setCurrentBookingId(null);
     }, 2000);
-  }, []);
+  }, [showAlert]);
 
   const hideAlert = () => {
     setAlertVisible(false);
@@ -186,14 +189,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         'error'
       );
     }
-  }, [visible, ride]);
-
-  // Load wallet balance when payment step is reached
-  useEffect(() => {
-    if (step === 'payment' && user?.id) {
-      loadWalletBalance();
-    }
-  }, [step, user]);
+  }, [visible, ride, showAlert]);
 
   useEffect(() => {
     if (step === 'tracking' && pickupConfirmed) {
@@ -222,7 +218,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [step, approvalCountdown, approvalStatus]);
+  }, [step, approvalCountdown, approvalStatus, showAlert]);
 
   useEffect(() => {
     if (step !== 'approval-waiting' || !currentBookingId) return;
@@ -300,7 +296,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     };
   }, [step, currentBookingId, user?.id, handleBookingApproved, handleBookingRejected]);
 
-  const loadWalletBalance = async () => {
+  const loadWalletBalance = useCallback(async () => {
     if (!user?.id) return;
     try {
       const balance = await getWalletBalance(user.id);
@@ -308,7 +304,14 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } catch (error) {
       console.error('Error loading wallet balance:', error);
     }
-  };
+  }, [user?.id]);
+
+  // Load wallet balance when payment step is reached
+  useEffect(() => {
+    if (step === 'payment' && user?.id) {
+      loadWalletBalance();
+    }
+  }, [loadWalletBalance, step, user?.id]);
 
   const handleBack = useCallback(async () => {
     // Cancel booking if going back from approval-waiting
@@ -380,10 +383,42 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     onClose();
   }, [onClose]);
 
+  const requestedSeatNumbers = useMemo(() => {
+    if (!ride) return [];
+    if (ride.totalSeats === 2 && selectedSeats.length === 0) {
+      return [2];
+    }
+    return selectedSeats;
+  }, [ride, selectedSeats]);
+
   const totalAmount = useMemo(() => {
     if (!ride) return 0;
-    return selectedSeats.length * ride.farePerSeat;
-  }, [ride?.farePerSeat, selectedSeats.length]);
+    return requestedSeatNumbers.length * ride.farePerSeat;
+  }, [ride, requestedSeatNumbers.length]);
+
+  const handleBookingError = useCallback((error: any, fallback: string) => {
+    const code = getApiErrorCode(error);
+    const message = getApiErrorMessage(error, fallback);
+
+    if (code === 'SEATS_UNAVAILABLE' || /seat|booked by another passenger/i.test(message)) {
+      setSelectedSeats((prev) =>
+        prev.filter((seat) => liveAvailableSeats.length === 0 || liveAvailableSeats.includes(seat)),
+      );
+      setCurrentBookingId(null);
+      setStep('seats');
+      showAlert('Seat just got booked', message, 'warning');
+      return;
+    }
+
+    if (code === 'BOOKING_NOT_FOUND') {
+      setCurrentBookingId(null);
+      setStep('seats');
+      showAlert('Booking changed', message, 'warning');
+      return;
+    }
+
+    showAlert('Error', message, 'error');
+  }, [liveAvailableSeats, showAlert]);
 
   const pickupLocation = useMemo(() => {
     if (!ride) return null;
@@ -439,7 +474,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       return;
     }
     
-    if (selectedSeats.length === 0) {
+    if (requestedSeatNumbers.length === 0) {
       showAlert('Select Seats', 'Pick at least one seat before paying.', 'warning');
       return;
     }
@@ -462,7 +497,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           rideId: ride.id,
           from: ride.from,
           to: ride.to,
-          seats: selectedSeats,
+          seats: requestedSeatNumbers,
         });
 
         if (result.success) {
@@ -474,7 +509,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           } else if ((ride as any).clerkId && (ride as any).clerkId !== user.id) {
             console.log('Joining shared ride request:', ride.id);
             await joinRideRequest(ride.id, {
-              seatCount: selectedSeats.length || 1,
+              seatCount: requestedSeatNumbers.length || 1,
               paymentMethod: 'upi',
             });
           } else {
@@ -488,20 +523,20 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             if (ride.rideType === 'offer') {
               console.log('📦 Booking ride offer:', ride.id);
               await bookRideOffer(ride.id, {
-                seatNumbers: selectedSeats,
+                seatNumbers: requestedSeatNumbers,
                 paymentMethod: 'wallet',
                 customRequest: customRequest || undefined,
               });
             } else if ((ride as any).clerkId && (ride as any).clerkId !== user.id) {
               console.log('Joining shared ride request:', ride.id);
               await joinRideRequest(ride.id, {
-                seatCount: selectedSeats.length || 1,
+                seatCount: requestedSeatNumbers.length || 1,
                 paymentMethod: 'wallet',
               });
             } else {
               console.log('📦 Booking ride request:', ride.id);
               await confirmRideBooking(ride.id, {
-                seatNumbers: selectedSeats,
+                seatNumbers: requestedSeatNumbers,
                 totalAmount,
                 paymentMethod: 'wallet',
                 customRequest: customRequest || undefined,
@@ -537,7 +572,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           rideId: ride.id,
           from: ride.from,
           to: ride.to,
-          seats: selectedSeats,
+          seats: requestedSeatNumbers,
         });
 
         setRazorpayOrder(order);
@@ -546,10 +581,10 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       }
     } catch (error: any) {
       console.error('Payment error:', error);
-      showAlert('Error', error.message || 'Payment failed', 'error');
+      handleBookingError(error, 'Payment failed');
       setProcessingPayment(false);
     }
-  }, [paymentMethod, user?.id, totalAmount, ride, selectedSeats, showAlert, customRequest, bookingConfirmed, getAuthToken]);
+  }, [paymentMethod, user?.id, totalAmount, ride, requestedSeatNumbers, showAlert, customRequest, bookingConfirmed, getAuthToken, handleBookingError, currentBookingId, onClose, step]);
 
   const handleRazorpaySuccess = useCallback(async (paymentId: string, orderId: string, signature: string) => {
     try {
@@ -580,14 +615,14 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
           if (ride.rideType === 'offer') {
             console.log('📦 Booking ride offer:', ride.id);
             await bookRideOffer(ride.id, {
-              seatNumbers: selectedSeats,
+              seatNumbers: requestedSeatNumbers,
               paymentMethod: 'upi',
               customRequest: customRequest || undefined,
             });
           } else {
             console.log('📦 Booking ride request:', ride.id);
             await confirmRideBooking(ride.id, {
-              seatNumbers: selectedSeats,
+              seatNumbers: requestedSeatNumbers,
               totalAmount,
               paymentMethod: 'upi',
               customRequest: customRequest || undefined,
@@ -615,16 +650,16 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       }
     } catch (error: any) {
       console.error('Verification error:', error);
-      showAlert('Error', 'Payment verification failed', 'error');
+      handleBookingError(error, 'Payment verification failed');
     } finally {
       setProcessingPayment(false);
     }
-  }, [ride, selectedSeats, totalAmount, customRequest, showAlert, getAuthToken]);
+  }, [ride, requestedSeatNumbers, totalAmount, customRequest, showAlert, getAuthToken, handleBookingError, currentBookingId, step]);
 
   const handleRazorpayFailure = useCallback((error: string) => {
     setShowRazorpay(false);
     showAlert('Payment Failed', error, 'error');
-  }, []);
+  }, [showAlert]);
 
   const handlePickupConfirmation = useCallback(async () => {
     if (!ride) return;
@@ -655,7 +690,8 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       showAlert('Pickup Confirmed', 'Live tracking has started.', 'success');
     } catch (error: any) {
       console.error('Pickup confirmation error:', error);
-      showAlert('Error', error.message || 'Unable to confirm pickup', 'error');
+      const message = getApiErrorMessage(error, 'Unable to confirm pickup');
+      showAlert('Pickup changed', message, 'warning');
     } finally {
       setPickupActionLoading(false);
     }
@@ -682,7 +718,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       showAlert('Ride Completed!', 'Please complete payment to finish your booking.', 'success');
     } catch (error: any) {
       console.error('Ride completion error:', error);
-      showAlert('Error', error.message || 'Unable to complete ride', 'error');
+      showAlert('Error', getApiErrorMessage(error, 'Unable to complete ride'), 'error');
     } finally {
       setCompletionLoading(false);
     }
@@ -699,7 +735,9 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   }, []);
 
   const handleSeatsContinue = useCallback(async () => {
-    if (!ride?.id || selectedSeats.length === 0) {
+    const seatsToRequest = ride?.totalSeats === 2 && selectedSeats.length === 0 ? [2] : selectedSeats;
+
+    if (!ride?.id || seatsToRequest.length === 0) {
       showAlert('Select Seats', 'Please select at least one seat', 'warning');
       return;
     }
@@ -722,7 +760,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
 
       if (ride.rideType !== 'offer') {
         await joinRideRequest(ride.id, {
-          seatCount: selectedSeats.length || 1,
+          seatCount: seatsToRequest.length || 1,
           paymentMethod: 'unknown',
         });
         setBookingConfirmed(true);
@@ -740,7 +778,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
 
       // Create booking with pending_approval status
       const response = await bookRideOffer(ride.id, {
-        seatNumbers: selectedSeats,
+        seatNumbers: seatsToRequest,
         customRequest: customRequest.trim(),
       });
 
@@ -777,11 +815,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       }
     } catch (error: any) {
       console.error('Booking error:', error);
-      showAlert('Error', error.message || 'Failed to create booking', 'error');
+      handleBookingError(error, 'Failed to create booking');
     } finally {
       setCreatingBooking(false);
     }
-  }, [ride?.id, selectedSeats, getAuthToken, customRequest, showAlert]);
+  }, [ride?.id, ride?.totalSeats, ride?.rideType, ride?.status, selectedSeats, getAuthToken, customRequest, showAlert, handleBookingError, onClose]);
 
   const handleRequestContinue = useCallback(() => {
     setStep('seats');
@@ -996,61 +1034,9 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     }
     
     return renderIndianCarLayout();
-  }, [liveAvailableSeats, ride?.totalSeats, selectedSeats, handleSeatSelect]);
+  }, [liveAvailableSeats, ride, selectedSeats, handleSeatSelect]);
 
-  // Old code kept for reference
-  const renderSeatLayoutOld = useMemo(() => {
-    if (!ride) return null;
-    
-    const rows = 2;
-    const seatsPerRow = [2, 2];
-    let seatCounter = 1;
-
-    return (
-      <View style={styles.seatContainer}>
-        {[...Array(rows)].map((_, rowIndex) => (
-          <View key={rowIndex} style={styles.seatRow}>
-            {[...Array(seatsPerRow[rowIndex])].map((_, seatIndex) => {
-              const seatNumber = seatCounter++;
-              const isAvailable = ride.availableSeats.includes(seatNumber);
-              const isSelected = selectedSeats.includes(seatNumber);
-
-              return (
-                <TouchableOpacity
-                  key={seatNumber}
-                  style={[
-                    styles.seat,
-                    !isAvailable && styles.seatUnavailable,
-                    isSelected && styles.seatSelected,
-                  ]}
-                  disabled={!isAvailable}
-                  onPress={() => handleSeatSelect(seatNumber)}>
-                  <Armchair
-                    size={32}
-                    color={
-                      isSelected
-                        ? Colors.dark.background
-                        : isAvailable
-                        ? Colors.dark.gold
-                        : Colors.dark.textSecondary
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.seatNumber,
-                      !isAvailable && styles.seatNumberUnavailable,
-                      isSelected && styles.seatNumberSelected,
-                    ]}>
-                    {seatNumber}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        ))}
-      </View>
-    );
-  }, [selectedSeats, handleSeatSelect, ride?.availableSeats]);
+  const driverModeInfo = ride ? DRIVER_MODE_META[ride.driverMode] : DRIVER_MODE_META.all_access;
 
   const renderStep = useMemo(() => {
     const BookingModalStepContent = () => {
@@ -1200,20 +1186,20 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                 <Text style={styles.legendText}>Driver</Text>
               </View>
             </View>
-            {selectedSeats.length > 0 && (
+            {requestedSeatNumbers.length > 0 && (
               <View style={styles.fareBreakdown}>
                 <Text style={styles.fareLabel}>
-                  {selectedSeats.length} Seat(s) × ₹{ride.farePerSeat}
+                  {requestedSeatNumbers.length} Seat(s) × ₹{ride.farePerSeat}
                 </Text>
-                <Text style={styles.fareTotal}>₹{selectedSeats.length * ride.farePerSeat}</Text>
+                <Text style={styles.fareTotal}>₹{totalAmount}</Text>
               </View>
             )}
             <TouchableOpacity
               style={[
                 styles.primaryButton, 
-                selectedSeats.length === 0 && ride.totalSeats !== 2 && styles.disabledButton
+                requestedSeatNumbers.length === 0 && styles.disabledButton
               ]}
-              disabled={selectedSeats.length === 0 && ride.totalSeats !== 2 || creatingBooking}
+              disabled={requestedSeatNumbers.length === 0 || creatingBooking}
               onPress={handleSeatsContinue}>
               <Text style={styles.primaryButtonText}>
                 {creatingBooking ? 'Creating Booking...' : 'Request Booking'}
@@ -1288,7 +1274,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
                 <View style={styles.requestDetailItem}>
                   <Text style={styles.requestDetailLabel}>Requested Seats</Text>
                   <View style={styles.seatBadgeContainer}>
-                    {selectedSeats.map((seat) => (
+                    {requestedSeatNumbers.map((seat) => (
                       <View key={seat} style={styles.requestedSeatBadge}>
                         <Text style={styles.requestedSeatText}>{seat}</Text>
                       </View>
@@ -1300,7 +1286,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               <View style={styles.requestDetailRow}>
                 <View style={styles.requestDetailItem}>
                   <Text style={styles.requestDetailLabel}>Total Fare</Text>
-                  <Text style={styles.requestDetailValueLarge}>₹{selectedSeats.length * ride.farePerSeat}</Text>
+                  <Text style={styles.requestDetailValueLarge}>₹{totalAmount}</Text>
                 </View>
                 <View style={styles.requestDetailItem}>
                   <Text style={styles.requestDetailLabel}>Departure Time</Text>
@@ -1346,7 +1332,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               <View style={styles.bookingDetailRow}>
                 <Text style={styles.bookingDetailLabel}>Approved Seats</Text>
                 <View style={styles.seatBadgeContainer}>
-                  {selectedSeats.map((seat, index) => (
+                  {requestedSeatNumbers.map((seat) => (
                     <View key={seat} style={styles.approvedSeatBadge}>
                       <Text style={styles.approvedSeatText}>{seat}</Text>
                     </View>
@@ -1361,7 +1347,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             
             <View style={styles.fareBreakdown}>
               <Text style={styles.fareLabel}>
-                {selectedSeats.length} Seat(s) × ₹{ride.farePerSeat}
+                {requestedSeatNumbers.length} Seat(s) × ₹{ride.farePerSeat}
               </Text>
               <Text style={styles.fareTotal}>₹{totalAmount}</Text>
             </View>
@@ -1515,7 +1501,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               <View style={styles.bookingDetailRow}>
                 <Text style={styles.bookingDetailLabel}>Approved Seats</Text>
                 <View style={styles.seatBadgeContainer}>
-                  {selectedSeats.map((seat, index) => (
+                  {requestedSeatNumbers.map((seat) => (
                     <View key={seat} style={styles.approvedSeatBadge}>
                       <Text style={styles.approvedSeatText}>{seat}</Text>
                     </View>
@@ -1524,7 +1510,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               </View>
               <View style={styles.bookingDetailRow}>
                 <Text style={styles.bookingDetailLabel}>Total Amount</Text>
-                <Text style={styles.bookingDetailValue}>₹{selectedSeats.length * ride.farePerSeat}</Text>
+                <Text style={styles.bookingDetailValue}>₹{totalAmount}</Text>
               </View>
               <View style={styles.bookingDetailRow}>
                 <Text style={styles.bookingDetailLabel}>Status</Text>
@@ -1588,7 +1574,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             <View style={styles.completedFare}>
               <Text style={styles.completedFareLabel}>Total Fare</Text>
               <Text style={styles.completedFareValue}>
-                ₹{selectedSeats.length * ride.farePerSeat}
+                ₹{totalAmount}
               </Text>
             </View>
             <TouchableOpacity
@@ -1604,13 +1590,10 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     };
 
     return BookingModalStepContent;
-  }, [step, selectedSeats, customRequest, customFare, paymentMethod, walletBalance, processingPayment, pickupConfirmed, ride?.id, ride?.from, ride?.to, ride?.driver?.name, ride?.farePerSeat, ride?.availableSeats, ride?.driverMode, user?.id, handlePayment, handleRazorpaySuccess, handleRazorpayFailure, handleBack, handleClose, handlePickupConfirmation, handleDropConfirmation, handleSeatSelect, renderSeatLayout]);
+  }, [step, requestedSeatNumbers, totalAmount, customRequest, customFare, paymentMethod, walletBalance, processingPayment, pickupConfirmed, approvalCountdown, completionLoading, creatingBooking, driverModeInfo.label, handleRequestContinue, handleSeatsContinue, onClose, pickupActionLoading, ride, showAlert, trackingActive, handlePayment, handleBack, handleClose, handlePickupConfirmation, handleDropConfirmation, renderSeatLayout]);
 
   // Early return after all hooks
   if (!ride) return null;
-
-  // Computed values after hooks
-  const driverModeInfo = DRIVER_MODE_META[ride.driverMode];
 
   return (
     <>
@@ -1744,11 +1727,16 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     height: '80%',
     marginBottom: 65,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 10,
+    ...Platform.select({
+      web: { boxShadow: '0 -4px 8px rgba(0, 0, 0, 0.15)' },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        elevation: 10,
+      },
+    }),
   },
   modalHeader: {
     alignItems: 'center',

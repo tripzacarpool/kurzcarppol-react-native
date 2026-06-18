@@ -1,22 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Animated,
-  Dimensions,
+  Platform,
 } from 'react-native';
 import { X, Bell } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useNotifications } from '@/contexts/NotificationContext';
 
-const { width } = Dimensions.get('window');
-
 export default function NotificationToast() {
   const { notifications, clearNotification, markAsRead } = useNotifications();
   const [currentNotification, setCurrentNotification] = useState<any>(null);
   const slideAnim = React.useRef(new Animated.Value(-100)).current;
+
+  const hideNotification = useCallback((id: string) => {
+    markAsRead(id);
+    clearNotification(id);
+  }, [clearNotification, markAsRead]);
 
   useEffect(() => {
     // Show the latest unread notification
@@ -47,12 +50,7 @@ export default function NotificationToast() {
       }).start();
       setCurrentNotification(null);
     }
-  }, [notifications]);
-
-  const hideNotification = (id: string) => {
-    markAsRead(id);
-    clearNotification(id);
-  };
+  }, [hideNotification, notifications, slideAnim]);
 
   if (!currentNotification) {
     return null;
@@ -119,11 +117,16 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
     marginTop: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    ...Platform.select({
+      web: { boxShadow: '0 2px 4px rgba(0, 0, 0, 0.25)' },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+        elevation: 5,
+      },
+    }),
   },
   content: {
     flexDirection: 'row',

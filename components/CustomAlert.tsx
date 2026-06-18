@@ -6,6 +6,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { AlertCircle, CheckCircle, XCircle, Info } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
@@ -145,11 +146,16 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     borderWidth: 1,
     borderColor: Colors.dark.border,
-    shadowColor: Colors.dark.gold,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 10,
+    ...Platform.select({
+      web: { boxShadow: `0 4px 12px ${Colors.dark.gold}26` },
+      default: {
+        shadowColor: Colors.dark.gold,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 10,
+      },
+    }),
   },
   iconContainer: {
     alignItems: 'center',

@@ -27,6 +27,36 @@ export async function getBackendServiceStatus(): Promise<BackendReadiness> {
   return fetchBackendReadiness();
 }
 
+export function getApiErrorCode(error: any): string {
+  return (
+    error?.response?.data?.code ||
+    error?.response?.data?.errorCode ||
+    error?.code ||
+    ''
+  );
+}
+
+export function getApiErrorMessage(error: any, fallback = 'Something went wrong. Please try again.'): string {
+  const rawMessage =
+    error?.response?.data?.message ||
+    error?.response?.data?.error ||
+    error?.message ||
+    fallback;
+
+  if (
+    getApiErrorCode(error) === 'SEATS_UNAVAILABLE' ||
+    /No matching document found|VersionError|modifiedPaths/i.test(rawMessage)
+  ) {
+    return 'One or more selected seats were just booked by another passenger. Please choose another available seat.';
+  }
+
+  if (getApiErrorCode(error) === 'BOOKING_NOT_FOUND') {
+    return 'This booking is no longer active. Refresh the ride and try again.';
+  }
+
+  return rawMessage;
+}
+
 // Request interceptor to log outgoing requests
 apiClient.interceptors.request.use(
   (config) => {

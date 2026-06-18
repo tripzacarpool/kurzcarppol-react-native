@@ -1,6 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
-import { Award, Leaf, Zap } from 'lucide-react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { Award, Leaf } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { SafeDriverTier, RideStreak, CarbonCounter } from '@/types';
 
@@ -165,12 +165,12 @@ export const CarbonCounterDisplay: React.FC<CarbonCounterDisplayProps> = ({ carb
 };
 
 interface BadgeListProps {
-  badges: Array<{
+  badges: {
     type: string;
     displayName: string;
     level: string;
     awardedAt: string;
-  }>;
+  }[];
 }
 
 export const BadgeList: React.FC<BadgeListProps> = ({ badges }) => {

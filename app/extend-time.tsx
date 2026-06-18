@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,27 +9,21 @@ import {
   Alert,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { Clock, Calendar, MapPin, ArrowLeft } from 'lucide-react-native';
+import { Clock, Calendar, ArrowLeft } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import TimeExtensionPicker from '@/components/TimeExtensionPicker';
 import { extendRideOfferTime, getRideOfferById } from '@/lib/api';
 
 export default function ExtendTimeScreen() {
   const params = useLocalSearchParams();
-  const { offerId, rideId, from, to, departureTime } = params;
+  const { offerId, from, to, departureTime } = params;
 
   const [loading, setLoading] = useState(false);
   const [rideDetails, setRideDetails] = useState<any>(null);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [extending, setExtending] = useState(false);
 
-  useEffect(() => {
-    if (offerId) {
-      fetchRideDetails();
-    }
-  }, [offerId]);
-
-  const fetchRideDetails = async () => {
+  const fetchRideDetails = useCallback(async () => {
     try {
       setLoading(true);
       const response = await getRideOfferById(offerId as string);
@@ -42,7 +36,13 @@ export default function ExtendTimeScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [offerId]);
+
+  useEffect(() => {
+    if (offerId) {
+      fetchRideDetails();
+    }
+  }, [fetchRideDetails, offerId]);
 
   const handleExtendTime = async (newTime: Date) => {
     try {

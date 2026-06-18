@@ -51,6 +51,51 @@ const normalizeOfferForSave = (rideOffer) => {
   }
 };
 
+const isVersionConflict = (error) =>
+  error?.name === 'VersionError' ||
+  /No matching document found.*modifiedPaths/i.test(error?.message || '');
+
+const seatUnavailableError = (seatNumbers) =>
+  new RideOfferLifecycleError('Seats not available', {
+    status: 409,
+    code: 'SEATS_UNAVAILABLE',
+    details: `Seats ${seatNumbers.join(', ')} are already booked`,
+  });
+
+const getBookingPassengerClerkId = (booking) =>
+  booking?.passengerClerkId || booking?.passengerId;
+
+const getBookingDisplayName = (booking, fallback = 'Passenger') =>
+  booking?.userDetails?.name || booking?.passengerName || fallback;
+
+async function findRideOfferBooking({ ride, offerId, bookingId }) {
+  if (bookingId && mongoose.Types.ObjectId.isValid(bookingId)) {
+    const booking = await RideBooking.findById(bookingId);
+    if (booking?.rideId?.toString() === offerId) {
+      return {
+        booking,
+        source: 'document',
+      };
+    }
+  }
+
+  const embeddedBooking = bookingId
+    ? ride.bookings.id(bookingId)
+    : null;
+
+  if (embeddedBooking) {
+    return {
+      booking: embeddedBooking,
+      source: 'embedded',
+    };
+  }
+
+  return {
+    booking: null,
+    source: null,
+  };
+}
+
 export async function bookRideOfferSeats({
   offerId,
   passengerClerkId,
@@ -68,34 +113,6 @@ export async function bookRideOfferSeats({
     });
   }
 
-  const rideOffer = await RideOffer.findById(offerId);
-  if (!rideOffer) {
-    throw new RideOfferLifecycleError('Ride offer not found', {
-      status: 404,
-      code: 'RIDE_OFFER_NOT_FOUND',
-    });
-  }
-
-  if (
-    rideOffer.clerkId === passengerClerkId ||
-    rideOffer.driverId === passengerClerkId
-  ) {
-    throw new RideOfferLifecycleError('Drivers cannot book their own ride', {
-      status: 403,
-      code: 'DRIVER_CANNOT_BOOK_OWN_RIDE',
-    });
-  }
-
-  const unavailableSeats = seatNumbers.filter(
-    (seat) => !rideOffer.availableSeats.includes(seat),
-  );
-  if (unavailableSeats.length > 0) {
-    throw new RideOfferLifecycleError('Seats not available', {
-      code: 'SEATS_UNAVAILABLE',
-      details: `Seats ${unavailableSeats.join(', ')} are already booked`,
-    });
-  }
-
   const passenger = await UserProfile.findOne({ clerkId: passengerClerkId });
   if (!passenger) {
     throw new RideOfferLifecycleError('Passenger profile not found', {
@@ -104,45 +121,92 @@ export async function bookRideOfferSeats({
     });
   }
 
-  const totalAmount = seatNumbers.length * rideOffer.farePerSeat;
-  const booking = {
-    passengerId: passenger._id,
-    passengerClerkId,
-    passengerName:
-      `${passenger.firstName || ''} ${passenger.lastName || ''}`.trim() ||
-      passenger.email,
-    passengerPhone: passenger.phone || '',
-    seatNumbers,
-    totalAmount,
-    paymentMethod,
-    customRequest,
-    status: 'confirmed',
-    bookedAt: new Date(),
-  };
+  const maxSaveAttempts = 5;
+  let lastVersionConflict = null;
 
-  rideOffer.availableSeats = rideOffer.availableSeats.filter(
-    (seat) => !seatNumbers.includes(seat),
-  );
-  rideOffer.bookings.push(booking);
-  if (rideOffer.availableSeats.length === 0) {
-    rideOffer.status = 'booked';
+  for (let attempt = 1; attempt <= maxSaveAttempts; attempt += 1) {
+    const rideOffer = await RideOffer.findById(offerId);
+    if (!rideOffer) {
+      throw new RideOfferLifecycleError('Ride offer not found', {
+        status: 404,
+        code: 'RIDE_OFFER_NOT_FOUND',
+      });
+    }
+
+    if (
+      rideOffer.clerkId === passengerClerkId ||
+      rideOffer.driverId === passengerClerkId
+    ) {
+      throw new RideOfferLifecycleError('Drivers cannot book their own ride', {
+        status: 403,
+        code: 'DRIVER_CANNOT_BOOK_OWN_RIDE',
+      });
+    }
+
+    const unavailableSeats = seatNumbers.filter(
+      (seat) => !rideOffer.availableSeats.includes(seat),
+    );
+    if (unavailableSeats.length > 0) {
+      throw seatUnavailableError(unavailableSeats);
+    }
+
+    const totalAmount = seatNumbers.length * rideOffer.farePerSeat;
+    const booking = {
+      passengerId: passenger._id,
+      passengerClerkId,
+      passengerName:
+        `${passenger.firstName || ''} ${passenger.lastName || ''}`.trim() ||
+        passenger.email,
+      passengerPhone: passenger.phone || '',
+      seatNumbers,
+      totalAmount,
+      paymentMethod,
+      customRequest,
+      status: 'confirmed',
+      bookedAt: new Date(),
+    };
+
+    rideOffer.availableSeats = rideOffer.availableSeats.filter(
+      (seat) => !seatNumbers.includes(seat),
+    );
+    rideOffer.bookings.push(booking);
+    if (rideOffer.availableSeats.length === 0) {
+      rideOffer.status = 'booked';
+    }
+    normalizeOfferForSave(rideOffer);
+
+    try {
+      await rideOffer.save();
+
+      await publishEvent(EventTypes.RideOfferBooked, {
+        offerId: rideOffer._id.toString(),
+        passengerId: passengerClerkId,
+        driverId: rideOffer.driverId || rideOffer.clerkId,
+        seatNumbers,
+        totalAmount,
+        status: rideOffer.status,
+      });
+
+      return {
+        booking,
+        rideOffer,
+      };
+    } catch (error) {
+      if (isVersionConflict(error)) {
+        lastVersionConflict = error;
+        continue;
+      }
+      throw error;
+    }
   }
-  normalizeOfferForSave(rideOffer);
-  await rideOffer.save();
 
-  await publishEvent(EventTypes.RideOfferBooked, {
-    offerId: rideOffer._id.toString(),
-    passengerId: passengerClerkId,
-    driverId: rideOffer.driverId || rideOffer.clerkId,
-    seatNumbers,
-    totalAmount,
-    status: rideOffer.status,
+  throw new RideOfferLifecycleError('Booking conflict, please retry', {
+    status: 409,
+    code: 'BOOKING_CONFLICT',
+    details:
+      lastVersionConflict?.message ||
+      'The ride was updated while booking seats',
   });
-
-  return {
-    booking,
-    rideOffer,
-  };
 }
 
 export async function bookRideOfferSeatsFlow({
@@ -514,15 +578,31 @@ export async function initiateRideOfferPickup({
     });
   }
 
-  const booking = await RideBooking.findById(bookingId);
-  if (!booking || booking.rideId.toString() !== offerId) {
+  const { booking, source } = await findRideOfferBooking({
+    ride,
+    offerId,
+    bookingId,
+  });
+  if (!booking) {
     throw new RideOfferLifecycleError('Booking not found', {
       status: 404,
       code: 'BOOKING_NOT_FOUND',
     });
   }
 
-  if (booking.approvalStatus !== 'confirmed') {
+  const bookingPassengerClerkId = getBookingPassengerClerkId(booking);
+  if (passengerClerkId && bookingPassengerClerkId !== passengerClerkId) {
+    throw new RideOfferLifecycleError('Forbidden - not the booking passenger', {
+      status: 403,
+      code: 'NOT_PASSENGER',
+    });
+  }
+
+  const isConfirmed =
+    source === 'document'
+      ? booking.approvalStatus === 'confirmed'
+      : booking.status === 'confirmed';
+  if (!isConfirmed) {
     throw new RideOfferLifecycleError('Booking not confirmed', {
       code: 'BOOKING_NOT_CONFIRMED',
     });
@@ -544,13 +624,13 @@ export async function initiateRideOfferPickup({
   await publishEvent(EventTypes.RideOfferPickupInitiated, {
     offerId: ride._id.toString(),
     bookingId: booking._id.toString(),
-    passengerId: passengerClerkId,
+    passengerId: bookingPassengerClerkId,
     driverId: ride.driverId || ride.clerkId,
     status: ride.status,
   });
 
   const passenger = await UserProfile.findOne({
-    clerkId: passengerClerkId,
+    clerkId: bookingPassengerClerkId,
   }).select('pushToken');
 
   return {
@@ -576,15 +656,19 @@ export async function confirmRideOfferPassengerPickup({
     });
   }
 
-  const booking = await RideBooking.findById(bookingId);
-  if (!booking || booking.rideId.toString() !== offerId) {
+  const { booking } = await findRideOfferBooking({
+    ride,
+    offerId,
+    bookingId,
+  });
+  if (!booking) {
     throw new RideOfferLifecycleError('Booking not found', {
       status: 404,
       code: 'BOOKING_NOT_FOUND',
     });
   }
 
-  const bookingPassengerClerkId = booking.passengerClerkId || booking.passengerId;
+  const bookingPassengerClerkId = getBookingPassengerClerkId(booking);
   if (bookingPassengerClerkId !== passengerClerkId) {
     throw new RideOfferLifecycleError('Forbidden - not the booking passenger', {
       status: 403,
@@ -641,7 +725,7 @@ export async function initiateRideOfferPickupFlow({
     io.emit(`passenger:pickup-initiated:${passengerClerkId}`, {
       rideId: ride._id,
       bookingId: booking._id,
-      driverName: booking.userDetails?.name || 'Driver',
+      driverName: ride.driver?.name || 'Driver',
       message: 'Driver is ready for pickup. Please confirm when you board.',
     });
   }
@@ -683,8 +767,8 @@ export async function confirmRideOfferPassengerPickupFlow({
       rideId: ride._id,
       bookingId: booking._id,
       passengerClerkId,
-      passengerName: booking.userDetails?.name || 'Passenger',
-      message: `${booking.userDetails?.name || 'Passenger'} has confirmed boarding.`,
+      passengerName: getBookingDisplayName(booking),
+      message: `${getBookingDisplayName(booking)} has confirmed boarding.`,
       confirmedCount,
       totalBookings,
     });
@@ -694,7 +778,7 @@ export async function confirmRideOfferPassengerPickupFlow({
     await sendPushToToken({
       pushToken: driverPushToken,
       title: 'Passenger Boarded',
-      body: `${booking.userDetails?.name || 'Passenger'} has confirmed boarding. ${confirmedCount}/${totalBookings} passengers confirmed.`,
+      body: `${getBookingDisplayName(booking)} has confirmed boarding. ${confirmedCount}/${totalBookings} passengers confirmed.`,
       data: {
         type: 'pickup_confirmed',
         rideId: ride._id.toString(),

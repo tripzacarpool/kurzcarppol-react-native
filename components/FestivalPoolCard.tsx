@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Zap, Gift, Users, TrendingDown } from 'lucide-react-native';
+import { Gift, Users, TrendingDown } from 'lucide-react-native';
 import { FESTIVALS } from '@/constants/festivals';
 import type { Festival } from '@/types';
 

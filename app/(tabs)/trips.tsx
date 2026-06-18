@@ -1,10 +1,10 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator, Linking } from 'react-native';
 import { MapPin, Star, Calendar, User as UserIcon, Plus, X, Check, Clock, Phone, DollarSign, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/lib/ipService';
-import { getUserRides, cancelRide, getPassengerBookings, passengerConfirmRideOfferPickup, passengerConfirmPickup, completeRide, setAuthToken, submitRating, getPendingRatings, cancelPendingApproval, activateSOS } from '@/lib/api';
+import { getUserRides, cancelRide, getPassengerBookings, passengerConfirmRideOfferPickup, passengerConfirmPickup, completeRide, setAuthToken, submitRating, getPendingRatings, cancelPendingApproval, activateSOS, getApiErrorMessage } from '@/lib/api';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
 import RideRequestModal from '@/components/RideRequestModal';
 import RatingModal from '@/components/RatingModal';
@@ -202,7 +202,7 @@ export default function TripsScreen() {
       await fetchPassengerBookings();
     } catch (error) {
       console.error('❌ Error confirming pickup:', error);
-      showAlert('Error', 'Failed to confirm pickup. Try again.', 'error');
+      showAlert('Pickup changed', getApiErrorMessage(error, 'Failed to confirm pickup. Try again.'), 'warning');
     } finally {
       setConfirmingPickupFor(null);
     }
@@ -228,7 +228,7 @@ export default function TripsScreen() {
       await fetchUserRides();
     } catch (error) {
       console.error('Error confirming ride request pickup:', error);
-      showAlert('Error', 'Failed to confirm pickup. Try again.', 'error');
+      showAlert('Pickup changed', getApiErrorMessage(error, 'Failed to confirm pickup. Try again.'), 'warning');
     } finally {
       setConfirmingPickupFor(null);
     }
@@ -587,7 +587,6 @@ export default function TripsScreen() {
                         {booking.driver.phone && (
                           <TouchableOpacity
                             onPress={() => {
-                              const Linking = require('react-native').Linking;
                               Linking.openURL(`tel:${booking.driver.phone}`);
                             }}
                             style={styles.callDriverButton}>
@@ -733,7 +732,6 @@ export default function TripsScreen() {
                         {booking.driver.phone && (
                           <TouchableOpacity
                             onPress={() => {
-                              const Linking = require('react-native').Linking;
                               Linking.openURL(`tel:${booking.driver.phone}`);
                             }}
                             style={styles.callDriverButton}>
@@ -1134,7 +1132,6 @@ export default function TripsScreen() {
                               {ride.acceptedBy.driverPhone && (
                                 <TouchableOpacity
                                   onPress={() => {
-                                    const Linking = require('react-native').Linking;
                                     Linking.openURL(`tel:${ride.acceptedBy.driverPhone}`);
                                   }}
                                   style={styles.callDriverButton}>

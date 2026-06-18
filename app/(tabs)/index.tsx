@@ -229,12 +229,16 @@ export default function HomeScreen() {
     page?: number;
   } = {}) => {
     if (!user?.id) return;
-    const nextPage = page || (reset ? 1 : ridePage);
+      const nextPage = page || (reset ? 1 : ridePage);
 
-    try {
-      if (!silent) {
-        reset ? setLoadingRides(true) : setLoadingMoreRides(true);
-      }
+      try {
+        if (!silent) {
+          if (reset) {
+            setLoadingRides(true);
+          } else {
+            setLoadingMoreRides(true);
+          }
+        }
 
       const typedFrom = fromQuery.trim();
       const typedTo = toQuery.trim();
@@ -617,7 +621,7 @@ export default function HomeScreen() {
 
         setFieldFallbackMode(activeField);
         setFieldFallbackSuggestions(nearest);
-      } catch (error) {
+      } catch {
         if (!cancelled) setFieldFallbackSuggestions([]);
       } finally {
         if (!cancelled) setFieldFallbackLoading(false);
@@ -697,6 +701,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container}>
       <ScrollView 
         style={styles.scrollView} 
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onScroll={handleFeedScroll}
@@ -752,7 +757,7 @@ export default function HomeScreen() {
 
           <View style={styles.searchPanel}>
             <View style={styles.searchTitleRow}>
-              <View>
+              <View style={styles.searchTitleCopy}>
                 <Text style={styles.searchTitle}>Where are you going?</Text>
                 <Text style={styles.searchHint}>Choose pickup and destination to match rides faster</Text>
               </View>
@@ -1054,7 +1059,20 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+  scrollContent: {
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
+    ...Platform.select({
+      web: {
+        alignItems: 'center',
+      },
+    }),
+  },
   header: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 18 : 24,
     paddingBottom: 20,
@@ -1171,6 +1189,10 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 12,
   },
+  searchTitleCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
   searchTitle: {
     color: Colors.dark.text,
     fontSize: 16,
@@ -1228,6 +1250,8 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   routeTextInput: {
+    width: '100%',
+    minWidth: 0,
     color: Colors.dark.text,
     fontSize: 15,
     fontWeight: '700',
@@ -1310,6 +1334,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.pink,
   },
   toggleText: {
+    flex: 1,
+    minWidth: 0,
     color: Colors.dark.textSecondary,
     fontSize: 14,
     fontWeight: '600',
@@ -1319,6 +1345,7 @@ const styles = StyleSheet.create({
   },
   createRideButton: {
     flex: width < 390 ? 1 : 0,
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1353,6 +1380,9 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   ridesSection: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
     padding: 20,
     paddingTop: 0,
   },

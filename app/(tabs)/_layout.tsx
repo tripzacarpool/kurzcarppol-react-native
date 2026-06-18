@@ -21,7 +21,7 @@ function AnimatedTabIcon({ Icon, color, focused }: { Icon: any; color: string; f
         useNativeDriver: false,
       }),
     ]).start();
-  }, [focused]);
+  }, [focused, opacityAnim, scaleAnim]);
 
   return (
     <Animated.View
@@ -64,11 +64,16 @@ export default function TabLayout() {
           paddingBottom: Platform.OS === 'ios' ? 26 : 18,
           paddingTop: 12,
           height: Platform.OS === 'ios' ? 98 : 88,
-          elevation: 12,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: 0.16,
-          shadowRadius: 10,
+          ...Platform.select({
+            web: { boxShadow: '0 -4px 10px rgba(0, 0, 0, 0.16)' },
+            default: {
+              elevation: 12,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.16,
+              shadowRadius: 10,
+            },
+          }),
         },
         tabBarLabelStyle: {
           fontSize: 10,

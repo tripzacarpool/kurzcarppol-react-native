@@ -52,11 +52,11 @@ interface SOSAlert {
 
 type EmergencyServiceType = 'police' | 'ambulance' | 'fire' | 'disaster';
 
-const serviceActions: Array<{
+const serviceActions: {
   type: EmergencyServiceType;
   label: string;
   number: string;
-}> = [
+}[] = [
   { type: 'police', label: 'Police', number: '100' },
   { type: 'ambulance', label: 'Ambulance', number: '102' },
   { type: 'fire', label: 'Fire', number: '101' },
@@ -138,7 +138,7 @@ export default function AdminSOSPanel() {
         `${EMERGENCY_CONTACTS[serviceType.toUpperCase()]?.name || serviceType} has been marked as dispatched. Driver and passenger have been notified.`,
       );
       fetchActiveSOSAlerts();
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to dispatch emergency service');
     } finally {
       setProcessingRideId(null);
@@ -186,7 +186,7 @@ export default function AdminSOSPanel() {
           );
         }
         fetchActiveSOSAlerts();
-      } catch (error) {
+      } catch {
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.alert('Failed to resolve SOS alert');
         } else {

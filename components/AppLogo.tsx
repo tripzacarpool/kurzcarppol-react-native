@@ -1,4 +1,4 @@
-import { Image, View, StyleSheet, ImageSourcePropType } from 'react-native';
+import { Image, View, StyleSheet } from 'react-native';
 
 interface AppLogoProps {
   size?: number;

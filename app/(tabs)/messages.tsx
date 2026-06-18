@@ -15,10 +15,8 @@ import { MessageSquare, User, Clock, Phone } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import ChatModal from '@/components/ChatModal';
-import { getUserConversations, getRideOfferById, setAuthToken, markMessagesAsRead } from '@/lib/api';
-import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
+import { markMessagesAsRead } from '@/lib/api';
 import { useFocusEffect } from '@react-navigation/native';
-import { getLocationSocket, initializeLocationSocket } from '@/lib/locationSocket';
 import { useMessages } from '@/contexts/MessagesContext';
 import { setBadgeCount } from '@/lib/notificationService';
 
@@ -45,7 +43,6 @@ interface ConversationWithDetails extends Conversation {
 
 export default function MessagesScreen() {
   const { user } = useAuth();
-  const { getToken } = useClerkAuth();
   const { 
     conversations, 
     totalUnreadMessages, 
@@ -69,7 +66,7 @@ export default function MessagesScreen() {
     if (user?.id) {
       loadConversations();
     }
-  }, [user?.id]);
+  }, [loadConversations, user?.id]);
 
   // Real-time socket connection is now handled by MessagesContext
   // No need for local socket setup
@@ -108,7 +105,7 @@ export default function MessagesScreen() {
         
         markAllAsRead();
       }
-    }, [user?.id, conversations])
+    }, [conversations, refreshMessages, user?.id])
   );
 
   const onRefresh = useCallback(() => {

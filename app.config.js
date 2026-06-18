@@ -6,10 +6,12 @@ const getRequiredEnv = (key) => {
   return value;
 };
 
+const isProductionBuild = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+
 const apiUrl =
   process.env.EXPO_PUBLIC_API_URL ||
   process.env.EXPO_PUBLIC_API_BASE_URL ||
-  'http://localhost:5000';
+  (isProductionBuild ? undefined : 'http://localhost:5000');
 
 const socketUrl = process.env.EXPO_PUBLIC_SOCKET_URL || apiUrl;
 const googleMapsApiKey =
@@ -17,7 +19,7 @@ const googleMapsApiKey =
 const clerkPublishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || '';
 const razorpayKeyId = process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || '';
 
-if (process.env.NODE_ENV === 'production') {
+if (isProductionBuild) {
   getRequiredEnv('EXPO_PUBLIC_API_URL');
   getRequiredEnv('EXPO_PUBLIC_GOOGLE_MAPS_API_KEY');
   getRequiredEnv('EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY');

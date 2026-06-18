@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { MapPin, AlertCircle, Users, DollarSign, Clock } from 'lucide-react-native';
 import type { RouteType, CoverageLevel } from '@/types';
-import { ROUTE_TYPES, COVERAGE_EXPANSION_LEVELS } from '@/constants/routeTypes';
 
 interface RouteCard {
   id: string;
@@ -90,13 +89,13 @@ export const DistrictRouteShowcase: React.FC<DistrictRouteShowcaseProps> = ({
 };
 
 interface VillagePickupMapProps {
-  nearbyPickups: Array<{
+  nearbyPickups: {
     id: string;
     name: string;
     distance: number;
     lat: number;
     lng: number;
-  }>;
+  }[];
   onSelectPickup: (pickup: any) => void;
 }
 
@@ -150,14 +149,14 @@ export const VillagePickupSelector: React.FC<VillagePickupMapProps> = ({
 };
 
 interface RailwayConnectorProps {
-  stations: Array<{
+  stations: {
     id: string;
     name: string;
     city: string;
     category: string;
     availableRides: number;
     surgeMultiplier: number;
-  }>;
+  }[];
   onSelectStation: (station: any) => void;
 }
 

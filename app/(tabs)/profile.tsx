@@ -1,6 +1,6 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Switch, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Switch } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, Star, MapPin, Shield, Bell, HelpCircle, LogOut, ChevronRight, Car, Globe, Navigation, Wallet, MessageCircle } from 'lucide-react-native';
+import { User, Star, MapPin, Shield, Bell, HelpCircle, LogOut, ChevronRight, Car, Globe, Navigation, Wallet } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';

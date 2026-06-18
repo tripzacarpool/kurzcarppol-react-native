@@ -22,6 +22,7 @@ const components: MapComponents = {
 
 if (isNativePlatform) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mapsModule = require('react-native-maps');
 
     let isNativeComponentRegistered = false;
@@ -29,7 +30,7 @@ if (isNativePlatform) {
       // Throws when AIRMap view manager is missing from the native binary.
       requireNativeComponent('AIRMap');
       isNativeComponentRegistered = true;
-    } catch (nativeComponentError) {
+    } catch {
       // Attempt UIManager lookup for older runtimes as a secondary check.
       const hasLegacyRegistration = Boolean(
         UIManager?.getViewManagerConfig?.('AIRMap') || UIManager?.hasViewManagerConfig?.('AIRMap')

@@ -40,7 +40,7 @@ export default function TimeExtensionPicker({
     } else {
       scaleAnim.setValue(0);
     }
-  }, [visible]);
+  }, [scaleAnim, visible]);
 
   const quickOptions = [5, 10, 15, 30, 60];
 
