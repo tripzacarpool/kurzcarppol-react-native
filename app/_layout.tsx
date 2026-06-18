@@ -6,8 +6,7 @@ import { AuthProvider, useAuthContext } from '@/contexts/AuthContext';
 import { LocationProvider } from '@/contexts/LocationContext';
 import { NotificationProvider } from '@/contexts/NotificationContext';
 import { MessagesProvider } from '@/contexts/MessagesContext';
-import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
-import { Colors } from '@/constants/Colors';
+import { Platform } from 'react-native';
 // Conditional imports for Clerk based on platform
 import { ClerkProvider as ClerkProviderExpo } from '@clerk/clerk-expo';
 import { ClerkProvider as ClerkProviderReact } from '@clerk/clerk-react';
@@ -86,11 +85,8 @@ function RootLayoutNav() {
   }, [isSignedIn, router]);
 
   // Determine if we're ready to show the app
-  const isRoleLoaded = isSignedIn ? user?.role !== undefined : true;
-  const isReady = !isLoading && isRoleLoaded;
-
   useEffect(() => {
-    if (!isReady) {
+    if (isLoading) {
       return;
     }
 
@@ -98,9 +94,12 @@ function RootLayoutNav() {
     const onDriverDashboard = currentRoot === 'driver';
     const onPassengerTabs = currentRoot === '(tabs)';
     const isDriver = user?.role === 'ride_partner';
-    // Only enforce route protection - don't handle initial redirects
-    // Index screen handles initial routing
-    if (!isSignedIn || !currentRoot) {
+
+    if (!isSignedIn) {
+      const isPublicRoute = !currentRoot || currentRoot === '(auth)';
+      if (!isPublicRoute) {
+        router.replace('/(auth)/login');
+      }
       return;
     }
 
@@ -124,19 +123,7 @@ function RootLayoutNav() {
       router.replace('/(tabs)');
       return;
     }
-  }, [isReady, isSignedIn, segments, user?.role, router]);
-
-  // Show loading screen until role is loaded
-  if (!isReady) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.dark.gold} />
-        <Text style={styles.loadingText}>
-          {isLoading ? 'Loading...' : 'Setting up your account...'}
-        </Text>
-      </View>
-    );
-  }
+  }, [isLoading, isSignedIn, segments, user?.role, router]);
 
   return (
     <>
@@ -210,16 +197,3 @@ export default function RootLayout() {
   );
 }
 
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.dark.background,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: Colors.dark.textSecondary,
-  },
-});
