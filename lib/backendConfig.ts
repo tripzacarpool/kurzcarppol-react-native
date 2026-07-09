@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '');
-const WEB_API_URL = 'https://kurzcarppol-react-native-1.onrender.com';
+const RENDER_API_URL = 'https://kurzcarppol-react-native-1.onrender.com';
 const LOCAL_API_URL_PATTERN = /^(https?:\/\/)?(localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\.)/i;
 
 function isLocalApiUrl(value?: string) {
@@ -21,15 +21,15 @@ function getDefaultLocalApiUrl() {
 }
 
 export function getApiBaseUrl(): string {
-  if (Platform.OS !== 'web') {
+  if (Platform.OS !== 'web' && Platform.OS !== 'android') {
     return getDefaultLocalApiUrl();
   }
 
   const configuredApiUrl = getExpoExtra('apiUrl');
   const configured =
     !__DEV__ && isLocalApiUrl(configuredApiUrl)
-      ? WEB_API_URL
-      : configuredApiUrl || WEB_API_URL;
+      ? RENDER_API_URL
+      : configuredApiUrl || RENDER_API_URL;
 
   if (!configured) {
     throw new Error(
@@ -41,14 +41,14 @@ export function getApiBaseUrl(): string {
 }
 
 export function getSocketBaseUrl(): string {
-  if (Platform.OS !== 'web') {
+  if (Platform.OS !== 'web' && Platform.OS !== 'android') {
     return getDefaultLocalApiUrl();
   }
 
   const configuredSocketUrl = getExpoExtra('socketUrl');
   const configured =
     !__DEV__ && isLocalApiUrl(configuredSocketUrl)
-      ? WEB_API_URL
+      ? RENDER_API_URL
       : configuredSocketUrl || getApiBaseUrl();
 
   return trimTrailingSlash(configured);
