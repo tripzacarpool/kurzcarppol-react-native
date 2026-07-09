@@ -1,6 +1,0 @@
-2026/05/31-17:58:26.602 3f0c Reusing MANIFEST D:\Tripza\kurzcarppol-react-native\.brave-webtest-profile\Default\Local Storage\leveldb/MANIFEST-000001
-2026/05/31-17:58:26.610 3f0c Recovering log #3
-2026/05/31-17:58:26.616 3f0c Reusing old log D:\Tripza\kurzcarppol-react-native\.brave-webtest-profile\Default\Local Storage\leveldb/000003.log 
-2026/05/31-21:12:28.824 3f0c Level-0 table #5: started
-2026/05/31-21:12:28.842 3f0c Level-0 table #5: 11248 bytes OK
-2026/05/31-21:12:28.848 3f0c Delete type=0 #3

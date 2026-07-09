@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '');
+const PRODUCTION_API_URL = 'https://api.raaheasy.app';
 
 function getExpoExtra(key: string): string | undefined {
   const extra = Constants.expoConfig?.extra as Record<string, unknown> | undefined;
@@ -10,7 +11,7 @@ function getExpoExtra(key: string): string | undefined {
 }
 
 function getDefaultLocalApiUrl() {
-  if (!__DEV__) return undefined;
+  if (!__DEV__) return PRODUCTION_API_URL;
   if (Platform.OS === 'android') return 'http://10.0.2.2:5000';
   return 'http://127.0.0.1:5000';
 }

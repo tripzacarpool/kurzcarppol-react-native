@@ -7,11 +7,12 @@ const getRequiredEnv = (key) => {
 };
 
 const isProductionBuild = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+const productionApiUrl = 'https://api.raaheasy.app';
 
 const apiUrl =
   process.env.EXPO_PUBLIC_API_URL ||
   process.env.EXPO_PUBLIC_API_BASE_URL ||
-  (isProductionBuild ? undefined : 'http://localhost:5000');
+  (isProductionBuild ? productionApiUrl : 'http://localhost:5000');
 
 const socketUrl = process.env.EXPO_PUBLIC_SOCKET_URL || apiUrl;
 const googleMapsApiKey =
