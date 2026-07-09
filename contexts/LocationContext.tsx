@@ -40,7 +40,7 @@ export const useLocation = () => {
 };
 
 export function LocationProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, getAuthToken } = useAuth();
   const [location, setLocation] = useState<LocationData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +119,12 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         // Live ride tracking uses WebSocket (see lib/locationSocket.ts)
         // NO Google Maps API calls here - just backend storage
         try {
+          const token = await getAuthToken();
+          if (!token) {
+            console.log('Skipping backend location update until auth token is ready');
+            return;
+          }
+
           const API_URL = getApiBaseUrl();
           const locationUrl = `${API_URL}/api/users/location`;
           
@@ -140,6 +146,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(locationPayload),
             signal: controller.signal,

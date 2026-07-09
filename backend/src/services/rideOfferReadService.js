@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { RideOffer } from '../models/rideOffer.model.js';
 import { getRealtimeServer } from '../realtime/realtimeBus.js';
 import { sendPushToUsers } from './pushNotificationService.js';
+import { getOrCreateConversationForRide } from './chatService.js';
 
 const VEHICLE_TYPES = ['two_wheeler', 'three_wheeler', 'four_wheeler'];
 const DRIVER_PRIVACY_TYPES = ['full_detail', 'private_vehicle'];
@@ -537,6 +538,27 @@ export async function findRideOffersByDriver(clerkId) {
   const rideOffers = await RideOffer.find({ clerkId })
     .sort({ departureTime: -1, createdAt: -1 })
     .limit(50);
+
+  await Promise.all(
+    rideOffers.flatMap((offer) =>
+      (offer.bookings || [])
+        .filter(
+          (booking) =>
+            booking.status === 'confirmed' &&
+            (booking.passengerClerkId || booking.userId),
+        )
+        .map((booking) =>
+          getOrCreateConversationForRide({
+            rideId: offer._id.toString(),
+            driverId: offer.driverId || offer.clerkId,
+            passengerId: booking.passengerClerkId || booking.userId,
+            passengerName: booking.passengerName || booking.userName,
+          }).catch((error) => {
+            console.error('Could not ensure ride offer conversation:', error.message);
+          }),
+        ),
+    ),
+  );
 
   const now = Date.now();
   const formattedOffers = rideOffers.map((offer) => {

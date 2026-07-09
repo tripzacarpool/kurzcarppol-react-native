@@ -1,5 +1,5 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator, Linking } from 'react-native';
-import { MapPin, Star, Calendar, User as UserIcon, Plus, X, Check, Clock, Phone, DollarSign, Users } from 'lucide-react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, RefreshControl, ActivityIndicator, Linking, Platform, StatusBar } from 'react-native';
+import { MapPin, Star, Calendar, User as UserIcon, Plus, X, Check, Clock, Phone, DollarSign, Users, MessageSquare } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
@@ -9,6 +9,8 @@ import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
 import RideRequestModal from '@/components/RideRequestModal';
 import RatingModal from '@/components/RatingModal';
 import SOSButton from '@/components/SOSButton';
+import ChatModal from '@/components/ChatModal';
+import { BookingModal } from '@/components/BookingModal';
 import { 
   subscribeToRideAcceptance, 
   unsubscribeFromRideEvents, 
@@ -17,6 +19,9 @@ import {
   unsubscribeFromPickupEvents,
 } from '@/lib/locationSocket';
 import CustomAlert, { AlertButton, AlertType } from '@/components/CustomAlert';
+import { Ride } from '@/types';
+
+type TripsSection = 'upcoming' | 'requests' | 'old';
 
 export default function TripsScreen() {
   const { user } = useAuth();
@@ -25,12 +30,20 @@ export default function TripsScreen() {
   const [userRides, setUserRides] = useState<any[]>([]);
   const [rideOfferBookings, setRideOfferBookings] = useState<any[]>([]);
   const [loadingRides, setLoadingRides] = useState(false);
+  const [hasLoadedTrips, setHasLoadedTrips] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedTripsSection, setSelectedTripsSection] = useState<TripsSection>('upcoming');
   const [rideRequestModalVisible, setRideRequestModalVisible] = useState(false);
   const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
   const [confirmingPickupFor, setConfirmingPickupFor] = useState<string | null>(null);
   const [cancellingApprovalId, setCancellingApprovalId] = useState<string | null>(null);
   const [completingRideFor, setCompletingRideFor] = useState<string | null>(null);
+  const [chatModalVisible, setChatModalVisible] = useState(false);
+  const [selectedChatBooking, setSelectedChatBooking] = useState<any | null>(null);
+  const [resumeBookingModalVisible, setResumeBookingModalVisible] = useState(false);
+  const [resumeBookingRide, setResumeBookingRide] = useState<Ride | null>(null);
+  const [resumeBooking, setResumeBooking] = useState<any | null>(null);
+  const [resumeBookingStep, setResumeBookingStep] = useState<any>(undefined);
   
   // Rating modal state
   const [ratingModalVisible, setRatingModalVisible] = useState(false);
@@ -115,10 +128,129 @@ export default function TripsScreen() {
     }
   };
 
+  const getBookingRideId = (booking: any) =>
+    booking?.rideOffer?._id || booking?.rideId || booking?._id;
+
+  const getBookingDriverId = (booking: any) =>
+    booking?.driverId || booking?.driver?.id || booking?.rideOffer?.driverId || booking?.rideOffer?.clerkId;
+
+  const canMessageDriver = (booking: any) =>
+    Boolean(user?.id && getBookingRideId(booking) && getBookingDriverId(booking));
+
+  const openDriverChat = (booking: any) => {
+    if (!canMessageDriver(booking)) {
+      showAlert(
+        'Chat unavailable',
+        'Driver chat will be available once the booking is linked to a driver.',
+        'warning',
+      );
+      return;
+    }
+
+    setSelectedChatBooking(booking);
+    setChatModalVisible(true);
+  };
+
+  const getResumeStepForBooking = (booking: any) => {
+    if (booking?.approvalStatus === 'pending_approval') return 'approval-waiting';
+    if (booking?.hasConfirmedPickup) return 'tracking';
+    if (isBookedApprovalStatus(booking?.approvalStatus)) return 'boarding';
+    return 'confirm';
+  };
+
+  const mapBookingToRide = (booking: any): Ride | null => {
+    const rideOffer = booking?.rideOffer || {};
+    const rideId = getBookingRideId(booking);
+    const seatNumbers = Array.isArray(booking?.seatNumbers) ? booking.seatNumbers : [];
+    const seatCount = Math.max(1, seatNumbers.length || 1);
+    const farePerSeat = Math.max(
+      0,
+      Number(rideOffer.farePerSeat || booking?.fare || booking?.totalAmount / seatCount || 0),
+    );
+
+    if (!rideId) return null;
+
+    return {
+      id: rideId,
+      rideType: 'offer',
+      driverId: getBookingDriverId(booking) || 'driver',
+      driver: {
+        name: booking?.driver?.name || booking?.driverName || 'Driver',
+        rating: booking?.driver?.rating || 5,
+        gender: booking?.driver?.gender || 'other',
+        ridesCompleted: booking?.driver?.ridesCompleted || 0,
+        driverVerified: booking?.driver?.driverVerified,
+        verificationBatch: booking?.driver?.verificationBatch,
+      },
+      vehicleId: rideOffer.vehicleId || rideOffer.vehicle?._id || 'vehicle',
+      vehicle: {
+        model: rideOffer.vehicle?.model || rideOffer.vehicleModel || 'Vehicle',
+        number: rideOffer.vehicle?.number || rideOffer.vehicleNumber || 'N/A',
+        color: rideOffer.vehicle?.color || rideOffer.vehicleColor || 'Unknown',
+      },
+      vehicleType: rideOffer.vehicleType || 'four_wheeler',
+      from: rideOffer.from || booking?.from || 'Pickup',
+      to: rideOffer.to || booking?.to || 'Drop-off',
+      pickupPoint: {
+        name: rideOffer.from || 'Pickup',
+        lat: Number(rideOffer.pickupLatitude) || 0,
+        lng: Number(rideOffer.pickupLongitude) || 0,
+      },
+      dropPoint: {
+        name: rideOffer.to || 'Drop-off',
+        lat: Number(rideOffer.dropoffLatitude) || 0,
+        lng: Number(rideOffer.dropoffLongitude) || 0,
+      },
+      departureTime:
+        rideOffer.departureTime ||
+        rideOffer.scheduledDeparture ||
+        booking?.pickupTime ||
+        new Date().toISOString(),
+      scheduledDeparture: rideOffer.scheduledDeparture,
+      availableSeats: seatNumbers.length ? seatNumbers : rideOffer.availableSeats || [],
+      totalSeats: rideOffer.totalSeats || Math.max(4, seatCount + 1),
+      farePerSeat,
+      isWomenOnly: Boolean(rideOffer.womenOnly),
+      status: booking?.hasConfirmedPickup ? 'ongoing' : 'booked',
+      distance: rideOffer.distance || 'Route active',
+      duration: rideOffer.duration || 'ETA available after pickup',
+      driverMode: rideOffer.driverMode || 'all_access',
+      pickupLatitude: rideOffer.pickupLatitude,
+      pickupLongitude: rideOffer.pickupLongitude,
+      dropoffLatitude: rideOffer.dropoffLatitude,
+      dropoffLongitude: rideOffer.dropoffLongitude,
+      approvalMode: rideOffer.approvalMode || 'auto',
+      requiresManualApproval: Boolean(rideOffer.requiresManualApproval),
+      isFestivalRide: Boolean(rideOffer.isFestivalRide),
+      seatLocks: [],
+      bookingDetails: {
+        seatNumbers,
+        totalAmount: booking?.totalAmount || farePerSeat * seatCount,
+        customRequest: booking?.customRequest,
+        passengerName: user?.firstName || 'Passenger',
+      },
+    } as Ride;
+  };
+
+  const openBookingResume = (booking: any) => {
+    const ride = mapBookingToRide(booking);
+    if (!ride) {
+      showAlert('Trip unavailable', 'Ride details are missing. Refresh and try again.', 'warning');
+      return;
+    }
+
+    setResumeBookingRide(ride);
+    setResumeBooking(booking);
+    setResumeBookingStep(getResumeStepForBooking(booking));
+    setResumeBookingModalVisible(true);
+  };
+
   const fetchUserRides = async () => {
     if (!user?.id) return;
     try {
-      setLoadingRides(true);
+      if (!hasLoadedTrips) {
+        setLoadingRides(true);
+      }
       const response = await getUserRides(user.id);
       if (response.rides && Array.isArray(response.rides)) {
         setUserRides(response.rides);
@@ -130,6 +262,7 @@ export default function TripsScreen() {
       setUserRides([]);
     } finally {
       setLoadingRides(false);
+      setHasLoadedTrips(true);
     }
   };
 
@@ -171,6 +304,8 @@ export default function TripsScreen() {
     } catch (error) {
       console.error('❌ Error fetching ride offer bookings:', error);
       setRideOfferBookings([]);
+    } finally {
+      setHasLoadedTrips(true);
     }
   };
 
@@ -426,6 +561,37 @@ export default function TripsScreen() {
   };
 
   const userName = userProfile?.full_name?.split(' ')[0] || user?.firstName?.split(' ')[0] || 'there';
+  const isBookedApprovalStatus = (status?: string) =>
+    status === 'confirmed' || status === 'auto_accepted';
+
+  const getTimeMs = (...values: any[]) => {
+    for (const value of values) {
+      if (!value) continue;
+      const ms = new Date(value).getTime();
+      if (Number.isFinite(ms)) return ms;
+    }
+    return null;
+  };
+
+  const nowMs = Date.now();
+  const isBookingPast = (booking: any) => {
+    const departureMs = getTimeMs(
+      booking.rideOffer?.departureTime,
+      booking.rideOffer?.scheduledDeparture,
+      booking.createdAt,
+    );
+    return departureMs !== null && departureMs < nowMs;
+  };
+
+  const isRideRequestPast = (ride: any) => {
+    const departureMs = getTimeMs(
+      ride.scheduledDeparture,
+      ride.departureTime,
+      ride.latestDeparture,
+      ride.createdAt,
+    );
+    return departureMs !== null && departureMs < nowMs;
+  };
   
   // Filter out old cancelled/completed rides (older than 48 hours)
   const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -448,7 +614,7 @@ export default function TripsScreen() {
   const activeRides = rideOfferBookings.filter(
     (booking) => {
       const isActive = booking.hasConfirmedPickup && 
-                      booking.approvalStatus === 'confirmed' && 
+                      isBookedApprovalStatus(booking.approvalStatus) &&
                       ['waiting', 'booked', 'ongoing'].includes(booking.rideOffer?.status);
       
       if (booking.hasConfirmedPickup) {
@@ -469,12 +635,24 @@ export default function TripsScreen() {
 
   // Filter bookings that need pickup confirmation
   const pendingPickups = rideOfferBookings.filter(
-    (booking) => booking.driverInitiatedPickup && !booking.hasConfirmedPickup && booking.approvalStatus === 'confirmed'
+    (booking) => booking.driverInitiatedPickup && !booking.hasConfirmedPickup && isBookedApprovalStatus(booking.approvalStatus)
   );
 
   // Filter confirmed bookings (approved but not yet picked up)
   const confirmedBookings = rideOfferBookings.filter(
-    (booking) => booking.approvalStatus === 'confirmed' && !booking.driverInitiatedPickup && !booking.hasConfirmedPickup
+    (booking) =>
+      isBookedApprovalStatus(booking.approvalStatus) &&
+      !booking.driverInitiatedPickup &&
+      !booking.hasConfirmedPickup &&
+      !isBookingPast(booking)
+  );
+
+  const pastConfirmedBookings = rideOfferBookings.filter(
+    (booking) =>
+      isBookedApprovalStatus(booking.approvalStatus) &&
+      !booking.driverInitiatedPickup &&
+      !booking.hasConfirmedPickup &&
+      isBookingPast(booking)
   );
 
   // Filter pending approval bookings
@@ -497,9 +675,28 @@ export default function TripsScreen() {
     (booking) => booking.approvalStatus === 'cancelled'
   );
 
+  const currentRideRequests = displayRides.filter(
+    (ride) =>
+      ['waiting', 'accepted', 'ongoing', 'in_progress'].includes(ride.status) &&
+      !isRideRequestPast(ride),
+  );
+  const oldRideRequests = displayRides.filter(
+    (ride) =>
+      ['cancelled', 'completed'].includes(ride.status) ||
+      isRideRequestPast(ride),
+  );
+  const oldBookings = [
+    ...pastConfirmedBookings,
+    ...rejectedBookings,
+    ...completedBookings,
+    ...cancelledBookings,
+  ];
+
   // Calculate total active bookings (excluding completed/cancelled/rejected)
-  const activeBookingsCount = activeRides.length + pendingPickups.length + confirmedBookings.length + pendingApprovalBookings.length;
-  const totalRides = displayRides.length + activeBookingsCount;
+  const upcomingCount = activeRides.length + pendingPickups.length + confirmedBookings.length;
+  const requestsCount = pendingApprovalBookings.length + currentRideRequests.length;
+  const oldCount = oldBookings.length + oldRideRequests.length;
+  const totalRides = upcomingCount + requestsCount + oldCount;
 
   console.log('📊 Trips screen breakdown:', {
     activeRides: activeRides.length,
@@ -528,6 +725,32 @@ export default function TripsScreen() {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.sectionTabs}>
+        {[
+          { key: 'upcoming' as const, label: 'Upcoming', count: upcomingCount },
+          { key: 'requests' as const, label: 'Requests', count: requestsCount },
+          { key: 'old' as const, label: 'Old', count: oldCount },
+        ].map((tab) => {
+          const isSelected = selectedTripsSection === tab.key;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={[styles.sectionTab, isSelected && styles.sectionTabActive]}
+              onPress={() => setSelectedTripsSection(tab.key)}
+              activeOpacity={0.75}>
+              <Text style={[styles.sectionTabText, isSelected && styles.sectionTabTextActive]}>
+                {tab.label}
+              </Text>
+              <View style={[styles.sectionTabBadge, isSelected && styles.sectionTabBadgeActive]}>
+                <Text style={[styles.sectionTabBadgeText, isSelected && styles.sectionTabBadgeTextActive]}>
+                  {tab.count}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       <ScrollView 
         style={styles.scrollView} 
         showsVerticalScrollIndicator={false}
@@ -535,7 +758,7 @@ export default function TripsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {loadingRides ? (
+        {loadingRides && !hasLoadedTrips ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={Colors.dark.gold} />
             <Text style={styles.loadingText}>Loading your rides...</Text>
@@ -543,12 +766,16 @@ export default function TripsScreen() {
         ) : (
           <>
             {/* Active/Ongoing Rides Section - Highest Priority */}
-            {activeRides.length > 0 && (
+            {selectedTripsSection === 'upcoming' && activeRides.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>🚗 Active Ride</Text>
                 <Text style={styles.sectionSubtitle}>Your current trip is in progress</Text>
                 {activeRides.map((booking) => (
-                  <View key={booking._id} style={[styles.tripCard, styles.activeRideCard]}>
+                  <TouchableOpacity
+                    key={booking._id}
+                    style={[styles.tripCard, styles.activeRideCard]}
+                    onPress={() => openBookingResume(booking)}
+                    activeOpacity={0.86}>
                     <View style={styles.activeRideHeader}>
                       <View style={styles.activeRideBadge}>
                         <View style={styles.liveDot} />
@@ -592,6 +819,15 @@ export default function TripsScreen() {
                             style={styles.callDriverButton}>
                             <Phone size={16} color={Colors.dark.gold} />
                             <Text style={styles.callDriverText}>Call Driver</Text>
+                          </TouchableOpacity>
+                        )}
+                        {canMessageDriver(booking) && (
+                          <TouchableOpacity
+                            onPress={() => openDriverChat(booking)}
+                            style={styles.messageDriverButton}
+                            activeOpacity={0.7}>
+                            <MessageSquare size={16} color={Colors.dark.gold} />
+                            <Text style={styles.messageDriverText}>Message Driver</Text>
                           </TouchableOpacity>
                         )}
                       </View>
@@ -649,18 +885,22 @@ export default function TripsScreen() {
                     <View style={styles.activeRideFooter}>
                       <Text style={styles.activeRideFooterText}>🎯 Traveling to destination...</Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
 
             {/* Pending Pickups Section - Most Important */}
-            {pendingPickups.length > 0 && (
+            {selectedTripsSection === 'upcoming' && pendingPickups.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>🚗 Pickup Verification Required</Text>
                 <Text style={styles.sectionSubtitle}>Driver is waiting for you to confirm boarding</Text>
                 {pendingPickups.map((booking) => (
-                  <View key={booking._id} style={[styles.tripCard, styles.pickupVerificationCard]}>
+                  <TouchableOpacity
+                    key={booking._id}
+                    style={[styles.tripCard, styles.pickupVerificationCard]}
+                    onPress={() => openBookingResume(booking)}
+                    activeOpacity={0.86}>
                     {/* Verification Header with Shield Icon */}
                     <View style={styles.verificationHeader}>
                       <View style={styles.shieldIconContainer}>
@@ -739,6 +979,15 @@ export default function TripsScreen() {
                             <Text style={styles.callDriverText}>Call Driver</Text>
                           </TouchableOpacity>
                         )}
+                        {canMessageDriver(booking) && (
+                          <TouchableOpacity
+                            onPress={() => openDriverChat(booking)}
+                            style={styles.messageDriverButton}
+                            activeOpacity={0.7}>
+                            <MessageSquare size={16} color={Colors.dark.gold} />
+                            <Text style={styles.messageDriverText}>Message Driver</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
                     )}
 
@@ -765,18 +1014,22 @@ export default function TripsScreen() {
                         </>
                       )}
                     </TouchableOpacity>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
 
             {/* Confirmed Bookings - Waiting for Driver */}
-            {confirmedBookings.length > 0 && (
+            {selectedTripsSection === 'upcoming' && confirmedBookings.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>✅ Approved Bookings</Text>
-                <Text style={styles.sectionSubtitle}>Driver approved • Pickup verification will appear when driver arrives</Text>
+                <Text style={styles.sectionTitle}>Upcoming Booked Trip</Text>
+                <Text style={styles.sectionSubtitle}>Tap a trip to resume pickup verification, chat, or live tracking</Text>
                 {confirmedBookings.map((booking) => (
-                  <View key={booking._id} style={styles.tripCard}>
+                  <TouchableOpacity
+                    key={booking._id}
+                    style={styles.tripCard}
+                    onPress={() => openBookingResume(booking)}
+                    activeOpacity={0.86}>
                     <View style={styles.tripHeader}>
                       <View style={styles.routeInfo}>
                         <View style={styles.routeRow}>
@@ -828,6 +1081,21 @@ export default function TripsScreen() {
                       </View>
                     )}
 
+                    {canMessageDriver(booking) && (
+                      <TouchableOpacity
+                        style={styles.messageDriverButtonWide}
+                        onPress={() => openDriverChat(booking)}
+                        activeOpacity={0.7}>
+                        <MessageSquare size={16} color={Colors.dark.gold} />
+                        <Text style={styles.messageDriverText}>Message Driver</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <View style={styles.resumeHintRow}>
+                      <Text style={styles.resumeHintText}>Tap card to resume trip flow</Text>
+                      <Text style={styles.resumeHintArrow}>›</Text>
+                    </View>
+
                     {hasPendingRatingForBooking(booking) && (
                       <TouchableOpacity
                         style={styles.rateButton}
@@ -837,18 +1105,22 @@ export default function TripsScreen() {
                         <Text style={styles.rateButtonText}>Rate Driver</Text>
                       </TouchableOpacity>
                     )}
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
 
             {/* Pending Approval Bookings */}
-            {pendingApprovalBookings.length > 0 && (
+            {selectedTripsSection === 'requests' && pendingApprovalBookings.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>⏳ Pending Approval</Text>
                 <Text style={styles.sectionSubtitle}>Waiting for driver to approve your request</Text>
                 {pendingApprovalBookings.map((booking) => (
-                  <View key={booking._id} style={styles.tripCard}>
+                  <TouchableOpacity
+                    key={booking._id}
+                    style={styles.tripCard}
+                    onPress={() => openBookingResume(booking)}
+                    activeOpacity={0.86}>
                     <View style={styles.tripHeader}>
                       <View style={styles.routeInfo}>
                         <View style={styles.routeRow}>
@@ -919,13 +1191,51 @@ export default function TripsScreen() {
                         </>
                       )}
                     </TouchableOpacity>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
 
             {/* Rejected/Expired Bookings */}
-            {rejectedBookings.length > 0 && (
+            {selectedTripsSection === 'old' && pastConfirmedBookings.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Past Booked Trips</Text>
+                <Text style={styles.sectionSubtitle}>Booked trips whose pickup time has passed</Text>
+                {pastConfirmedBookings.map((booking) => (
+                  <View key={booking._id} style={styles.tripCard}>
+                    <View style={styles.tripHeader}>
+                      <View style={styles.routeInfo}>
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.gold} />
+                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.pink} />
+                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.statusBadge, styles.waitingBadge]}>
+                        <Text style={[styles.statusText, styles.waitingText]}>Past</Text>
+                      </View>
+                    </View>
+                    <View style={styles.divider} />
+                    <View style={styles.tripDetails}>
+                      {booking.rideOffer?.departureTime && (
+                        <View style={styles.detailRow}>
+                          <Calendar size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>
+                            {new Date(booking.rideOffer.departureTime).toLocaleString()}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {selectedTripsSection === 'old' && rejectedBookings.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>❌ Rejected/Expired</Text>
                 <Text style={styles.sectionSubtitle}>These bookings were not approved</Text>
@@ -974,8 +1284,35 @@ export default function TripsScreen() {
               </View>
             )}
 
+            {selectedTripsSection === 'old' && cancelledBookings.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Cancelled Bookings</Text>
+                <Text style={styles.sectionSubtitle}>Bookings cancelled before travel</Text>
+                {cancelledBookings.map((booking) => (
+                  <View key={booking._id} style={styles.tripCard}>
+                    <View style={styles.tripHeader}>
+                      <View style={styles.routeInfo}>
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.gold} />
+                          <Text style={styles.location}>{booking.rideOffer?.from || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeRow}>
+                          <MapPin size={14} color={Colors.dark.pink} />
+                          <Text style={styles.location}>{booking.rideOffer?.to || 'N/A'}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.statusBadge, styles.cancelledBadge]}>
+                        <Text style={[styles.statusText, styles.cancelledText]}>Cancelled</Text>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
             {/* Completed Bookings */}
-            {completedBookings.length > 0 && (
+            {selectedTripsSection === 'old' && completedBookings.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>✅ Completed Rides</Text>
                 <Text style={styles.sectionSubtitle}>Your finished rides</Text>
@@ -1030,16 +1367,26 @@ export default function TripsScreen() {
                         </View>
                       </View>
                     )}
+
+                    {canMessageDriver(booking) && (
+                      <TouchableOpacity
+                        style={styles.messageDriverButtonWide}
+                        onPress={() => openDriverChat(booking)}
+                        activeOpacity={0.7}>
+                        <MessageSquare size={16} color={Colors.dark.gold} />
+                        <Text style={styles.messageDriverText}>Message Driver</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 ))}
               </View>
             )}
 
             {/* Ride Requests Section */}
-            {displayRides.length > 0 && (
+            {selectedTripsSection === 'requests' && currentRideRequests.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>📍 My Ride Requests</Text>
-                {displayRides.map((ride, index) => {
+                {currentRideRequests.map((ride, index) => {
                   const isRideRequestActive = ['accepted', 'ongoing', 'in_progress'].includes(ride.status);
                   const hasDriverMarkedPickup = Boolean(ride.pickupStatus?.driverConfirmedAt);
                   const hasPassengerConfirmedPickup = Boolean(ride.pickupStatus?.passengerConfirmedAt);
@@ -1190,10 +1537,67 @@ export default function TripsScreen() {
               </View>
             )}
 
-            {displayRides.length === 0 && rideOfferBookings.length === 0 && (
+            {selectedTripsSection === 'old' && oldRideRequests.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Old Ride Requests</Text>
+                <Text style={styles.sectionSubtitle}>Past, cancelled, and completed requests</Text>
+                {oldRideRequests.map((ride, index) => {
+                  const rideId = ride.id || ride._id || index;
+                  return (
+                    <View key={rideId} style={styles.tripCard}>
+                      <View style={styles.tripHeader}>
+                        <View style={styles.routeInfo}>
+                          <View style={styles.routeRow}>
+                            <MapPin size={14} color={Colors.dark.gold} />
+                            <Text style={styles.location}>{ride.from}</Text>
+                          </View>
+                          <View style={styles.routeLine} />
+                          <View style={styles.routeRow}>
+                            <MapPin size={14} color={Colors.dark.pink} />
+                            <Text style={styles.location}>{ride.to}</Text>
+                          </View>
+                        </View>
+                        <View style={[styles.statusBadge, styles.cancelledBadge]}>
+                          <Text style={[styles.statusText, styles.cancelledText]}>
+                            {ride.status === 'completed' ? 'Completed' : ride.status === 'cancelled' ? 'Cancelled' : 'Past'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.divider} />
+
+                      <View style={styles.tripDetails}>
+                        <View style={styles.detailRow}>
+                          <Calendar size={14} color={Colors.dark.textSecondary} />
+                          <Text style={styles.detailText}>
+                            {new Date(ride.scheduledDeparture || ride.departureTime || ride.createdAt).toLocaleString()}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {((selectedTripsSection === 'upcoming' && upcomingCount === 0) ||
+              (selectedTripsSection === 'requests' && requestsCount === 0) ||
+              (selectedTripsSection === 'old' && oldCount === 0)) && (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>No rides yet</Text>
-                <Text style={styles.emptySubtext}>Create a ride request or book a ride to get started</Text>
+                <Text style={styles.emptyText}>
+                  {selectedTripsSection === 'upcoming'
+                    ? 'No upcoming trips'
+                    : selectedTripsSection === 'requests'
+                      ? 'No waiting requests'
+                      : 'No old rides'}
+                </Text>
+                <Text style={styles.emptySubtext}>
+                  {selectedTripsSection === 'requests'
+                    ? 'Ride requests waiting for drivers will appear here'
+                    : selectedTripsSection === 'old'
+                      ? 'Completed, cancelled, and past rides will appear here'
+                      : 'Create a ride request or book a ride to get started'}
+                </Text>
                 <TouchableOpacity
                   style={styles.createRideBtn}
                   onPress={() => setRideRequestModalVisible(true)}
@@ -1212,6 +1616,7 @@ export default function TripsScreen() {
         onClose={() => setRideRequestModalVisible(false)}
         onRideCreated={() => {
           console.log('✅ Ride created successfully');
+          setSelectedTripsSection('requests');
           fetchUserRides();
         }}
       />
@@ -1229,6 +1634,37 @@ export default function TripsScreen() {
         to={selectedRideForRating?.to}
       />
 
+      <BookingModal
+        visible={resumeBookingModalVisible}
+        ride={resumeBookingRide}
+        initialStep={resumeBookingStep}
+        initialBooking={resumeBooking}
+        onClose={() => {
+          setResumeBookingModalVisible(false);
+          setResumeBookingRide(null);
+          setResumeBooking(null);
+          setResumeBookingStep(undefined);
+          fetchPassengerBookings();
+          fetchUserRides();
+        }}
+      />
+
+      {selectedChatBooking && user?.id && (
+        <ChatModal
+          visible={chatModalVisible}
+          onClose={() => {
+            setChatModalVisible(false);
+            fetchPassengerBookings();
+          }}
+          rideId={getBookingRideId(selectedChatBooking)}
+          driverId={getBookingDriverId(selectedChatBooking)}
+          driverName={selectedChatBooking.driver?.name || 'Driver'}
+          driverPhone={selectedChatBooking.driver?.phone}
+          passengerId={user.id}
+          passengerName={user.firstName || 'You'}
+        />
+      )}
+
       <CustomAlert
         visible={alertVisible}
         title={alertConfig.title}
@@ -1245,6 +1681,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.dark.background,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
   },
   header: {
     flexDirection: 'row',
@@ -1274,6 +1711,56 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
     paddingHorizontal: 20,
+  },
+  sectionTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+  },
+  sectionTab: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  sectionTabActive: {
+    borderColor: Colors.dark.gold,
+    backgroundColor: Colors.dark.gold + '18',
+  },
+  sectionTabText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  sectionTabTextActive: {
+    color: Colors.dark.gold,
+  },
+  sectionTabBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.dark.backgroundSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  sectionTabBadgeActive: {
+    backgroundColor: Colors.dark.gold,
+  },
+  sectionTabBadgeText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  sectionTabBadgeTextActive: {
+    color: Colors.dark.background,
   },
   loadingContainer: {
     justifyContent: 'center',
@@ -1650,6 +2137,57 @@ const styles = StyleSheet.create({
     color: Colors.dark.gold,
     fontSize: 14,
     fontWeight: '600',
+  },
+  messageDriverButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: Colors.dark.gold + '16',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '45',
+  },
+  messageDriverButtonWide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: Colors.dark.gold + '16',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '45',
+  },
+  messageDriverText: {
+    color: Colors.dark.gold,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  resumeHintRow: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  resumeHintText: {
+    color: Colors.dark.gold,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  resumeHintArrow: {
+    color: Colors.dark.gold,
+    fontSize: 24,
+    lineHeight: 24,
+    fontWeight: '700',
   },
   activeRideInfo: {
     marginTop: 12,

@@ -4,6 +4,11 @@ import rateLimit from 'express-rate-limit';
 import { env, isDevelopment } from '../../config/env.js';
 
 export function securityMiddleware() {
+  const isReadHeavyDiscoveryRequest = (req) =>
+    req.method === 'GET' &&
+    (req.path === '/api/rides/available' ||
+      req.path === '/api/ride-offers/available');
+
   const corsOptions = {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
@@ -42,7 +47,9 @@ export function securityMiddleware() {
       windowMs: env.rateLimitWindowMs,
       max: env.rateLimitMax,
       skip: (req) =>
-        req.path.startsWith('/health') || req.path === '/metrics',
+        req.path.startsWith('/health') ||
+        req.path === '/metrics' ||
+        (isDevelopment && isReadHeavyDiscoveryRequest(req)),
       standardHeaders: true,
       legacyHeaders: false,
       handler: (req, res) =>

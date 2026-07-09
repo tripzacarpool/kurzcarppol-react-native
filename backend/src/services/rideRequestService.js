@@ -12,7 +12,7 @@ import {
 } from './rideFareService.js';
 import {
   buildRideNotification,
-  notifyRidePartners,
+  notifyNearbyRidePartners,
 } from './rideNotificationService.js';
 
 class RideRequestError extends Error {
@@ -23,6 +23,61 @@ class RideRequestError extends Error {
     this.details = details;
   }
 }
+
+const DEFAULT_DRIVER_PICKUP_RADIUS_KM = 12;
+
+const toNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toRadians = (degrees) => degrees * (Math.PI / 180);
+
+const isNearPickup = (driverLocation, rideRequest, radiusKm) => {
+  if (!driverLocation) return false;
+
+  const pickupLat = toNumber(rideRequest.pickupLatitude);
+  const pickupLng = toNumber(rideRequest.pickupLongitude);
+  const driverLat = toNumber(driverLocation.latitude);
+  const driverLng = toNumber(driverLocation.longitude);
+
+  if (
+    pickupLat !== null &&
+    pickupLng !== null &&
+    driverLat !== null &&
+    driverLng !== null
+  ) {
+    const dLat = toRadians(driverLat - pickupLat);
+    const dLng = toRadians(driverLng - pickupLng);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRadians(pickupLat)) *
+        Math.cos(toRadians(driverLat)) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+    const distanceKm = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return distanceKm <= radiusKm;
+  }
+
+  const pickupCity = (rideRequest.pickupCity || '').trim().toLowerCase();
+  const driverCity = (driverLocation.city || '').trim().toLowerCase();
+  return Boolean(pickupCity && driverCity && pickupCity === driverCity);
+};
+
+const findNearbyRidePartnerIds = async (rideRequest, radiusKm) => {
+  const drivers = await UserProfile.find({
+    role: 'ride_partner',
+    isActive: true,
+    clerkId: { $ne: rideRequest.clerkId },
+    location: { $exists: true },
+  })
+    .select('clerkId location')
+    .lean();
+
+  return drivers
+    .filter((driver) => isNearPickup(driver.location, rideRequest, radiusKm))
+    .map((driver) => driver.clerkId);
+};
 
 export async function createRideRequestForPassenger(clerkId, payload = {}) {
   const {
@@ -185,7 +240,7 @@ export async function createRideRequestForPassengerFlow(clerkId, payload = {}) {
 
   const io = getRealtimeServer();
   if (io) {
-    io.emit('new_ride_request', {
+    const payload = {
       rideId: rideRequest._id,
       from: rideRequest.from,
       to: rideRequest.to,
@@ -193,6 +248,10 @@ export async function createRideRequestForPassengerFlow(clerkId, payload = {}) {
       vehicleType: rideRequest.vehicleType,
       womenOnly: rideRequest.womenOnly,
       notes: rideRequest.notes,
+      pickupLatitude: rideRequest.pickupLatitude,
+      pickupLongitude: rideRequest.pickupLongitude,
+      pickupCity: rideRequest.pickupCity,
+      pickupCountry: rideRequest.pickupCountry,
       scheduledDeparture: rideRequest.scheduledDeparture,
       earliestDeparture: rideRequest.earliestDeparture,
       latestDeparture: rideRequest.latestDeparture,
@@ -204,10 +263,18 @@ export async function createRideRequestForPassengerFlow(clerkId, payload = {}) {
       status: rideRequest.status,
       createdAt: rideRequest.createdAt,
       createdBy: clerkId,
+    };
+    const nearbyDriverIds = await findNearbyRidePartnerIds(
+      rideRequest,
+      DEFAULT_DRIVER_PICKUP_RADIUS_KM,
+    );
+
+    nearbyDriverIds.forEach((driverId) => {
+      io.to(`user:${driverId}`).emit('new_ride_request', payload);
     });
   }
 
-  notifyRidePartners(
+  notifyNearbyRidePartners(
     buildRideNotification('ride_created', rideRequest, {
       action: 'view_request',
       data: {
@@ -216,7 +283,13 @@ export async function createRideRequestForPassengerFlow(clerkId, payload = {}) {
         driverGuaranteedFare: rideRequest.driverGuaranteedFare,
       },
     }),
-    { excludeClerkId: clerkId },
+    {
+      excludeClerkId: clerkId,
+      pickupLatitude: rideRequest.pickupLatitude,
+      pickupLongitude: rideRequest.pickupLongitude,
+      pickupCity: rideRequest.pickupCity,
+      radiusKm: DEFAULT_DRIVER_PICKUP_RADIUS_KM,
+    },
   ).catch((error) =>
     console.error('Ride request notification error:', error.message),
   );

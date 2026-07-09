@@ -197,6 +197,10 @@ export async function sendPushToUsersByRole({
   body,
   data = {},
   excludeClerkId,
+  pickupLatitude,
+  pickupLongitude,
+  pickupCity,
+  radiusKm = 12,
   limit = 100,
 }) {
   const query = {
@@ -209,10 +213,50 @@ export async function sendPushToUsersByRole({
   }
 
   const users = await UserProfile.find(query)
-    .select('clerkId pushToken')
+    .select('clerkId pushToken location')
     .limit(limit);
 
-  const messages = users.map((user) => ({
+  const toNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const toRadians = (degrees) => degrees * (Math.PI / 180);
+  const pickupLat = toNumber(pickupLatitude);
+  const pickupLng = toNumber(pickupLongitude);
+  const normalizedPickupCity = (pickupCity || '').trim().toLowerCase();
+  const boundedRadius = Math.min(Math.max(Number(radiusKm) || 12, 1), 50);
+
+  const filteredUsers =
+    role === 'ride_partner' && (pickupLat !== null || normalizedPickupCity)
+      ? users.filter((user) => {
+          const location = user.location || {};
+          const driverLat = toNumber(location.latitude);
+          const driverLng = toNumber(location.longitude);
+
+          if (
+            pickupLat !== null &&
+            pickupLng !== null &&
+            driverLat !== null &&
+            driverLng !== null
+          ) {
+            const dLat = toRadians(driverLat - pickupLat);
+            const dLng = toRadians(driverLng - pickupLng);
+            const a =
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRadians(pickupLat)) *
+                Math.cos(toRadians(driverLat)) *
+                Math.sin(dLng / 2) *
+                Math.sin(dLng / 2);
+            const distanceKm = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return distanceKm <= boundedRadius;
+          }
+
+          const driverCity = (location.city || '').trim().toLowerCase();
+          return Boolean(normalizedPickupCity && driverCity === normalizedPickupCity);
+        })
+      : users;
+
+  const messages = filteredUsers.map((user) => ({
     to: user.pushToken,
     sound: 'default',
     title,

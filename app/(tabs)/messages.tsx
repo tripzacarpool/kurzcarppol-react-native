@@ -10,15 +10,18 @@ import {
   ActivityIndicator,
   Linking,
   Alert,
+  Platform,
+  StatusBar,
 } from 'react-native';
 import { MessageSquare, User, Clock, Phone } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
 import ChatModal from '@/components/ChatModal';
-import { markMessagesAsRead } from '@/lib/api';
+import { markMessagesAsRead, setAuthToken } from '@/lib/api';
 import { useFocusEffect } from '@react-navigation/native';
 import { useMessages } from '@/contexts/MessagesContext';
 import { setBadgeCount } from '@/lib/notificationService';
+import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
 
 interface Conversation {
   _id: string;
@@ -43,6 +46,7 @@ interface ConversationWithDetails extends Conversation {
 
 export default function MessagesScreen() {
   const { user } = useAuth();
+  const { getToken } = useClerkAuth();
   const { 
     conversations, 
     totalUnreadMessages, 
@@ -81,6 +85,10 @@ export default function MessagesScreen() {
             
             // Mark all conversations with unread messages as read
             const conversationsToMarkRead = conversations.filter(conv => conv.unreadCount && conv.unreadCount > 0);
+            const token = await getToken();
+            if (token) {
+              setAuthToken(token);
+            }
             
             for (const conv of conversationsToMarkRead) {
               await markMessagesAsRead({
@@ -310,10 +318,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.dark.background,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
   },
   header: {
     padding: 20,
-    paddingTop: 10,
+    paddingTop: 16,
     backgroundColor: Colors.dark.background,
   },
   headerTitle: {

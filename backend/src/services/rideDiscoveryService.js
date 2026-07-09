@@ -1,4 +1,5 @@
 import { RideRequest } from '../models/rideRequest.model.js';
+import { UserProfile } from '../models/userProfile.model.js';
 import { getDefaultSharedSeatLimit } from './rideFareService.js';
 
 class RideDiscoveryError extends Error {
@@ -18,6 +19,58 @@ const assertClerkId = (clerkId) => {
       details: 'clerkId is required',
     });
   }
+};
+
+const DEFAULT_DRIVER_PICKUP_RADIUS_KM = 12;
+
+const toNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toRadians = (degrees) => degrees * (Math.PI / 180);
+
+const getDistanceKm = (from, to) => {
+  const fromLat = toNumber(from?.latitude);
+  const fromLng = toNumber(from?.longitude);
+  const toLat = toNumber(to?.latitude);
+  const toLng = toNumber(to?.longitude);
+
+  if (fromLat === null || fromLng === null || toLat === null || toLng === null) {
+    return null;
+  }
+
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(toLat - fromLat);
+  const dLng = toRadians(toLng - fromLng);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(fromLat)) *
+      Math.cos(toRadians(toLat)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const withinDriverPickupArea = (ride, driverLocation, radiusKm) => {
+  if (!driverLocation) return false;
+
+  const pickupDistanceKm = getDistanceKm(
+    {
+      latitude: ride.pickupLatitude,
+      longitude: ride.pickupLongitude,
+    },
+    driverLocation,
+  );
+
+  if (pickupDistanceKm !== null) {
+    return pickupDistanceKm <= radiusKm;
+  }
+
+  const rideCity = (ride.pickupCity || '').trim().toLowerCase();
+  const driverCity = (driverLocation.city || '').trim().toLowerCase();
+  return Boolean(rideCity && driverCity && rideCity === driverCity);
 };
 
 const toAvailableRideResponse = (ride, type) => {
@@ -153,6 +206,7 @@ export async function getAvailableRideRequests({
   joinable = false,
   targetTime,
   windowMinutes = 60,
+  pickupRadiusKm = DEFAULT_DRIVER_PICKUP_RADIUS_KM,
 }) {
   assertClerkId(clerkId);
 
@@ -160,6 +214,15 @@ export async function getAvailableRideRequests({
     ? { status: { $in: ['accepted', 'booked'] } }
     : { status: 'waiting' };
   const andConditions = [];
+
+  if (!joinable) {
+    andConditions.push({
+      $or: [
+        { latestDeparture: { $exists: false } },
+        { latestDeparture: { $gte: new Date() } },
+      ],
+    });
+  }
 
   if (targetTime) {
     const parsedTargetTime = new Date(targetTime);
@@ -213,6 +276,21 @@ export async function getAvailableRideRequests({
     .sort({ createdAt: -1 })
     .limit(50)
     .populate('userId', 'firstName lastName profileImage rating gender ridesCompleted');
+
+  if (type === 'requests' && !joinable) {
+    const driver = await UserProfile.findOne({ clerkId })
+      .select('location city country role')
+      .lean();
+    const driverLocation = driver?.location;
+    const boundedRadius = Math.min(
+      Math.max(Number(pickupRadiusKm) || DEFAULT_DRIVER_PICKUP_RADIUS_KM, 1),
+      50,
+    );
+
+    return availableRides
+      .filter((ride) => withinDriverPickupArea(ride, driverLocation, boundedRadius))
+      .map((ride) => toAvailableRideResponse(ride, type));
+  }
 
   return availableRides.map((ride) => toAvailableRideResponse(ride, type));
 }

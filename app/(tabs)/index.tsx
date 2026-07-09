@@ -155,7 +155,15 @@ export default function HomeScreen() {
   const [rideDelta, setRideDelta] = useState(0);
   const [holdingRideId, setHoldingRideId] = useState<string | null>(null);
   const previousRideCountRef = useRef(0);
+  const availableRidesRequestRef = useRef({
+    inFlight: false,
+    lastKey: '',
+    lastAt: 0,
+  });
   const deltaAnim = useRef(new Animated.Value(0)).current;
+  const locationKey = location
+    ? `${location.latitude.toFixed(3)},${location.longitude.toFixed(3)}`
+    : 'no-location';
   
   // Custom alert state
   const [alertVisible, setAlertVisible] = useState(false);
@@ -196,16 +204,16 @@ export default function HomeScreen() {
       fetchAvailableRides({ reset: true, query: debouncedSearchQuery });
     });
     
-    // Poll for new rides every 30 seconds as fallback
+    // Poll for new rides every 60 seconds as fallback
     const interval = setInterval(() => {
       fetchAvailableRides({ reset: true, silent: true, query: debouncedSearchQuery });
-    }, 30000);
+    }, 60000);
     
     return () => {
       clearInterval(interval);
       unsubscribeFromRideEvents();
     };
-  }, [debouncedSearchQuery, location?.latitude, location?.longitude, user?.id]);
+  }, [debouncedSearchQuery, locationKey, user?.id]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -230,8 +238,31 @@ export default function HomeScreen() {
   } = {}) => {
     if (!user?.id) return;
       const nextPage = page || (reset ? 1 : ridePage);
+      const requestKey = JSON.stringify({
+        reset,
+        query,
+        page: nextPage,
+        from: fromQuery.trim(),
+        to: toQuery.trim(),
+        locationKey,
+      });
+      const now = Date.now();
+      const isDuplicateRefresh =
+        reset &&
+        availableRidesRequestRef.current.lastKey === requestKey &&
+        now - availableRidesRequestRef.current.lastAt < 15000;
+
+      if (availableRidesRequestRef.current.inFlight || isDuplicateRefresh) {
+        return;
+      }
 
       try {
+        availableRidesRequestRef.current = {
+          inFlight: true,
+          lastKey: requestKey,
+          lastAt: now,
+        };
+
         if (!silent) {
           if (reset) {
             setLoadingRides(true);
@@ -393,6 +424,7 @@ export default function HomeScreen() {
         setAvailableRides([]);
       }
     } finally {
+      availableRidesRequestRef.current.inFlight = false;
       setLoadingRides(false);
       setLoadingMoreRides(false);
     }

@@ -7,6 +7,7 @@ import { LocationProvider } from '@/contexts/LocationContext';
 import { NotificationProvider } from '@/contexts/NotificationContext';
 import { MessagesProvider } from '@/contexts/MessagesContext';
 import { Platform } from 'react-native';
+import { Colors } from '@/constants/Colors';
 // Conditional imports for Clerk based on platform
 import { ClerkProvider as ClerkProviderExpo } from '@clerk/clerk-expo';
 import { ClerkProvider as ClerkProviderReact } from '@clerk/clerk-react';
@@ -127,7 +128,11 @@ function RootLayoutNav() {
 
   return (
     <>
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: Colors.dark.background },
+        }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="driver" />
@@ -137,7 +142,7 @@ function RootLayoutNav() {
         <Stack.Screen name="extend-time" />
         <Stack.Screen name="+not-found" />
       </Stack>
-      <StatusBar style="light" />
+      <StatusBar style="light" backgroundColor={Colors.dark.background} />
       <NotificationToast />
     </>
   );

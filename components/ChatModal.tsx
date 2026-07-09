@@ -231,7 +231,7 @@ export default function ChatModal({
             isOwnMessage ? styles.ownBubble : styles.otherBubble,
           ]}
         >
-          {!isOwnMessage && message.senderName && (
+          {!isOwnMessage && Boolean(message.senderName) && (
             <Text style={styles.senderName}>{message.senderName}</Text>
           )}
           <Text
@@ -282,7 +282,7 @@ export default function ChatModal({
               </Text>
             </View>
           </View>
-          {otherUserPhone && (
+          {Boolean(otherUserPhone) && (
             <TouchableOpacity onPress={handleCall} style={styles.callButton}>
               <Phone size={24} color={Colors.dark.gold} />
             </TouchableOpacity>

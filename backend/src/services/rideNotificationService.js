@@ -105,6 +105,22 @@ export const notifyRidePartners = async (notification, filters = {}) => {
   return tickets.length;
 };
 
+export const notifyNearbyRidePartners = async (notification, filters = {}) => {
+  const tickets = await sendPushToUsersByRole({
+    role: 'ride_partner',
+    title: notification.title,
+    body: notification.body,
+    data: notification.data,
+    excludeClerkId: filters.excludeClerkId,
+    pickupLatitude: filters.pickupLatitude,
+    pickupLongitude: filters.pickupLongitude,
+    pickupCity: filters.pickupCity,
+    radiusKm: filters.radiusKm,
+    limit: filters.limit || 75,
+  });
+  return tickets.length;
+};
+
 export const notifyPassengers = async (notification, filters = {}) => {
   const tickets = await sendPushToUsersByRole({
     role: 'passenger',

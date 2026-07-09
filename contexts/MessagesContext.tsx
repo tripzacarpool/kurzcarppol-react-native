@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getUserConversations, setAuthToken } from '@/lib/api';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
@@ -44,7 +44,7 @@ export const MessagesProvider: React.FC<{ children: React.ReactNode }> = ({
   // Calculate total unread messages
   const totalUnreadMessages = conversations.reduce((sum, conv) => sum + (conv.unreadCount || 0), 0);
 
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async () => {
     if (!user?.id) {
       setLoadingMessages(false);
       return;
@@ -74,12 +74,12 @@ export const MessagesProvider: React.FC<{ children: React.ReactNode }> = ({
     } finally {
       setLoadingMessages(false);
     }
-  };
+  }, [getToken, user?.id]);
 
-  const refreshMessages = () => {
+  const refreshMessages = useCallback(() => {
     console.log('🔄 [MessagesContext] Refreshing messages');
     loadConversations();
-  };
+  }, [loadConversations]);
 
   // Initialize socket connection and listeners
   useEffect(() => {

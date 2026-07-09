@@ -4,6 +4,7 @@ import { getRealtimeServer } from '../realtime/realtimeBus.js';
 import { sendPushToToken } from './pushNotificationService.js';
 import { publishEvent } from '../shared/events/eventBus.js';
 import { EventTypes } from '../shared/events/eventTypes.js';
+import { getOrCreateConversationForRide } from './chatService.js';
 
 const approvalTaskIntervals = new Set();
 
@@ -27,6 +28,19 @@ const assertClerkId = (clerkId) => {
 
 const isRideDriver = (ride, clerkId) =>
   ride?.driverId === clerkId || ride?.clerkId === clerkId;
+
+const ensureBookingConversation = async ({ ride, booking }) => {
+  try {
+    await getOrCreateConversationForRide({
+      rideId: ride._id.toString(),
+      driverId: ride.driverId || ride.clerkId,
+      passengerId: booking.passengerId,
+      passengerName: booking.userDetails?.name,
+    });
+  } catch (error) {
+    console.error('Could not create booking conversation:', error.message);
+  }
+};
 
 const findBookingAndRide = async (bookingId) => {
   const booking = await RideBooking.findById(bookingId);
@@ -226,6 +240,8 @@ export async function createBookingRequest({
       approvalStatus: booking.approvalStatus,
       approvedBy: booking.approvedBy,
     });
+
+    await ensureBookingConversation({ ride, booking });
   }
 
   return {
@@ -303,6 +319,8 @@ export async function approveBookingRequest({ bookingId, driverClerkId, notes = 
     approvalStatus: booking.approvalStatus,
     approvedBy: booking.approvedBy,
   });
+
+  await ensureBookingConversation({ ride, booking });
 
   const passenger = await UserProfile.findOne({
     clerkId: booking.passengerId,
@@ -874,12 +892,23 @@ export async function getPassengerBookingsWithRideDetails(clerkId) {
           false;
         const driverInitiatedPickup =
           rideOffer?.pickupStatus?.driverConfirmedAt && !hasConfirmedPickup;
+        if (
+          rideOffer &&
+          ['confirmed', 'auto_accepted'].includes(booking.approvalStatus)
+        ) {
+          await ensureBookingConversation({
+            ride: rideOffer,
+            booking,
+          });
+        }
 
         return {
           ...booking,
           rideOffer: rideOffer
             ? {
                 _id: rideOffer._id,
+                clerkId: rideOffer.clerkId,
+                driverId: rideOffer.driverId || rideOffer.clerkId,
                 from: rideOffer.from,
                 to: rideOffer.to,
                 departureTime: rideOffer.departureTime,
@@ -890,6 +919,7 @@ export async function getPassengerBookingsWithRideDetails(clerkId) {
             : null,
           driver: driverInfo
             ? {
+                id: driverInfo.clerkId,
                 name: driverInfo.name || 'Driver',
                 phone: driverInfo.phone,
                 rating: driverInfo.driverRating,

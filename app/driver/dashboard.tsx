@@ -14,6 +14,7 @@ import {
   TextInput,
   useWindowDimensions,
   Platform,
+  StatusBar,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -45,14 +46,13 @@ import { Colors } from '@/constants/Colors';
 import { useAuthContext } from '@/contexts/AuthContext';
 import type { DriverVerificationResult, DriverVerificationStatus } from '@/types';
 import { useAuth as useClerkAuth } from '@/lib/clerkHooks';
-import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, setAuthToken, getMyRideOffers, getPendingApprovals, getAllDriverPendingApprovals, approveBooking, rejectBooking, driverInitiatePickup, activateSOS, respondRideOfferHold, getApiErrorMessage } from '@/lib/api';
+import { getAvailableRides, acceptRide, cancelRide, driverConfirmPickup, getUserConversations, setAuthToken, getMyRideOffers, getPendingApprovals, getAllDriverPendingApprovals, approveBooking, rejectBooking, driverInitiatePickup, respondRideOfferHold, getApiErrorMessage } from '@/lib/api';
 import { initializeLocationSocket, emitDriverLocation, driverGoesOnline, subscribeToNewRides, unsubscribeFromRideEvents, getLocationSocket, joinUserSocketRoom, subscribeToPickupConfirmed, unsubscribeFromPickupEvents } from '@/lib/locationSocket';
 import DriverRideOfferModal from '@/components/DriverRideOfferModal';
 import ApprovalControlsDriver from '@/components/ApprovalControlsDriver';
 import VerificationBadge from '@/components/VerificationBadge';
 import ChatModal from '@/components/ChatModal';
 import PushNotificationDebug from '@/components/PushNotificationDebug';
-import SOSButton from '@/components/SOSButton';
 import { getBadgeCount, setBadgeCount } from '@/lib/notificationService';
 
 interface Ride {
@@ -191,6 +191,7 @@ export default function DriverDashboard() {
   const [approvalNotes, setApprovalNotes] = useState<string>('');
   const scrollViewRef = useRef<ScrollView>(null);
   const [currentActiveRide, setCurrentActiveRide] = useState<any | null>(null);
+  const [currentRideExpanded, setCurrentRideExpanded] = useState(false);
   const [initiatingPickupForBooking, setInitiatingPickupForBooking] = useState<string | null>(null);
   const locationIntervalRef = useRef<NodeJS.Timeout | number | null>(null);
   const liveStateKey = user?.id ? `driver_live_state_${user.id}` : null;
@@ -526,13 +527,23 @@ export default function DriverDashboard() {
           console.log(`📍 [ACTIVE RIDE] Ride ${ride._id || ride.id}: status=${ride.status}, bookings=${ride.bookings?.length || 0}, confirmed=${ride.bookings?.filter((b: any) => b.status === 'confirmed').length || 0}`);
         });
         
-        // Find the first 'waiting' or 'ongoing' ride with confirmed bookings
-        const activeRide = response.rideOffers.find((ride: any) => 
-          (ride.status === 'waiting' || ride.status === 'ongoing') && 
-          ride.bookings && 
-          ride.bookings.length > 0 &&
-          ride.bookings.some((booking: any) => booking.status === 'confirmed')
-        );
+        // Find the first current ride with confirmed bookings. Past departures stay in My rides.
+        const activeRide = response.rideOffers.find((ride: any) => {
+          const departureMs = ride.departureTime
+            ? new Date(ride.departureTime).getTime()
+            : ride.scheduledDeparture
+              ? new Date(ride.scheduledDeparture).getTime()
+              : NaN;
+          const isPastDeparture = Number.isFinite(departureMs) && departureMs < Date.now();
+
+          return (
+            !isPastDeparture &&
+            (ride.status === 'waiting' || ride.status === 'ongoing') &&
+            ride.bookings &&
+            ride.bookings.length > 0 &&
+            ride.bookings.some((booking: any) => booking.status === 'confirmed')
+          );
+        });
         
         if (activeRide) {
           const confirmedCount = activeRide.bookings.filter((b: any) => b.status === 'confirmed').length;
@@ -547,11 +558,13 @@ export default function DriverDashboard() {
         } else {
           console.log('ℹ️ [ACTIVE RIDE] No active ride with confirmed bookings found');
           setCurrentActiveRide(null);
+          setCurrentRideExpanded(false);
         }
       }
     } catch (error) {
       console.error('❌ Error fetching current active ride:', error);
       setCurrentActiveRide(null);
+      setCurrentRideExpanded(false);
     }
   };
 
@@ -1793,12 +1806,14 @@ export default function DriverDashboard() {
                 minimumFontScale={0.82}>
                 Welcome, {user?.firstName || 'Driver'}
               </Text>
-              <VerificationBadge
-                verificationBatch={user?.verificationBatch}
-                driverVerified={user?.driverVerified}
-                size="small"
-                showLabel={false}
-              />
+              {selectedTab !== 'messages' && (
+                <VerificationBadge
+                  verificationBatch={user?.verificationBatch}
+                  driverVerified={user?.driverVerified}
+                  size="small"
+                  showLabel={false}
+                />
+              )}
             </View>
             <Text style={styles.headerSubtitle}>Ready to earn?</Text>
           </View>
@@ -1861,6 +1876,7 @@ export default function DriverDashboard() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }>
+        {selectedTab === 'live' && (
         <View style={styles.verificationCard}>
           <View style={styles.verificationHeader}>
             <View style={styles.verificationIcon}>
@@ -1892,7 +1908,9 @@ export default function DriverDashboard() {
             </Text>
           </TouchableOpacity>
         </View>
+        )}
 
+        {selectedTab === 'live' && (
         <View style={styles.statusCard}>
           <View style={styles.statusHeader}>
             <View style={styles.statusIcon}>
@@ -1936,6 +1954,7 @@ export default function DriverDashboard() {
             </>
           )}
         </View>
+        )}
 
         {selectedTab === 'live' && (
           <>
@@ -2040,14 +2059,20 @@ export default function DriverDashboard() {
                   </View>
                 </View>
 
-                <View style={styles.driverSosContainer}>
-                  <SOSButton
-                    rideId={currentActiveRide._id || currentActiveRide.id}
-                    onSOSActivated={activateSOS}
-                    driverName="Emergency Services"
-                  />
-                </View>
+                <TouchableOpacity
+                  style={styles.currentRideToggle}
+                  onPress={() => setCurrentRideExpanded((value) => !value)}
+                  activeOpacity={0.75}>
+                  <Text style={styles.currentRideToggleText}>
+                    {currentRideExpanded ? 'Hide passenger actions' : 'Open passenger actions'}
+                  </Text>
+                  <Text style={styles.currentRideToggleIcon}>
+                    {currentRideExpanded ? '-' : '+'}
+                  </Text>
+                </TouchableOpacity>
 
+                {currentRideExpanded && (
+                  <>
                 {/* Passenger List - Only show passengers waiting for pickup */}
                 <View style={styles.passengerListContainer}>
                   <Text style={styles.passengerListTitle}>Waiting for Pickup:</Text>
@@ -2068,7 +2093,7 @@ export default function DriverDashboard() {
                             <Text style={styles.passengerItemName}>
                               {booking.passengerName || 'Passenger'}
                             </Text>
-                            {booking.passengerPhone && (
+                            {Boolean(booking.passengerPhone) && (
                               <TouchableOpacity
                                 onPress={() => Linking.openURL(`tel:${booking.passengerPhone}`)}
                                 style={styles.phoneLink}>
@@ -2083,34 +2108,61 @@ export default function DriverDashboard() {
                             </View>
                           </View>
                           
-                          {/* Pickup Button */}
-                          <TouchableOpacity
-                            style={[
-                              styles.pickupButton,
-                              isPickupConfirmed && styles.pickupButtonConfirmed,
-                              initiatingPickupForBooking === bookingId && styles.pickupButtonDisabled,
-                            ]}
-                            onPress={() => handleInitiatePickup(
-                              bookingId,
-                              booking.passengerClerkId || booking.userId,
-                              booking.passengerName || 'Passenger',
-                            )}
-                            disabled={isPickupConfirmed || initiatingPickupForBooking === bookingId}
-                            activeOpacity={0.7}>
-                            {initiatingPickupForBooking === bookingId ? (
-                              <ActivityIndicator size="small" color={Colors.dark.gold} />
-                            ) : isPickupConfirmed ? (
-                              <>
-                                <Check size={14} color={Colors.dark.success} />
-                                <Text style={styles.pickupButtonTextConfirmed}>Boarded</Text>
-                              </>
-                            ) : (
-                              <>
-                                <Users size={14} color={Colors.dark.gold} />
-                                <Text style={styles.pickupButtonText}>Pickup</Text>
-                              </>
-                            )}
-                          </TouchableOpacity>
+                          <View style={styles.passengerActions}>
+                            <TouchableOpacity
+                              style={styles.messagePassengerButton}
+                              onPress={() => {
+                                setSelectedConversation({
+                                  _id: `booking-${bookingId}`,
+                                  rideId: currentActiveRide._id || currentActiveRide.id,
+                                  participants: [user?.id || '', booking.passengerClerkId || booking.userId],
+                                  driverId: user?.id || '',
+                                  passengerId: booking.passengerClerkId || booking.userId,
+                                  lastMessage: '',
+                                  lastMessageAt: new Date().toISOString(),
+                                  otherUserName: booking.passengerName || 'Passenger',
+                                  otherUserId: booking.passengerClerkId || booking.userId,
+                                  rideDetails: {
+                                    from: currentActiveRide.from,
+                                    to: currentActiveRide.to,
+                                  },
+                                  otherUserPhone: booking.passengerPhone,
+                                });
+                                setChatModalVisible(true);
+                              }}
+                              activeOpacity={0.7}>
+                              <MessageSquare size={14} color={Colors.dark.gold} />
+                              <Text style={styles.messagePassengerText}>Message</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[
+                                styles.pickupButton,
+                                isPickupConfirmed && styles.pickupButtonConfirmed,
+                                initiatingPickupForBooking === bookingId && styles.pickupButtonDisabled,
+                              ]}
+                              onPress={() => handleInitiatePickup(
+                                bookingId,
+                                booking.passengerClerkId || booking.userId,
+                                booking.passengerName || 'Passenger',
+                              )}
+                              disabled={isPickupConfirmed || initiatingPickupForBooking === bookingId}
+                              activeOpacity={0.7}>
+                              {initiatingPickupForBooking === bookingId ? (
+                                <ActivityIndicator size="small" color={Colors.dark.gold} />
+                              ) : isPickupConfirmed ? (
+                                <>
+                                  <Check size={14} color={Colors.dark.success} />
+                                  <Text style={styles.pickupButtonTextConfirmed}>Boarded</Text>
+                                </>
+                              ) : (
+                                <>
+                                  <Users size={14} color={Colors.dark.gold} />
+                                  <Text style={styles.pickupButtonText}>Pickup</Text>
+                                </>
+                              )}
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       );
                     })}
@@ -2150,7 +2202,7 @@ export default function DriverDashboard() {
                               <Text style={styles.onboardPassengerName}>
                                 {booking.passengerName || 'Passenger'}
                               </Text>
-                              {booking.passengerPhone && (
+                              {Boolean(booking.passengerPhone) && (
                                 <TouchableOpacity
                                   onPress={() => Linking.openURL(`tel:${booking.passengerPhone}`)}
                                   style={styles.phoneLink}>
@@ -2160,10 +2212,37 @@ export default function DriverDashboard() {
                               )}
                             </View>
                           </View>
-                          <View style={styles.onboardSeatBadge}>
-                            <Text style={styles.onboardSeatText}>
-                              Seat{booking.seatNumbers?.length > 1 ? 's' : ''}: {booking.seatNumbers?.join(', ') || 'N/A'}
-                            </Text>
+                          <View style={styles.onboardPassengerActions}>
+                            <TouchableOpacity
+                              style={styles.messagePassengerButton}
+                              onPress={() => {
+                                setSelectedConversation({
+                                  _id: `booking-${booking._id}`,
+                                  rideId: currentActiveRide._id || currentActiveRide.id,
+                                  participants: [user?.id || '', booking.passengerClerkId || booking.userId],
+                                  driverId: user?.id || '',
+                                  passengerId: booking.passengerClerkId || booking.userId,
+                                  lastMessage: '',
+                                  lastMessageAt: new Date().toISOString(),
+                                  otherUserName: booking.passengerName || 'Passenger',
+                                  otherUserId: booking.passengerClerkId || booking.userId,
+                                  rideDetails: {
+                                    from: currentActiveRide.from,
+                                    to: currentActiveRide.to,
+                                  },
+                                  otherUserPhone: booking.passengerPhone,
+                                });
+                                setChatModalVisible(true);
+                              }}
+                              activeOpacity={0.7}>
+                              <MessageSquare size={13} color={Colors.dark.gold} />
+                              <Text style={styles.messagePassengerText}>Message</Text>
+                            </TouchableOpacity>
+                            <View style={styles.onboardSeatBadge}>
+                              <Text style={styles.onboardSeatText}>
+                                Seat{booking.seatNumbers?.length > 1 ? 's' : ''}: {booking.seatNumbers?.join(', ') || 'N/A'}
+                              </Text>
+                            </View>
                           </View>
                         </View>
                       ))}
@@ -2173,6 +2252,8 @@ export default function DriverDashboard() {
                 <Text style={styles.activeRideHint}>
                   📍 Passengers waiting for pickup are shown above. Once they board and confirm, they'll be removed from this list.
                 </Text>
+                  </>
+                )}
 
               </View>
             )}
@@ -2517,7 +2598,7 @@ export default function DriverDashboard() {
                     </View>
 
                     <View style={styles.rightActions}>
-                      {conversation.otherUserPhone && (
+                      {Boolean(conversation.otherUserPhone) && (
                         <TouchableOpacity
                           style={styles.phoneButton}
                           onPress={(e) => {
@@ -2761,9 +2842,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.dark.background,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
   },
   topSpacer: {
-    height: 20,
+    height: Platform.OS === 'android' ? 0 : 20,
   },
   header: {
     flexDirection: 'row',
@@ -3039,11 +3121,35 @@ const styles = StyleSheet.create({
   },
   activeRideOfferCard: {
     backgroundColor: Colors.dark.card,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 2,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
     borderColor: Colors.dark.gold,
+  },
+  currentRideToggle: {
+    marginTop: 4,
+    marginBottom: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: Colors.dark.gold + '14',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '35',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  currentRideToggleText: {
+    color: Colors.dark.gold,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  currentRideToggleIcon: {
+    color: Colors.dark.gold,
+    fontSize: 20,
+    fontWeight: '800',
+    lineHeight: 22,
   },
   seatsInfoRow: {
     flexDirection: 'row',
@@ -4251,5 +4357,30 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: Colors.dark.border + '30',
+  },
+  passengerActions: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  messagePassengerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    minHeight: 34,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    backgroundColor: Colors.dark.gold + '16',
+    borderWidth: 1,
+    borderColor: Colors.dark.gold + '45',
+  },
+  messagePassengerText: {
+    color: Colors.dark.gold,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  onboardPassengerActions: {
+    alignItems: 'flex-end',
+    gap: 8,
   },
 });

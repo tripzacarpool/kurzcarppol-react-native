@@ -9,8 +9,9 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
+  StatusBar,
 } from 'react-native';
-import { X, Check, MapPin, MessageSquare, Armchair, Navigation, CheckCircle2, ArrowLeft, Wallet as WalletIcon, CreditCard, ShieldCheck, UserCheck, Clock, AlertCircle, Star } from 'lucide-react-native';
+import { X, Check, MapPin, MessageSquare, Armchair, Navigation, CheckCircle2, ArrowLeft, Wallet as WalletIcon, CreditCard, ShieldCheck, UserCheck, Clock, AlertCircle, Star, Car } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { MAP_CONFIG } from '@/config/googleMaps';
 import { Ride } from '@/types';
@@ -39,6 +40,7 @@ import {
   getBookingApprovalStatus,
   joinRideRequest,
   cancelPendingApproval,
+  passengerConfirmRideOfferPickup,
   getApiErrorCode,
   getApiErrorMessage,
 } from '@/lib/api';
@@ -47,11 +49,13 @@ interface BookingModalProps {
   visible: boolean;
   ride: Ride | null;
   onClose: () => void;
+  initialStep?: BookingStep;
+  initialBooking?: any;
 }
 
 type BookingStep = 'confirm' | 'request' | 'seats' | 'approval-waiting' | 'payment' | 'boarding' | 'tracking' | 'completed';
 
-export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
+export function BookingModal({ visible, ride, onClose, initialStep, initialBooking }: BookingModalProps) {
   const { user, getAuthToken } = useAuth();
   const [step, setStep] = useState<BookingStep>('confirm');
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
@@ -179,6 +183,38 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
       setCreatingBooking(false);
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !ride || !initialStep) return;
+
+    const bookingId = initialBooking?._id || initialBooking?.id || null;
+    const seatNumbers = Array.isArray(initialBooking?.seatNumbers)
+      ? initialBooking.seatNumbers
+      : [];
+    const status = initialBooking?.approvalStatus;
+
+    setStep(initialStep);
+    setCurrentBookingId(bookingId);
+    setSelectedSeats(seatNumbers);
+    setCustomRequest(initialBooking?.customRequest || '');
+    setBookingConfirmed(
+      status === 'confirmed' ||
+      status === 'auto_accepted' ||
+      initialStep === 'boarding' ||
+      initialStep === 'tracking',
+    );
+    setApprovalStatus(
+      status === 'pending_approval'
+        ? 'pending'
+        : status === 'rejected'
+          ? 'rejected'
+          : status === 'expired'
+            ? 'expired'
+            : 'approved',
+    );
+    setPickupConfirmed(Boolean(initialBooking?.hasConfirmedPickup || initialStep === 'tracking'));
+    setTrackingActive(Boolean(initialBooking?.hasConfirmedPickup || initialStep === 'tracking'));
+  }, [visible, ride, initialStep, initialBooking]);
 
   // Check if ride has ended when modal opens
   useEffect(() => {
@@ -682,7 +718,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         console.warn('⚠️ No token available');
       }
       
-      await passengerConfirmPickup(ride.id, user?.id);
+      if (ride.rideType === 'offer' && currentBookingId) {
+        await passengerConfirmRideOfferPickup(ride.id, currentBookingId);
+      } else {
+        await passengerConfirmPickup(ride.id, user?.id);
+      }
       setPickupConfirmed(true);
       setTrackingActive(true);
       setShowTrackingMap(true);
@@ -695,7 +735,7 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     } finally {
       setPickupActionLoading(false);
     }
-  }, [ride, pickupConfirmed, user?.id, showAlert, getAuthToken]);
+  }, [ride, pickupConfirmed, user?.id, showAlert, getAuthToken, currentBookingId]);
 
   const handleDropConfirmation = useCallback(async () => {
     if (!ride) return;
@@ -1041,6 +1081,11 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
   const renderStep = useMemo(() => {
     const BookingModalStepContent = () => {
       if (!ride) return null;
+      const pickupLockedForResume =
+        Boolean(initialBooking) &&
+        ride.rideType === 'offer' &&
+        !initialBooking?.driverInitiatedPickup &&
+        !initialBooking?.hasConfirmedPickup;
       
       switch (step) {
       case 'confirm':
@@ -1493,7 +1538,9 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
             </View>
             <Text style={styles.stepTitle}>Pickup Verification</Text>
             <Text style={styles.stepDescription}>
-              Driver has approved your booking. Confirm once you board the car to start tracking.
+              {pickupLockedForResume
+                ? 'Your booking is confirmed. The pickup button will unlock after the driver starts pickup for you.'
+                : 'Driver has approved your booking. Confirm once you board the car to start tracking.'}
             </Text>
             
             {/* Booking Details Card */}
@@ -1540,14 +1587,21 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
               </View>
             </View>
             <TouchableOpacity
-              style={[styles.primaryButton, (pickupActionLoading || pickupConfirmed) && styles.primaryButtonDisabled]}
+              style={[
+                styles.primaryButton,
+                (pickupActionLoading || pickupConfirmed || pickupLockedForResume) && styles.primaryButtonDisabled,
+              ]}
               onPress={handlePickupConfirmation}
-              disabled={pickupActionLoading}>
+              disabled={pickupActionLoading || pickupLockedForResume}>
               {pickupActionLoading ? (
                 <ActivityIndicator color={Colors.dark.background} />
               ) : (
                 <Text style={styles.primaryButtonText}>
-                  {pickupConfirmed ? 'Tracking Live' : 'I boarded the car'}
+                  {pickupLockedForResume
+                    ? 'Waiting for driver pickup'
+                    : pickupConfirmed
+                    ? 'Tracking Live'
+                    : 'I boarded the car'}
                 </Text>
               )}
             </TouchableOpacity>
@@ -1590,10 +1644,23 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
     };
 
     return BookingModalStepContent;
-  }, [step, requestedSeatNumbers, totalAmount, customRequest, customFare, paymentMethod, walletBalance, processingPayment, pickupConfirmed, approvalCountdown, completionLoading, creatingBooking, driverModeInfo.label, handleRequestContinue, handleSeatsContinue, onClose, pickupActionLoading, ride, showAlert, trackingActive, handlePayment, handleBack, handleClose, handlePickupConfirmation, handleDropConfirmation, renderSeatLayout]);
+  }, [step, requestedSeatNumbers, totalAmount, customRequest, customFare, paymentMethod, walletBalance, processingPayment, pickupConfirmed, approvalCountdown, completionLoading, creatingBooking, driverModeInfo.label, handleRequestContinue, handleSeatsContinue, onClose, pickupActionLoading, initialBooking, ride, showAlert, trackingActive, handlePayment, handleBack, handleClose, handlePickupConfirmation, handleDropConfirmation, renderSeatLayout]);
 
   // Early return after all hooks
   if (!ride) return null;
+
+  const stepOrder: BookingStep[] = ['confirm', 'request', 'seats', 'approval-waiting', 'payment', 'boarding', 'tracking', 'completed'];
+  const stepLabels: Record<BookingStep, string> = {
+    confirm: 'Ride',
+    request: 'Notes',
+    seats: 'Seats',
+    'approval-waiting': 'Approval',
+    payment: 'Pay',
+    boarding: 'Pickup',
+    tracking: 'Live',
+    completed: 'Done',
+  };
+  const currentStepIndex = Math.max(0, stepOrder.indexOf(step));
 
   return (
     <>
@@ -1603,41 +1670,65 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
         transparent
         hardwareAccelerated={true}
         onRequestClose={onClose}>
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1}
-          onPress={onClose}>
-          <TouchableOpacity 
-            style={styles.modalContent}
-            activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <View style={styles.modalHandle} />
               <TouchableOpacity
                 style={[styles.backButton, step === 'confirm' && styles.hiddenButton]}
                 onPress={handleBack}
                 disabled={step === 'confirm'}>
                 <ArrowLeft size={24} color={Colors.dark.text} />
               </TouchableOpacity>
+              <View style={styles.headerCenter}>
+                <View style={styles.headerIconBadge}>
+                  <Car size={18} color={Colors.dark.background} />
+                </View>
+                <Text style={styles.headerStepLabel}>{stepLabels[step]}</Text>
+              </View>
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={handleClose}>
                 <X size={24} color={Colors.dark.text} />
               </TouchableOpacity>
             </View>
+            <View style={styles.stepTracker}>
+              {stepOrder.map((item, index) => {
+                const active = index <= currentStepIndex;
+                const current = item === step;
+                return (
+                  <View key={item} style={styles.stepTrackerItem}>
+                    <View
+                      style={[
+                        styles.stepTrackerDot,
+                        active && styles.stepTrackerDotActive,
+                        current && styles.stepTrackerDotCurrent,
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.stepTrackerText,
+                        current && styles.stepTrackerTextCurrent,
+                      ]}
+                      numberOfLines={1}>
+                      {stepLabels[item]}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
             <ScrollView
               style={styles.modalScroll}
               showsVerticalScrollIndicator={false}
               scrollEventThrottle={8}
               decelerationRate="fast"
-              bounces={false}
-              removeClippedSubviews={true}
-              nestedScrollEnabled={false}
+              bounces
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
               contentContainerStyle={styles.modalScrollContent}>
               {renderStep()}
             </ScrollView>
-          </TouchableOpacity>
-        </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       {/* Razorpay WebView Modal */}
@@ -1715,18 +1806,16 @@ export function BookingModal({ visible, ride, onClose }: BookingModalProps) {
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'flex-end',
+    backgroundColor: Colors.dark.background,
+    justifyContent: 'center',
   },
   modalContent: {
     width: '100%',
     maxWidth: 560,
     alignSelf: 'center',
     backgroundColor: Colors.dark.backgroundSecondary,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    height: '80%',
-    marginBottom: 65,
+    height: '100%',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
     ...Platform.select({
       web: { boxShadow: '0 -4px 8px rgba(0, 0, 0, 0.15)' },
       default: {
@@ -1740,20 +1829,34 @@ const styles = StyleSheet.create({
   },
   modalHeader: {
     alignItems: 'center',
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: 10,
+    paddingBottom: 10,
     position: 'relative',
     borderBottomWidth: 0.5,
     borderBottomColor: Colors.dark.border + '40',
     flexDirection: 'row',
     justifyContent: 'center',
   },
-  modalHandle: {
-    width: 48,
-    height: 5,
-    backgroundColor: Colors.dark.gold + '60',
-    borderRadius: 2.5,
-    marginBottom: 12,
+  headerCenter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 42,
+  },
+  headerIconBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.dark.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: Colors.dark.gold + '55',
+  },
+  headerStepLabel: {
+    color: Colors.dark.text,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 4,
   },
   backButton: {
     position: 'absolute',
@@ -1782,21 +1885,61 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  stepTracker: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border + '55',
+  },
+  stepTrackerItem: {
+    flex: 1,
+    alignItems: 'center',
+    minWidth: 0,
+    gap: 4,
+  },
+  stepTrackerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.dark.border,
+  },
+  stepTrackerDotActive: {
+    backgroundColor: Colors.dark.gold + '80',
+  },
+  stepTrackerDotCurrent: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: Colors.dark.gold,
+  },
+  stepTrackerText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 9,
+    fontWeight: '600',
+    maxWidth: 56,
+  },
+  stepTrackerTextCurrent: {
+    color: Colors.dark.gold,
+  },
   modalScroll: {
     flex: 1,
     marginHorizontal: 0,
   },
   modalScrollContent: {
     padding: 20,
-    paddingTop: 12,
-    paddingBottom: 40,
+    paddingTop: 16,
+    paddingBottom: 140,
     flexGrow: 1,
   },
   stepContent: {
     alignItems: 'center',
     width: '100%',
-    minHeight: '100%',
     justifyContent: 'flex-start',
+    paddingBottom: 20,
   },
   stepIcon: {
     width: 80,

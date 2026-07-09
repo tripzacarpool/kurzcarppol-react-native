@@ -46,6 +46,15 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime, onHol
   const timeRemaining = useRideTimer(ride.departureTime);
   const [showExtendPicker, setShowExtendPicker] = useState(false);
   const [expandedAddress, setExpandedAddress] = useState(false);
+  const departureMs = departureDate.getTime();
+  const minutesUntilDeparture = Number.isNaN(departureMs)
+    ? Number.POSITIVE_INFINITY
+    : (departureMs - Date.now()) / 60000;
+  const canRequestHold =
+    !isOwner &&
+    Boolean(onHoldRequest) &&
+    minutesUntilDeparture > 0 &&
+    minutesUntilDeparture <= 30;
 
   const truncateAddress = (address: string, maxLength: number = 30) => {
     if (!address || address.length <= maxLength) return address || '';
@@ -178,10 +187,10 @@ function RideCardComponent({ ride, onPress, isOwner = false, onExtendTime, onHol
         </View>
       </View>
 
-      {!isOwner && onHoldRequest && (
+      {canRequestHold && (
         <TouchableOpacity
           style={[styles.holdButton, holding && styles.holdButtonDisabled]}
-          onPress={() => onHoldRequest(ride.id)}
+          onPress={() => onHoldRequest?.(ride.id)}
           disabled={holding}
           activeOpacity={0.78}>
           <Hand size={15} color={Colors.dark.gold} />
