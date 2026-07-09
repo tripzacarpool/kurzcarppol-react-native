@@ -8,20 +8,26 @@ const getRequiredEnv = (key) => {
 
 const isProductionBuild = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
 const productionApiUrl = 'https://api.raaheasy.app';
+const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL || process.env.EXPO_PUBLIC_API_BASE_URL;
+const configuredSocketUrl = process.env.EXPO_PUBLIC_SOCKET_URL;
+const isLocalUrl = (value) =>
+  Boolean(value && /^(https?:\/\/)?(localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\.)/i.test(value));
 
 const apiUrl =
-  process.env.EXPO_PUBLIC_API_URL ||
-  process.env.EXPO_PUBLIC_API_BASE_URL ||
-  (isProductionBuild ? productionApiUrl : 'http://localhost:5000');
+  isProductionBuild && isLocalUrl(configuredApiUrl)
+    ? productionApiUrl
+    : configuredApiUrl || (isProductionBuild ? productionApiUrl : 'http://localhost:5000');
 
-const socketUrl = process.env.EXPO_PUBLIC_SOCKET_URL || apiUrl;
+const socketUrl =
+  isProductionBuild && isLocalUrl(configuredSocketUrl)
+    ? productionApiUrl
+    : configuredSocketUrl || apiUrl;
 const googleMapsApiKey =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '';
 const clerkPublishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || '';
 const razorpayKeyId = process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || '';
 
 if (isProductionBuild) {
-  getRequiredEnv('EXPO_PUBLIC_API_URL');
   getRequiredEnv('EXPO_PUBLIC_GOOGLE_MAPS_API_KEY');
   getRequiredEnv('EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY');
   getRequiredEnv('EXPO_PUBLIC_RAZORPAY_KEY_ID');

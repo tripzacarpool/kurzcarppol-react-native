@@ -3,6 +3,11 @@ import { Platform } from 'react-native';
 
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '');
 const PRODUCTION_API_URL = 'https://api.raaheasy.app';
+const LOCAL_API_URL_PATTERN = /^(https?:\/\/)?(localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\.)/i;
+
+function isLocalApiUrl(value?: string) {
+  return Boolean(value && LOCAL_API_URL_PATTERN.test(value));
+}
 
 function getExpoExtra(key: string): string | undefined {
   const extra = Constants.expoConfig?.extra as Record<string, unknown> | undefined;
@@ -17,10 +22,11 @@ function getDefaultLocalApiUrl() {
 }
 
 export function getApiBaseUrl(): string {
+  const configuredApiUrl = getExpoExtra('apiUrl');
   const configured =
-    process.env.EXPO_PUBLIC_API_URL ||
-    getExpoExtra('apiUrl') ||
-    getDefaultLocalApiUrl();
+    !__DEV__ && isLocalApiUrl(configuredApiUrl)
+      ? PRODUCTION_API_URL
+      : configuredApiUrl || getDefaultLocalApiUrl();
 
   if (!configured) {
     throw new Error(
@@ -32,10 +38,11 @@ export function getApiBaseUrl(): string {
 }
 
 export function getSocketBaseUrl(): string {
+  const configuredSocketUrl = getExpoExtra('socketUrl');
   const configured =
-    process.env.EXPO_PUBLIC_SOCKET_URL ||
-    getExpoExtra('socketUrl') ||
-    getApiBaseUrl();
+    !__DEV__ && isLocalApiUrl(configuredSocketUrl)
+      ? PRODUCTION_API_URL
+      : configuredSocketUrl || getApiBaseUrl();
 
   return trimTrailingSlash(configured);
 }
