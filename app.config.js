@@ -7,7 +7,7 @@ const getRequiredEnv = (key) => {
 };
 
 const isProductionBuild = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
-const productionApiUrl = 'https://api.raaheasy.app';
+const productionApiUrl = 'https://kurzcarppol-react-native-1.onrender.com';
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL || process.env.EXPO_PUBLIC_API_BASE_URL;
 const configuredSocketUrl = process.env.EXPO_PUBLIC_SOCKET_URL;
 const isLocalUrl = (value) =>
@@ -16,7 +16,7 @@ const isLocalUrl = (value) =>
 const apiUrl =
   isProductionBuild && isLocalUrl(configuredApiUrl)
     ? productionApiUrl
-    : configuredApiUrl || (isProductionBuild ? productionApiUrl : 'http://localhost:5000');
+    : configuredApiUrl || productionApiUrl;
 
 const socketUrl =
   isProductionBuild && isLocalUrl(configuredSocketUrl)
