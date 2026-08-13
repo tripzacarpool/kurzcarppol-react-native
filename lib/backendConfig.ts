@@ -21,7 +21,11 @@ function getDefaultLocalApiUrl() {
 }
 
 export function getApiBaseUrl(): string {
-  if (Platform.OS !== 'web' && Platform.OS !== 'android') {
+  if (Platform.OS === 'android') {
+    return RENDER_API_URL;
+  }
+
+  if (Platform.OS !== 'web') {
     return getDefaultLocalApiUrl();
   }
 
@@ -41,7 +45,11 @@ export function getApiBaseUrl(): string {
 }
 
 export function getSocketBaseUrl(): string {
-  if (Platform.OS !== 'web' && Platform.OS !== 'android') {
+  if (Platform.OS === 'android') {
+    return RENDER_API_URL;
+  }
+
+  if (Platform.OS !== 'web') {
     return getDefaultLocalApiUrl();
   }
 

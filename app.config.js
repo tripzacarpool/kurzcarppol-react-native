@@ -66,8 +66,14 @@ module.exports = {
     },
     android: {
       package: process.env.ANDROID_PACKAGE || 'com.raaheasy.app',
+      icon: './assets/icon.png',
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
+        backgroundColor: '#0A0A0A',
+      },
+      splash: {
+        image: './assets/icon.png',
+        resizeMode: 'contain',
         backgroundColor: '#0A0A0A',
       },
       permissions: [
@@ -105,7 +111,6 @@ module.exports = {
         {
           icon: './assets/icon.png',
           color: '#FFD700',
-          sounds: ['./assets/notification.wav'],
         },
       ],
     ],
